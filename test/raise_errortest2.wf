@@ -1,0 +1,16 @@
+# raise_error2
+workflow "raise_errortest2" [
+	in [
+		in string;
+	]
+	out [
+		out string;
+	]
+	wfomap [[
+		$o{out} = $v{thing};
+	]]
+	do [
+		eval [[ $v{thing} = $a{in} x 2 ]]
+		raise_error [[ $i{msg} = "let's raise an error" ]]
+	]
+]

@@ -1,0 +1,89 @@
+#!/usr/bin/env perl
+
+use Mojo::Base -base;
+
+exit client::main(@ARGV);
+
+package client;
+
+use Mojo::Base -base;
+use Mojo::IOLoop;
+use Mojo::Pg;
+use Mojo::JSON qw(decode_json encode_json);
+
+use Data::Dumper;
+
+use Config::Tiny;
+
+#my $pg;
+
+sub poll_done {
+	my ($pg, $job_id) = @_;
+	my $res = $pg->db->dollar_only->query(q[select * from get_job_status($1)], $job_id)->array;
+	return 0 unless $res and @$res and @$res[0];
+	my $out = decode_json(@$res[0]);
+	say "result for $job_id:", Dumper(\$out);
+	return 1;
+}
+
+sub main {
+	if (scalar @_ != 2) {
+		die "usage: $0 <wfname> <jsonblob>";
+	}
+
+	my ($wfname, $inargs) = @_;
+
+	# hopefully this checks for valid json..
+	my $inargsp = decode_json($inargs);
+
+	# what do we call ourselves
+	my $clientname = "$0 [$$]";
+
+	# make our application_name in postgresql our clientname
+	$ENV{'PGAPPNAME'} = $clientname;
+
+	my $cfg = Config::Tiny->read('../etc/jobcenter.conf');
+	die 'Config Errror: ' . Config::Tiny->errstr() unless $cfg;
+	#print Dumper($cfg);
+
+	my $pg = Mojo::Pg->new(
+		'postgresql://'
+		. $cfg->{pg}->{user}
+		. ':' . $cfg->{pg}->{pass}
+		. '@' . $cfg->{pg}->{host}
+		. ':' . $cfg->{pg}->{port}
+		. '/' . $cfg->{pg}->{db}
+	);
+
+	my $res = $pg->db->dollar_only->query(q[select * from create_job($1, $2)], $wfname, $inargs)->array;
+	die "workflow $wfname not found" unless $res and @$res;
+
+	my ($job_id, $listenstring) = @$res;
+
+	say "create_job: job_id $job_id, listenstring $listenstring";
+
+	$pg->pubsub->listen( $listenstring, sub {
+		# use a closure to pass on $job_id
+		my ($pubsub, $payload) = @_;
+		say "got notify on channel $listenstring: $payload";
+		Mojo::IOLoop->stop if poll_done($pg, $job_id);
+	});
+
+	# do one poll first..
+	
+	unless (poll_done($pg, $job_id)) {
+		# set up timeout of 60 secods
+		my $tmr = Mojo::IOLoop->timer( 300 => sub { Mojo::IOLoop->stop });
+		Mojo::IOLoop->start;
+	}
+
+	# TODO: unlisten?
+
+	say "the end is nigh!";
+}
+
+1;
+
+
+
+

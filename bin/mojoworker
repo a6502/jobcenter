@@ -1,0 +1,125 @@
+#!/usr/bin/env perl
+
+use Mojo::Base -base;
+
+exit worker::main();
+
+package worker;
+
+use Mojo::Base -base;
+use Mojo::IOLoop;
+use Mojo::Pg;
+use Mojo::JSON qw(decode_json encode_json);
+
+use Data::Dumper;
+
+my $pg;
+
+sub ping {
+	say "ping!";
+	my $worker_id = shift;
+	$pg->db->query(q[select ping($1)], $worker_id, sub { say "whee!"; });
+}
+
+sub do_add {
+	my ($job_id, $vars) = @_;
+	$vars->{counter} += $vars->{step} || 1;
+}
+
+sub do_square {
+	my ($job_id, $vars) = @_;
+	$vars->{square} = $vars->{root}**2;
+}
+
+sub do_div {
+	my ($job_id, $vars) = @_;
+	$vars->{quotient} = $vars->{dividend} / $vars->{divisor};
+}
+
+sub get_task {
+	my ($cb, $workername, $actionname, $job_id) = @_;
+	say "get_task: workername $workername, actioname $actionname, job_id $job_id";
+	eval {
+		my $res = $pg->db->dollar_only->query(q[select * from get_task($1, $2, $3)], $workername, $actionname, $job_id)->array;
+		die "no result" unless $res and @$res;
+		my ($cookie, $vars) = @$res;
+		undef $res; # clear statement handle
+		say "cookie $cookie invars $vars";
+		$vars = decode_json( $vars );
+		eval {
+			&$cb($job_id, $vars);
+		};
+		$vars = {'error' => 'something bad happened'} if $@;
+		$vars = encode_json( $vars );
+		say "outvars $vars";
+		$pg->db->query(q[select task_done($1, $2)], $cookie, $vars); #, sub { say 'yaaj!'} );
+		say "done with action $actionname for job $job_id\n";
+	};
+	say $@ if $@;
+}
+
+sub main {
+	# what do we call ourselves
+	my $workername = "$0 [$$]";
+	my $worker_id;
+
+	# what can we do
+	my @actions = (
+		['add', \&do_add],
+		['square', \&do_square],
+		['div', \&do_div],
+	);
+
+	# make our application_name in postgresql our workername
+	$ENV{'PGAPPNAME'} = $workername;
+
+	my $cfg = Config::Tiny->read('../etc/jobcenter.conf');
+	die 'Config Errror: ' . Config::Tiny->errstr() unless $cfg;
+	#print Dumper($cfg);
+
+	$pg = Mojo::Pg->new(
+		'postgresql://'
+		. $cfg->{pg}->{user}
+		. ':' . $cfg->{pg}->{pass}
+		. '@' . $cfg->{pg}->{host}
+		. ':' . $cfg->{pg}->{port}
+		. '/' . $cfg->{pg}->{db}
+	);
+
+	# announce our actions and set op pubsub callbacks
+	for my $action (@actions) {
+		my ($actionname, $cb) = @$action;
+		my $res;
+		eval {
+			$res = $pg->db->dollar_only->query(q[select * from announce($1, $2)], $workername, $actionname)->array;
+			die "no result" unless $res and @$res;
+		};
+		if ($@) {
+			say $@;
+			next;
+		}
+		my $listenstring;
+		($worker_id, $listenstring) = @$res;
+		#$pg->pubsub->listen( "action:$actionname:ready", sub {
+		$pg->pubsub->listen( $listenstring, sub {
+			# use a closure to pass on $cb, $workername and $actionname
+			my ($pubsub, $payload) = @_;
+			get_task($cb, $workername, $actionname, $payload);
+		});
+	}
+
+	die "no worker_id?" unless $worker_id;
+
+	my $tmr = Mojo::IOLoop->recurring( 60, sub { ping($worker_id) } );
+
+	local $SIG{TERM} = sub { Mojo::IOLoop->stop };
+	
+	Mojo::IOLoop->start;
+
+	# TODO: withdraw actions..
+
+	say "the end is nigh!";
+}
+
+1;
+

@@ -1,0 +1,70 @@
+# comment
+workflow "my first workflow" [
+	#[[
+		multiline comment
+	#]]
+	#[foo[
+		another multilink comment
+	#]foo]
+	in [
+		"input" number;
+		"req" domain_request;
+	]
+	out [
+		"output" number;
+		"res" domain_response;
+	]
+	wfomap [[
+		$o->{putout} = $v->{output};
+		$o->{res} = $v->{res} + $v->{event};
+	]]
+	do [
+		call add [
+			imap [[
+				$i->{counter} = $v->{input};
+				$i->{step} = 2;
+			]]
+			omap [[ $v->{counter} = $o->{sum}; ]]
+		]
+
+		label foo;
+
+		if [[ $counter < 10 ]] [
+			call "square" [
+				imap [[ $i->{root} = $v->{counter} ]]
+				omap [[ $v->{counter} = $o->{square} ]]
+			]
+		] elsif [[ $counter > 100 ]] [
+			call "my 'second' workflow" []
+		] else [
+			call '3rdflow' []
+		]
+
+		case [[ $v{type} ]] [
+			when 'foo' [ call "foo" [] ]
+			when 3 , 4 [ call "3or4" [] ]
+			else [ call "notfound" [] ]
+		]
+
+		while [[ $foo ]] [
+			call foo []
+		]
+
+		try [
+			repeat [
+				call bla []
+			] until [[ $bla ]]
+		] catch [
+			call foobar []
+		]
+
+		split [
+			callflow 2ndflow []
+			callflow 3rdflow []
+			callflow 4thflow []
+		]
+
+		goto foo;
+
+	]
+]

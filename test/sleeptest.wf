@@ -1,0 +1,25 @@
+# sleep
+workflow "sleeptest" [
+	in [
+		in string;
+	]
+	out [
+		out string;
+		event json optional;
+	]
+	wfomap [[
+		$o{out} = $v{thing};
+		$o{event} = $v{event} if $v{event};
+	]]
+	do [
+		wait_for_event [
+			imap [[ $i{timeout} = 3 ]]
+			omap [[ $v{event} = $o{event} ]]
+		]
+		if [[ $v{event}->{name} == 'timeout' ]] then [
+			eval [[ $v{thing} = 'got timeout' ]]
+		] else [
+			eval [[ $v{thing} = 'got something else ' . encode_json( $v{event} ) ]]
+		]
+	]
+]

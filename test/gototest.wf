@@ -1,0 +1,34 @@
+# goto
+workflow "gototest" [
+	in [
+		"input" number;
+	]
+	out [
+		"output" string;
+	]
+	wfomap [[
+		$o{output} = $v{thing};
+	]]
+	do [
+		goto foo;
+		label baz;
+		call add [
+			imap [[	$i{counter} = $a{input}; ]]
+			omap [[ $v{thing} .= ' baz'; ]]
+		]
+		goto end;
+		label bar;
+		call add [
+			imap [[	$i{counter} = $a{input}; ]]
+			omap [[ $v{thing} .= ' bar'; ]]
+		]
+		goto baz;
+		label foo;
+		call add [
+			imap [[	$i{counter} = $a{input}; ]]
+			omap [[ $v{thing} .= ' foo'; ]]
+		]
+		goto bar;
+		label end;
+	]
+]

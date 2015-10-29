@@ -1,0 +1,20 @@
+# raise_error
+workflow "raise_errortest" [
+	in [
+		in string;
+	]
+	out [
+		out string;
+	]
+	wfomap [[
+		$o{out} = $v{thing};
+	]]
+	do [
+		try [
+			eval [[ $v{thing} = $a{in} x 2 ]]
+			raise_error [[ $i{msg} = "let's raise an error" ]]
+		] catch [
+			eval [[ $v{thing} = 'caught error!' ]]
+		]
+	]
+]

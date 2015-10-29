@@ -1,0 +1,10 @@
+[main]
+name=jobcenter
+
+[pg]
+db=jobcenter
+user=user
+pass=password
+host=localhost
+port=5432
+

@@ -1,0 +1,6 @@
+#/bin/sh
+psql --cluster 9.5/main <<EOF
+SELECT datname,usename,application_name,pid,client_addr,waiting,query_start,left(query,20) FROM pg_stat_activity;
+EOF
+
+

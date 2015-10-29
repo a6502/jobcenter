@@ -1,0 +1,199 @@
+#!/usr/bin/env perl
+
+use Mojo::Base -base;
+use Mojo::IOLoop;
+use Mojo::Pg;
+
+exit maestro::main();
+
+package maestro;
+
+use Data::Dumper;
+use Time::HiRes qw( time ); #qw( clock_gettime CLOCK_REALTIME );
+
+# some globals
+our ($pg, $tmr, $next);
+#my $pg;
+#my $tmr;
+#my $next;
+
+sub do_check_workers {
+	say "checking workers";
+	# FIXME: convert to stored procedure?
+	$pg->db->query(q[
+		update workers set
+			stopped = now()
+		where
+			stopped IS NULL
+			and last_ping + interval '12 minutes' < now()
+	], sub { return; });
+}
+
+sub do_next_cb {
+	my ($db, $err, $res) = @_;
+	if ($err) {
+		say "got errror $err";
+		return;
+	}
+	#say "db: $db res: $res";
+	#print 'db : ', Dumper($db);
+	#print 'res: ', Dumper($res);
+	my $r = $res->array;
+	$res->sth->finish;
+	#print 'r: ', Dumper($r);
+	return unless @$r and defined @$r[1];
+	my ($error, $workflow_id, $task_id, $job_id) = @$r;
+	if ($error) {
+		say "error condition, calling errortask ($workflow_id:$task_id:$job_id)";
+		do_jobtaskerror($db, $workflow_id, $task_id, $job_id);
+	} else {
+		say "next: ($workflow_id:$task_id:$job_id)";
+		do_jobtask($db, $workflow_id, $task_id, $job_id);	
+	}
+}
+
+sub do_jobtask {
+	my ($db, $workflow_id, $task_id, $job_id) = @_;
+	#say "db: $db";
+	eval {
+
+		$db->query(q[select * from do_jobtask($1, $2, $3)], $workflow_id, $task_id, $job_id, \&do_next_cb);
+=pod
+		$db->query(q[select * from do_jobtask($1, $2, $3)], $workflow_id, $task_id, $job_id, sub {
+			my ($db2, $err, $res) = @_;
+			if ($err and $err =~ /^ERROR:  deadlock detected/) {
+				say "got deadlock, retrying ($workflow_id:$task_id:$job_id)";
+				do_jobtask($db2, $workflow_id, $task_id, $job_id); # retry
+			} else {
+				do_next_cb(@_);
+			}
+		});
+=cut
+
+	};
+	say $@ if $@;
+	say "done with do_jobtask\n";
+}
+
+sub do_jobtaskerror {
+	my ($db, $workflow_id, $task_id, $job_id) = @_;
+	eval {
+		$db->query(q[select * from do_jobtaskerror($1, $2, $3)], $workflow_id, $task_id, $job_id, \&do_next_cb);
+	};
+	say $@ if $@;
+	#say "done with do_jobtaskerror\n";
+}
+
+sub do_notify_jobtaskdone {
+	my ($pubsub, $payload) = @_;
+	say "got NOTIFY jobtaskdone, '$payload';";
+	eval {
+		my ($workflow_id, $task_id, $job_id) = split /:/, $payload;
+		$pg->db->query(q[select * from do_jobtaskdone($1, $2, $3)], $workflow_id, $task_id, $job_id, \&do_next_cb );
+	};
+	say $@ if $@;
+	#say "done with jobtaskdone\n";
+}
+
+sub do_notify_jobtaskerror {
+	my ($pubsub, $payload) = @_;
+	say "got NOTIFY jobtaskerror, '$payload';";
+	eval {
+		my ($workflow_id, $task_id, $job_id) = split /:/, $payload;
+		$pg->db->query(q[select * from do_jobtaskerror($1, $2, $3)], $workflow_id, $task_id, $job_id, \&do_next_cb );
+	};
+	say $@ if $@;
+	#say "done with jobtaskerror\n";
+}
+
+sub do_ping {
+	my ($pubsub, $payload) = @_;
+	say "ping from $payload";
+	$pg->db->query(q[select do_ping($1)], $payload, sub {} );
+	say "done with do_ping\n";
+}
+
+sub do_timeout {
+	my ($loop) = @_;
+	say "do_timeout called!";
+	eval {
+		my $res = $pg->db->query(q[select do_timeout()])->array;
+		if ($res and @$res[0] and @$res[0]) {
+			my $foo = @$res[0];
+			$foo = 1 if $foo < 1;
+			my $now = time();
+			$next = $now + $foo;
+			say "now setting timer to $foo, now: $now, next: $next";
+			#Mojo::IOLoop->remove($tmr) if $tmr;
+			$tmr = Mojo::IOLoop->timer($foo => \&do_timeout);
+		}
+	};
+	if ($@) {
+		say $@;
+		$next = time()*2;
+	}
+	say "do_timeout done\n";
+}
+
+sub do_settimer {
+	my ($pubsub, $payload) = @_;
+	#my $ts = clock_gettime(CLOCK_REALTIME);
+	my $now = time();
+
+	say "timer: $payload now: $now next: $next";
+
+	if ($payload) {
+		if ($now + $payload < $next or $next <= $now) {
+			$payload = 1 if $payload < 1;
+			say "setting timer to $payload";
+
+			Mojo::IOLoop->remove($tmr) if $tmr;
+			$tmr = Mojo::IOLoop->timer($payload => \&do_timeout);
+			$next = $now + $payload;
+		}
+	} else {
+		say "disabling timer";
+		Mojo::IOLoop->remove($tmr) if $tmr;
+		undef $tmr;
+		$next = $now;
+	}
+}
+
+sub main {
+	$ENV{'PGAPPNAME'} = "maestro [$$]";
+	my $cfg = Config::Tiny->read('../etc/jobcenter.conf');
+	die 'Config Errror: ' . Config::Tiny->errstr() unless $cfg;
+	#print Dumper($cfg);
+
+	$pg = Mojo::Pg->new(
+		'postgresql://'
+		. $cfg->{pg}->{user}
+		. ':' . $cfg->{pg}->{pass}
+		. '@' . $cfg->{pg}->{host}
+		. ':' . $cfg->{pg}->{port}
+		. '/' . $cfg->{pg}->{db}
+	);
+
+	$pg->on(connection => sub { my ($e, $dbh) = @_;  say "pg: new connection: $dbh"; });
+
+	$pg->pubsub->listen( 'jobtaskdone' => \&do_notify_jobtaskdone );
+
+	$pg->pubsub->listen( 'jobtaskerror' => \&do_notify_jobtaskerror );
+
+	$next = time()*2; # something large
+	$pg->pubsub->listen( 'timer' => \&do_settimer );
+
+	$pg->pubsub->listen( 'ping' => \&do_ping );
+
+	my $check_workers = Mojo::IOLoop->recurring( 60 => \&do_check_workers );
+
+	#local $SIG{TERM} = local $SIG{INT} = sub { Mojo::IOLoop->stop };
+	local $SIG{TERM} = sub { Mojo::IOLoop->stop };
+	
+	Mojo::IOLoop->start;
+
+	say "the end is nigh!"
+}
+
+1;
+
