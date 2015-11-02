@@ -8,6 +8,7 @@ exit maestro::main();
 
 package maestro;
 
+use Config::Tiny;
 use Data::Dumper;
 use Time::HiRes qw( time ); #qw( clock_gettime CLOCK_REALTIME );
 

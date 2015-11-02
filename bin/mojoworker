@@ -11,6 +11,7 @@ use Mojo::IOLoop;
 use Mojo::Pg;
 use Mojo::JSON qw(decode_json encode_json);
 
+use Config::Tiny;
 use Data::Dumper;
 
 my $pg;
