@@ -5,7 +5,8 @@ AS $function$
 
 use strict;
 use warnings;
-use lib '/home/wieger/src/jobcenter/lib';
+#use plperl.on_init instead
+#use lib '/home/wieger/src/jobcenter/lib';
 use JSON::MaybeXS;
 use JobCenter::Safe;
 
