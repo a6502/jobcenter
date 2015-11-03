@@ -20,14 +20,7 @@ our ($pg, $tmr, $next);
 
 sub do_check_workers {
 	say "checking workers";
-	# FIXME: convert to stored procedure?
-	$pg->db->query(q[
-		update workers set
-			stopped = now()
-		where
-			stopped IS NULL
-			and last_ping + interval '12 minutes' < now()
-	], sub { return; });
+	$pg->db->query(q|select do_check_workers()|, sub { return; });
 }
 
 sub do_next_cb {
@@ -168,8 +161,8 @@ sub main {
 
 	$pg = Mojo::Pg->new(
 		'postgresql://'
-		. $cfg->{pg}->{user}
-		. ':' . $cfg->{pg}->{pass}
+		. $cfg->{maestro}->{user}
+		. ':' . $cfg->{maestro}->{pass}
 		. '@' . $cfg->{pg}->{host}
 		. ':' . $cfg->{pg}->{port}
 		. '/' . $cfg->{pg}->{db}

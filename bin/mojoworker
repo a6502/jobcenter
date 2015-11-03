@@ -80,8 +80,8 @@ sub main {
 
 	$pg = Mojo::Pg->new(
 		'postgresql://'
-		. $cfg->{pg}->{user}
-		. ':' . $cfg->{pg}->{pass}
+		. $cfg->{client}->{user}
+		. ':' . $cfg->{client}->{pass}
 		. '@' . $cfg->{pg}->{host}
 		. ':' . $cfg->{pg}->{port}
 		. '/' . $cfg->{pg}->{db}
