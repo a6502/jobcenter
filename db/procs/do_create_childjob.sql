@@ -1,7 +1,6 @@
 CREATE OR REPLACE FUNCTION jobcenter.do_create_childjob(a_parentworkflow_id integer, a_parenttask_id integer, a_parentjob_id bigint)
  RETURNS nexttask
  LANGUAGE plpgsql
- SECURITY DEFINER
 AS $function$DECLARE
 	v_job_id BIGINT;
 	v_workflow_id INT;

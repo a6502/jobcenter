@@ -1,7 +1,6 @@
 CREATE OR REPLACE FUNCTION jobcenter.do_raise_fatal_error(a_workflow_id integer, a_task_id integer, a_job_id bigint, a_errmsg text)
  RETURNS nexttask
  LANGUAGE plpgsql
- SECURITY DEFINER
 AS $function$DECLARE
 	v_error jsonb;
 BEGIN

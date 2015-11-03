@@ -1,6 +1,7 @@
 CREATE OR REPLACE FUNCTION jobcenter.do_jobtaskerror(a_workflow_id integer, a_task_id integer, a_job_id bigint)
  RETURNS nexttask
  LANGUAGE plpgsql
+ SECURITY DEFINER
 AS $function$DECLARE
 	v_errortask_id int;
 	v_parentjob_id bigint;

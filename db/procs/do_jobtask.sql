@@ -1,6 +1,7 @@
 CREATE OR REPLACE FUNCTION jobcenter.do_jobtask(a_workflow_id integer, a_task_id integer, a_job_id bigint)
  RETURNS nexttask
  LANGUAGE plpgsql
+ SECURITY DEFINER
 AS $function$DECLARE
 	v_action_type action_type;
 	v_action_id int;

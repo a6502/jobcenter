@@ -1,6 +1,7 @@
 CREATE OR REPLACE FUNCTION jobcenter.get_job_status(a_job_id bigint)
  RETURNS jsonb
  LANGUAGE plpgsql
+ SECURITY DEFINER
 AS $function$DECLARE
 	v_state job_state;
 	v_workflow_id integer;

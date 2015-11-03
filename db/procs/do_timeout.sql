@@ -1,6 +1,7 @@
 CREATE OR REPLACE FUNCTION jobcenter.do_timeout()
  RETURNS integer
  LANGUAGE plpgsql
+ SECURITY DEFINER
 AS $function$DECLARE
 	v_job_id bigint;
 	v_task_id integer;

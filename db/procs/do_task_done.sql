@@ -1,7 +1,6 @@
 CREATE OR REPLACE FUNCTION jobcenter.do_task_done(a_workflow_id integer, a_task_id integer, a_job_id bigint, a_outargs jsonb, a_notify boolean)
  RETURNS void
  LANGUAGE plpgsql
- SECURITY DEFINER
 AS $function$DECLARE
 	v_inargs jsonb;
 	v_oldvars jsonb;

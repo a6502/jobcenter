@@ -1,7 +1,6 @@
 CREATE OR REPLACE FUNCTION jobcenter.do_task_error(a_workflow_id integer, a_task_id integer, a_job_id bigint, a_errargs jsonb)
  RETURNS void
  LANGUAGE plpgsql
- SECURITY DEFINER
 AS $function$DECLARE
 	v_oldvars jsonb;
 BEGIN
