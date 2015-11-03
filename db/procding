@@ -43,8 +43,8 @@ sub main {
 	$ENV{'PGAPPNAME'} = $0;
 	$pg = Mojo::Pg->new(
 		'postgresql://'
-		. $cfg->{pg}->{user}
-		. ':' . $cfg->{pg}->{pass}
+		. $cfg->{admin}->{user}
+		. ':' . $cfg->{admin}->{pass}
 		. '@' . $cfg->{pg}->{host}
 		. ':' . $cfg->{pg}->{port}
 		. '/' . $cfg->{pg}->{db}
@@ -141,8 +141,8 @@ sub loadproc {
 
 sub saveproc {
 	my $proc = shift;
-	die "usage: loadproc <procname>" unless $proc;
-	die "$proc not found in procs dir" unless -f "procs/$proc.sql";
+	die "usage: saveproc <procname>" unless $proc;
+	warn "$proc not found in procs dir" unless -f "procs/$proc.sql";
 
 	my $dbprocsrc = $pg->db->dollar_only->query($procsrcq, $cfg->{pg}->{db}, $proc)->array;
 	die "no proc $proc in the db?" unless $dbprocsrc and @$dbprocsrc and $$dbprocsrc[0];
