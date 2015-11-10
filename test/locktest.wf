@@ -1,0 +1,21 @@
+# lock
+workflow "locktest" [
+	in [
+		in string;
+	]
+	out [
+		out string;
+	]
+	wfomap [[
+		$o{out} = $v{thing};
+	]]
+	do [
+		lock [[ $i{locktype} = 'foo'; $i{lockvalue} = 'bar'; ]]
+		eval [[ $v{thing} = 'got lock' ]]
+		wait_for_event [
+			imap [[ $i{timeout} = 30 ]]
+		]
+		unlock [[ $i{locktype} = 'foo'; $i{lockvalue} = 'bar'; ]]
+		eval [[ $v{thing} .= ' and unlocked' ]]
+	]
+]
