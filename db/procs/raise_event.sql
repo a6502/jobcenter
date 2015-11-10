@@ -1,6 +1,7 @@
 CREATE OR REPLACE FUNCTION jobcenter.raise_event(a_eventdata jsonb)
  RETURNS boolean
  LANGUAGE plpgsql
+ SECURITY DEFINER
 AS $function$DECLARE
 	v_event_id bigint;
 	v_when timestamptz;
