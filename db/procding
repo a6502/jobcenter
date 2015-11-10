@@ -114,14 +114,23 @@ sub loadproc {
 	die "usage: loadproc <procname>" unless $proc;
 	die "$proc not found in procs dir" unless -f "procs/$proc.sql";
 
-	my $dbprocsrc = $pg->db->dollar_only->query($procsrcq, $cfg->{pg}->{db}, $proc)->array;
-	die "no proc $proc in the db?" unless $dbprocsrc and @$dbprocsrc and $$dbprocsrc[0];
+	my $dbmd5 = $pg->db->dollar_only->query($procsrcq, $cfg->{pg}->{db}, $proc)->array;
+	unless ($dbmd5 and @$dbmd5 and $$dbmd5[0]) {
+		warn "no proc $proc in the db?";
+		$dbmd5 = undef;
+	} else {
+		$dbmd5 = md5_hex($$dbmd5[0]);
+	}
 	my $procmd5 = $pg->db->dollar_only->query($procmd5q, $proc)->array;
-	die "no func $proc in the procs table?" unless $procmd5 and @$procmd5 and $$procmd5[0];
-	$procmd5 = $$procmd5[0];
-	my $dbmd5 = md5_hex($$dbprocsrc[0]);
+	unless ($procmd5 and @$procmd5 and $$procmd5[0]) {
+		warn "no func $proc in the procs table?";
+		$procmd5 = undef;
+	} else {
+		$procmd5 = $$procmd5[0];
+	}
 
-	die "proc $proc was changed in the db, refusing to load" if $procmd5 ne $dbmd5;
+	die "proc $proc exists in db and not in proc table, refusing to load" if $dbmd5 and not $procmd5;
+	die "proc $proc was changed in the db, refusing to load" if $dbmd5 and $procmd5 and $procmd5 ne $dbmd5;
 
 	open my $procfd, '<', "procs/$proc.sql" or die "Cannot open $proc: $!";
 	my $procsrc = do { local $/; <$procfd>; };
@@ -129,14 +138,18 @@ sub loadproc {
 
         my $filemd5 = md5_hex($procsrc);
 
-        if ($filemd5 eq $procmd5) {
+        if ($procmd5 and $filemd5 eq $procmd5) {
         	say "$proc is alread up-to-date";
         	return 0;
 	}
 
 	$pg->db->dollar_only->query($procsrc);
 	
-	$pg->db->dollar_only->query(q|update _procs set md5=$1 where "name"=$2|, $filemd5, $proc);
+	if ($dbmd5) {
+		$pg->db->dollar_only->query(q|update _procs set md5=$1 where "name"=$2|, $filemd5, $proc);
+	} else {
+		$pg->db->dollar_only->query(q|insert into _procs ("name", md5) values ($1, $2)|, $proc, $filemd5);
+	}
 }
 
 sub saveproc {
