@@ -2,6 +2,7 @@ CREATE OR REPLACE FUNCTION jobcenter.ping(a_worker_id bigint)
  RETURNS text
  LANGUAGE sql
  SECURITY DEFINER
+ SET search_path TO jobcenter, pg_catalog
 AS $function$
 UPDATE workers SET
 	last_ping = now()
