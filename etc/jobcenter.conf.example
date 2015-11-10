@@ -8,12 +8,12 @@ port=5432
 
 [admin]
 user=jc_admin
-pass=pass
+pass=password
 
 [client]
 user=jc_client
-pass=pass
+pass=password
 
 [maestro]
 user=jc_maestro
-pass=pass
+pass=password
