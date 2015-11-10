@@ -6,6 +6,9 @@ use Mojo::IOLoop;
 use Mojo::Pg;
 use Mojo::JSON qw(decode_json encode_json);
 
+# other stuff
+use Config::Tiny;
+
 # standard stuff
 use Data::Dumper;
 
@@ -41,8 +44,8 @@ sub main {
 
 	my $pg = Mojo::Pg->new(
 		'postgresql://'
-		. $cfg->{pg}->{user}
-		. ':' . $cfg->{pg}->{pass}
+		. $cfg->{admin}->{user}
+		. ':' . $cfg->{admin}->{pass}
 		. '@' . $cfg->{pg}->{host}
 		. ':' . $cfg->{pg}->{port}
 		. '/' . $cfg->{pg}->{db}
@@ -174,8 +177,8 @@ sub parse_do {
 	say 'found [';
 
 	while ( my $found = $self->find_keyword(qw(
-			call case eval goto if label raise_error raise_event repeat split
-			subscribe try unsubscribe wait_for_child wait_for_event while \]
+			call case eval goto if label lock raise_error raise_event repeat split
+			subscribe try unlock unsubscribe wait_for_child wait_for_event while \]
 		)) ) {
 		say 'found keyword ', $found;
 		last if $found eq '\]';
@@ -299,6 +302,14 @@ sub parse_label {
 	return $label;
 }
 
+sub parse_lock {
+	my $self = shift;
+	my $lock = bless {}, 'lock';
+	$lock->{lock} = $self->parse_codeblock;
+	print 'lock: ', Dumper($lock);
+	return $lock;
+}
+
 sub parse_raise_error {
 	my $self = shift;
 	my $raise = bless {}, 'raise_error';
@@ -362,6 +373,14 @@ sub parse_try {
 
 	print 'try: ', Dumper($try);
 	return $try;
+}
+
+sub parse_unlock {
+	my $self = shift;
+	my $unlock = bless {}, 'unlock';
+	$unlock->{lock} = $self->parse_codeblock;
+	print 'unlock: ', Dumper($unlock);
+	return $unlock;
 }
 
 sub parse_unsubscribe {
@@ -571,6 +590,8 @@ use constant {
 	T_RAISE_ERROR => -10,
 	T_RAISE_EVENT => -11,
 	T_WAIT_FOR_CHILDREN => -12,
+	T_LOCK => -13,
+	T_UNLOCK => -14,
 };
 
 sub new {
@@ -771,6 +792,12 @@ sub gen_label {
 	return ($labeltid, $labeltid);	
 }
 
+sub gen_lock {
+	my ($self, $lock) = @_;
+	my $tid = $self->instask(T_LOCK, imapcode => $lock->{lock});
+	return ($tid, $tid);
+}
+
 sub gen_raise_error {
 	my ($self, $raise) = @_;
 	my $raisetid = $self->instask(T_RAISE_ERROR, imapcode => $raise->{error});
@@ -835,6 +862,12 @@ sub gen_try {
 	$self->set_next($tbl, $endtid); # try block to end
 	$self->{oetid} = $oetid; # ? $oetid : undef; # prevent undef warnings
 	return ($tbf, $endtid);
+}
+
+sub gen_unlock {
+	my ($self, $unlock) = @_;
+	my $tid = $self->instask(T_UNLOCK, imapcode => $unlock->{lock});
+	return ($tid, $tid);
 }
 
 sub gen_unsubscribe {

@@ -85,6 +85,10 @@ BEGIN
 			RETURN do_raise_event_task(a_workflow_id, a_task_id, a_job_id);
 		WHEN 'wait_for_children' THEN
 			RETURN do_wait_for_children_task(a_workflow_id, a_task_id, a_job_id);
+		WHEN 'lock' THEN
+			RETURN do_lock_task(a_workflow_id, a_task_id, a_job_id);
+		WHEN 'unlock' THEN
+			RETURN do_unlock_task(a_workflow_id, a_task_id, a_job_id);
 		ELSE
 			-- FIXME: call do_raise_error instead?
 			RAISE EXCEPTION 'unknown system task %', v_actionname;
