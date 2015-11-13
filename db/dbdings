@@ -1,0 +1,411 @@
+#!/usr/bin/perl
+
+use Mojo::Base -base;
+use FindBin;
+use lib "$FindBin::Bin/../lib";
+use Mojo::Util qw( slurp );
+use Mojo::Pg;
+
+use Data::Dumper;
+use Digest::MD5 qw(md5_hex);
+
+use Config::Tiny;
+
+exit main(@ARGV);
+
+our ($cfg, $pg, $allprocsq, $procsrcq, $procmd5q);
+
+sub main {
+	my %actions = (
+		'check' => \&checkschema,
+		'compare' => \&compprocs,
+		'create' => \&createschema,
+		'dump' => \&dumpprocs,
+		'help' => \&help,
+		'load' => \&loadproc,
+		#'revert' => \&revertschema,
+		'save' => \&saveproc,
+		'upgrade' => \&upgradeschema,
+		#'verify' => \&verifyschema,
+	);
+	
+	my %commands = (
+		'compprocs' => \&compprocs,
+		'loadproc' => \&loadproc,
+		'saveproc' => \&saveproc,
+	);
+	
+	($0) = ($0 =~ m|/?(\w+)$|);
+
+	my $handler = $commands{$0};
+
+	$handler = $actions{shift @_ // 'help'} unless $handler;
+
+ 	die "$0: don't know what to do" unless $handler;
+
+	#cfg = Config::Tiny->read('../etc/jobcenter.conf');
+	$cfg = Config::Tiny->read('../etc/jc2.conf');
+	die 'Config Errror: ' . Config::Tiny->errstr() unless $cfg;
+	#print Dumper($cfg);
+
+	$ENV{'PGAPPNAME'} = $0;
+	$pg = Mojo::Pg->new(
+		'postgresql://'
+		. $cfg->{admin}->{user}
+		. ':' . $cfg->{admin}->{pass}
+		. '@' . $cfg->{pg}->{host}
+		. ':' . $cfg->{pg}->{port}
+		. '/' . $cfg->{pg}->{db}
+	);
+
+	chdir($FindBin::Bin) or die "cannot chdir to $FindBin::Bin";
+
+	return &$handler(@_);
+}
+
+sub help {
+	say "use the source!";
+}
+
+sub checkdbschema {
+	my $res;
+	my $db = $pg->db;
+	{
+		# don't panic if the _schema table does not exist yet
+		local $db->dbh->{RaiseError} = 0;
+		#local $db->dbh->{PrintError} = 1;
+		$res = $db->query(q|select version from _schema|);
+	}
+	if ($res->sth->err) {
+		say "db schema version not found: ", $res->sth->errstr;
+		return undef;
+	}
+	$res = $res->array;
+	$res = $$res[0];
+	say 'db schema version ', $res // 'undef';
+	return $res
+}
+
+sub checkreposchema {
+	my $tag = `git describe`;
+	die "no git tag found" unless $tag;
+	unless ($tag =~ /^schema_v([0-9.]+)/) {
+		die "weird tag $tag";
+	}
+	$tag = $1;
+	say "found repo schema version $tag";
+	return $tag;
+}
+
+sub findschemaupgrades {
+	my ($reposchema, $dbschema) = @_;
+
+	#opendir(my $dh, "$FindBin::Bin/schema") or die "can't opendir $FindBin::Bin/schema : $!";
+	#my @dirs = sort grep { !/^\./ and -d "$FindBin::Bin/schema/$_" } readdir($dh);
+	#closedir($dh);
+	my @dirs = sort <schema/v*/alter{1,2}.sql>;
+
+	say 'dirs: ', join(', ', @dirs);
+	@dirs = grep { my ($v) = $_ =~ m|/v([0-9.]+/)|; say "v: $v"; $v ge $dbschema and $v le $reposchema } @dirs;
+	say 'need to do ', join(', ', @dirs);
+}
+
+sub checkschema {
+	my $dbschema = checkdbschema();
+	my $reposchema = checkreposchema();
+	unless (defined $dbschema) {
+		say "need to create the schema from scratch";
+		say "call $0 createschema to do that";
+		return 0;
+	}
+	if ($reposchema lt $dbschema) {
+		die "fileschema is lower than dbschema ($reposchema < $dbschema)";
+	}
+	if ($reposchema gt $dbschema) {
+		findschemaupgrades($reposchema, $dbschema);
+		return 0;
+	}		
+	if ($reposchema eq $dbschema) {
+		say "schema is up to date";
+		return 0;
+	}
+	die "how did we get here?";
+}
+
+sub createschema {
+	my $dbschema = checkdbschema();
+	die "db already exists?" if $dbschema;
+	my $reposchema = checkreposchema();
+	say "need to create schema v$reposchema";
+	
+	# find the create scripts
+	#my @scripts = grep { my ($v) = $_ =~ m|^schema/v([0-9.]+)/|; $v le $reposchema } sort <schema/v*/create{1,2}.sql>;
+	my @scripts = (
+		grep { $_ } # only defined items
+		map {
+			# try to find create script in dir
+			my @f = <$_/create{1,2}.sql>;
+			if (@f) {
+				die "did not find 2 create scripts" if $#f != 1;
+				[ $f[0], $f[1] ]
+			} else {
+				#say 'no scripts in ', $_;
+				undef;
+			}
+		}
+		sort # in ascending order
+		grep {
+			my ($v) = $_ =~ m|^schema/v([0-9.]+)$|;
+			-d $_ and $v and $v le $reposchema
+		}
+		<schema/v*>
+	)[-1]; # we only want the newest version
+	print "scripts: ", Dumper(\@scripts);
+	my $v = ($scripts[0][0] =~ m|^schema/v([0-9.]+)/|) or die "cannot find script version";
+
+	push @scripts, findschemaupgrades($v, $reposchema) if $v lt $reposchema;
+
+	say 'need to do ', join(', ', map { "(@$_[0], @$_[1])"} @scripts);
+	
+	my @sqls;
+	for (@scripts) {
+		push @sqls, sqlfile(@$_[0]);
+		push @sqls, procs("schema/v$v/procs");
+		push @sqls, sqlfile( @$_[1]);
+	}
+	execsql(\@sqls);
+
+	return 0;
+}
+
+sub execsql {
+	my $sqls = shift;
+
+	unshift @$sqls, \<<'EOF';
+
+-- default header
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SET client_min_messages = warning;
+SET check_function_bodies = false;
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET row_security = off;
+-- end of default header
+EOF
+
+	#say "sql now: ", $sql;
+	
+	open my $fh, '|-', 'psql', '-w', '-e', '-1',
+			'-v', 'ON_ERROR_STOP=1',
+			'-h', $cfg->{super}->{host},
+			'-p', $cfg->{super}->{port},
+			'-d', $cfg->{pg}->{db}
+			#'-U', $cfg->{admin}->{user}
+		or die "cannot start psql: $!";
+	print $fh $$_ for @$sqls;
+	close $fh;
+}
+
+sub sqlfile {
+	my $f = shift;
+	#my $dbname = $cfg->{pg}->{db};
+	#my $cluster = $cfg->{pg}->{cluster};
+
+	my $sql = slurp $f;
+	
+	my %subs = (
+		'$JCADMIN' => ($cfg->{admin}->{user} or die "foo"),
+		'$JCCLIENT' => ($cfg->{client}->{user} or die "fooo"),
+		'$JCMAESTRO' => ($cfg->{maestro}->{user} or die "foooo"),
+		'$JCSYSTEM' => ($cfg->{system}->{role} or die "fooooo")
+	);
+
+	while ( my($k,$v) = each(%subs) ) {
+		$sql =~ s/\Q$k\E/$v/g;
+	}
+
+	return \$sql;
+}
+
+sub procs {
+	my $procdir = shift;
+	my $jcsystem = ($cfg->{system}->{role} or die "fooooo"); 
+	my @funcs;
+
+	for my $p (<$procdir/*.sql>) {
+		say "doing $p";
+		my $func .= slurp $p;
+		my ($funcname) = $func  =~ /FUNCTION\s+(.*)\s+RETURNS/ms;
+		die "cannot find funcname in $p" unless $funcname;
+		
+		#$func .= ';'
+		$func .= <<EOF;
+;
+ALTER FUNCTION $funcname SET search_path = jobcenter, pg_catalog, pg_temp;
+ALTER FUNCTION $funcname OWNER TO $jcsystem;
+
+EOF
+		push @funcs, \$func;
+
+	}
+
+	return @funcs;
+}
+
+sub dumpprocs {
+	die "are you sure?";
+	my $funcs = $pg->db->dollar_only->query($allprocsq, $cfg->{pg}->{db});
+	
+	while (my $f = $funcs->hash) {
+		say "dumping $f->{name}";
+		open my $o, '>', "procs/$f->{name}.sql" or die "urgh";
+		print $o $f->{code};
+		close $o; 
+	}
+
+	return 0;
+}
+
+sub compprocs {
+	#opendir my $dh, 'procs' or die "ugh";
+	#my @filefuncs = grep { /.sql$/ && -f "procs/$_" } readdir($dh);
+	#closedir $dh;
+	my @filefuncs = sort grep { -f $_ } <procs/*.sql>;
+
+	my $diffs = 0;
+				
+	foreach my $fn (@filefuncs) {
+		#say "fn: $fn";
+		my ($f) = $fn =~ m|^procs/(.*)\.sql$|;
+		my $dbfunc = $pg->db->dollar_only->query($procsrcq, $f)->array;
+		die "no func $f in the db?" unless $dbfunc and @$dbfunc and $$dbfunc[0];
+		my $procmd5 = $pg->db->dollar_only->query($procmd5q, $f)->array;
+		die "no func $f in the procs table?" unless $procmd5 and @$procmd5 and $$procmd5[0];
+		$procmd5 = $$procmd5[0];
+		my $filemd5 = md5sum($fn);
+		my $dbmd5 = md5_hex($$dbfunc[0]);
+		if ($procmd5 ne $dbmd5 and $filemd5 ne $procmd5) {
+			say "$f differs between db and procs table and file";
+			$diffs += 2;
+		} elsif ($filemd5 ne $procmd5) {
+			say "$f differs between procs table and file";
+			$diffs++;
+		} elsif ($filemd5 ne $dbmd5) {
+			say "$f differs between db and file";
+			$diffs++;
+		} else {
+			#say " (did $f)";
+		}
+	}
+
+	if ($diffs) {
+		say "found $diffs differences";
+	} else {
+		#say "no differences found";
+	}
+
+	return 0;
+}
+
+sub loadproc {
+	my $proc = shift;
+	die "usage: loadproc <procname>" unless $proc;
+	die "$proc not found in procs dir" unless -f "procs/$proc.sql";
+
+	my $dbmd5 = $pg->db->dollar_only->query($procsrcq, $cfg->{pg}->{db}, $proc)->array;
+	unless ($dbmd5 and @$dbmd5 and $$dbmd5[0]) {
+		warn "no proc $proc in the db?";
+		$dbmd5 = undef;
+	} else {
+		$dbmd5 = md5_hex($$dbmd5[0]);
+	}
+	my $procmd5 = $pg->db->dollar_only->query($procmd5q, $proc)->array;
+	unless ($procmd5 and @$procmd5 and $$procmd5[0]) {
+		warn "no func $proc in the procs table?";
+		$procmd5 = undef;
+	} else {
+		$procmd5 = $$procmd5[0];
+	}
+
+	die "proc $proc exists in db and not in proc table, refusing to load" if $dbmd5 and not $procmd5;
+	die "proc $proc was changed in the db, refusing to load" if $dbmd5 and $procmd5 and $procmd5 ne $dbmd5;
+
+	open my $procfd, '<', "procs/$proc.sql" or die "Cannot open $proc: $!";
+	my $procsrc = do { local $/; <$procfd>; };
+	close $procfd;
+
+        my $filemd5 = md5_hex($procsrc);
+
+        if ($procmd5 and $filemd5 eq $procmd5) {
+        	say "$proc is alread up-to-date";
+        	return 0;
+	}
+
+	$pg->db->dollar_only->query($procsrc);
+	
+	if ($dbmd5) {
+		$pg->db->dollar_only->query(q|update _procs set md5=$1 where "name"=$2|, $filemd5, $proc);
+	} else {
+		$pg->db->dollar_only->query(q|insert into _procs ("name", md5) values ($1, $2)|, $proc, $filemd5);
+	}
+}
+
+sub saveproc {
+	my $proc = shift;
+	die "usage: saveproc <procname>" unless $proc;
+	warn "$proc not found in procs dir" unless -f "procs/$proc.sql";
+
+	my $dbprocsrc = $pg->db->dollar_only->query($procsrcq, $proc)->array;
+	die "no proc $proc in the db?" unless $dbprocsrc and @$dbprocsrc and $$dbprocsrc[0];
+	$dbprocsrc = $$dbprocsrc[0];
+
+	my $dbmd5 = md5_hex($dbprocsrc);
+
+	open my $procfd, '>', "procs/$proc.sql" or die "Cannot open $proc for writing: $!";
+	print $procfd $dbprocsrc;
+	close $procfd;
+
+	$pg->db->dollar_only->query(q|update _procs set md5=$1 where "name"=$2|, $dbmd5, $proc);
+}
+
+sub upgradeschema {
+
+}	
+
+sub md5sum {
+	my $f = shift;
+	open my $fh, '<', $f or die "Cannot open $f for md5summing: $!";
+	binmode $fh;
+	my $md5sum = Digest::MD5->new->addfile($fh)->hexdigest;
+	close $fh;
+	return $md5sum;
+}
+
+# some queries
+BEGIN {
+$allprocsq = <<'EOT';
+SELECT
+  p.proname as "name",
+  pg_catalog.pg_get_functiondef(p.oid) as "code"
+FROM pg_catalog.pg_proc p
+  LEFT JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+WHERE pg_catalog.pg_function_is_visible(p.oid)
+  AND n.nspname = 'jobcenter'
+  ORDER BY 1;
+EOT
+
+$procsrcq = <<'EOT';
+SELECT
+  pg_catalog.pg_get_functiondef(p.oid) as "code"
+FROM pg_catalog.pg_proc p
+  LEFT JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+WHERE pg_catalog.pg_function_is_visible(p.oid)
+  AND n.nspname = 'jobcenter'
+  AND p.proname = $1
+EOT
+
+$procmd5q = <<'EOT';
+SELECT md5 FROM _procs WHERE "name" = $1
+EOT
+}

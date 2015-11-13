@@ -1,174 +1,14 @@
-#!/bin/bash
-set -e
-CLUSTER='--cluster 9.5/main'
-DBNAME='jc2'
-
-
-
-psql $CLUSTER -x -e -v ON_ERROR_STOP=1 << EOF
-
-SET default_transaction_read_only = off;
-SET client_encoding = 'UTF8';
-SET standard_conforming_strings = on;
-
---
--- Roles
---
-
-DO
-\$body\$
-BEGIN
-	IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'jc_admin') THEN
-		CREATE ROLE jc_admin;
-		ALTER ROLE jc_admin WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'password';
-	END IF;		
-
-	IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'jc_client') THEN
-		CREATE ROLE jc_client;
-		ALTER ROLE jc_client WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'password';
-	END IF;		
-
-
-	IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'jc_maestro') THEN
-		CREATE ROLE jc_maestro;
-		ALTER ROLE jc_maestro WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION NOBYPASSRLS PASSWORD 'password';
-	END IF;		
-
-	IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'jc_system') THEN
-		CREATE ROLE jc_system;
-		ALTER ROLE jc_system WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOREPLICATION NOBYPASSRLS;
-		GRANT jc_system TO jc_admin;
-	END IF;		
-END
-\$body\$;
-
-EOF
-
-if [[ `psql $CLUSTER -tAc "SELECT 1 FROM pg_database WHERE datname='$DBNAME'"` == "1" ]]
-then
-	echo 'Database $DBNAME already exists'
-	exit 1
-else
-	echo "Creating database $DBNAME"
-	psql $CLUSTER -x -e -v ON_ERROR_STOP=1 -c "CREATE DATABASE $DBNAME WITH TEMPLATE = template0 OWNER = jc_system"
-fi
-
-psql $CLUSTER -x -e -v ON_ERROR_STOP=1 << EOF
---CREATE DATABASE $DBNAME WITH TEMPLATE = template0 OWNER = jc_system;
-REVOKE ALL ON DATABASE $DBNAME FROM PUBLIC;
-REVOKE ALL ON DATABASE $DBNAME FROM jc_system;
-GRANT ALL ON DATABASE $DBNAME TO jc_admin;
-GRANT CONNECT ON DATABASE $DBNAME TO jc_client;
-GRANT CONNECT ON DATABASE $DBNAME TO jc_maestro;
-GRANT CONNECT ON DATABASE $DBNAME TO jc_system;
-ALTER DATABASE $DBNAME SET search_path TO jobcenter, pg_catalog, pg_temp;
-
-EOF
-
-psql $CLUSTER -x -e -v ON_ERROR_STOP=1 $DBNAME << EOF
-
-SET default_transaction_read_only = off;
-
-SET client_encoding = 'UTF8';
-SET standard_conforming_strings = on;
-SET statement_timeout = 0;
-SET lock_timeout = 0;
-SET check_function_bodies = false;
-SET client_min_messages = warning;
-SET row_security = off;
-
-CREATE SCHEMA jobcenter;
-ALTER SCHEMA jobcenter OWNER TO jc_admin;
-
-CREATE EXTENSION IF NOT EXISTS plperlu WITH SCHEMA pg_catalog;
-COMMENT ON EXTENSION plperlu IS 'PL/PerlU untrusted procedural language';
-
-CREATE EXTENSION IF NOT EXISTS plpgsql WITH SCHEMA pg_catalog;
-COMMENT ON EXTENSION plpgsql IS 'PL/pgSQL procedural language';
-
-SET search_path = jobcenter, pg_catalog, pg_temp;
-
-CREATE TYPE action_type AS ENUM (
-    'system',
-    'action',
-    'workflow'
-);
-ALTER TYPE action_type OWNER TO jc_admin;
-
-CREATE TYPE job_state AS ENUM (
-    'ready',
-    'working',
-    'waiting',
-    'blocked',
-    'sleeping',
-    'done',
-    'plotting',
-    'zombie',
-    'finished',
-    'error'
-);
-ALTER TYPE job_state OWNER TO jc_admin;
-
-COMMENT ON TYPE job_state IS 'ready: waiting for a worker to pick this jobtask
-working: waiting for a worker to finish this jobtask
-waiting: waiting for some external event or timeout
-blocked: waiting for a subjob to finish
-done: waiting for the maestro to start plotting
-plotting: waiting for the maestro to decide
-zombie: waiting for a parent job to wait for us
-finished: done waiting
-error: ?';
-
-CREATE TYPE nexttask AS (
-	error boolean,
-	workflow_id integer,
-	task_id integer,
-	job_id bigint
-);
-ALTER TYPE nexttask OWNER TO jc_admin;
-
-
-EOF
-
-for i in procs/*.sql; do
-	func=$(<$i)
-	fname=`echo $func | perl -e 'local $/; $f=<>; $f=~/FUNCTION\s+(.*)\s+RETURNS/ms; print $1 if $1'`
-	if [[ -z $fname ]]; then
-		echo "function name not found in $i";
-		exit 1;
-	fi;
-	psql $CLUSTER -x -e -v ON_ERROR_STOP=1 $DBNAME <<EOF
-SET default_transaction_read_only = off;
-SET client_encoding = 'UTF8';
-SET standard_conforming_strings = on;
-SET client_min_messages = warning;
-SET check_function_bodies = false;
-
-$func;
-
-ALTER FUNCTION $fname SET search_path = jobcenter, pg_catalog, pg_temp;
-ALTER FUNCTION $fname OWNER TO jc_system;
-
-EOF
-	echo;
-done
-
-psql $CLUSTER -x -e -v ON_ERROR_STOP=1 $DBNAME <<EOF
-
-SET default_transaction_read_only = off;
-
-SET client_encoding = 'UTF8';
-SET standard_conforming_strings = on;
-SET client_min_messages = warning;
-SET default_tablespace = '';
-
-SET default_with_oids = false;
 
 CREATE TABLE _procs (
     name text NOT NULL,
     md5 text
 );
-ALTER TABLE _procs OWNER TO jc_admin;
+ALTER TABLE _procs OWNER TO $JCADMIN;
+
+CREATE TABLE _schema (
+    version text
+);
+ALTER TABLE _schema OWNER TO $JCADMIN;
 
 CREATE TABLE action_inputs (
     action_id integer NOT NULL,
@@ -178,7 +18,7 @@ CREATE TABLE action_inputs (
     "default" jsonb,
     CONSTRAINT action_inputs_check CHECK ((((optional = false) AND ("default" IS NULL)) OR (("default" IS NOT NULL) AND (optional = true))))
 );
-ALTER TABLE action_inputs OWNER TO jc_admin;
+ALTER TABLE action_inputs OWNER TO $JCADMIN;
 
 CREATE TABLE action_outputs (
     action_id integer NOT NULL,
@@ -186,7 +26,7 @@ CREATE TABLE action_outputs (
     type text NOT NULL,
     optional boolean DEFAULT false NOT NULL
 );
-ALTER TABLE action_outputs OWNER TO jc_admin;
+ALTER TABLE action_outputs OWNER TO $JCADMIN;
 
 CREATE TABLE actions (
     action_id integer NOT NULL,
@@ -196,7 +36,7 @@ CREATE TABLE actions (
     wfmapcode text,
     CONSTRAINT actions_wfmapcodecheck CHECK ((((type <> 'workflow'::action_type) AND (wfmapcode IS NULL)) OR (type = 'workflow'::action_type)))
 );
-ALTER TABLE actions OWNER TO jc_admin;
+ALTER TABLE actions OWNER TO $JCADMIN;
 
 CREATE SEQUENCE actions_actionid_seq
     START WITH 1
@@ -204,7 +44,7 @@ CREATE SEQUENCE actions_actionid_seq
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
-ALTER SEQUENCE actions_actionid_seq OWNER TO jc_admin;
+ALTER SEQUENCE actions_actionid_seq OWNER TO $JCADMIN;
 ALTER SEQUENCE actions_actionid_seq OWNED BY actions.action_id;
 
 CREATE TABLE event_subscriptions (
@@ -215,7 +55,7 @@ CREATE TABLE event_subscriptions (
     name text NOT NULL,
     CONSTRAINT check_job_is_wating CHECK (check_job_is_waiting(job_id, waiting))
 );
-ALTER TABLE event_subscriptions OWNER TO jc_admin;
+ALTER TABLE event_subscriptions OWNER TO $JCADMIN;
 
 CREATE SEQUENCE event_subscriptions_subscription_id_seq
     START WITH 1
@@ -223,14 +63,14 @@ CREATE SEQUENCE event_subscriptions_subscription_id_seq
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
-ALTER SEQUENCE event_subscriptions_subscription_id_seq OWNER TO jc_admin;
+ALTER SEQUENCE event_subscriptions_subscription_id_seq OWNER TO $JCADMIN;
 ALTER SEQUENCE event_subscriptions_subscription_id_seq OWNED BY event_subscriptions.subscription_id;
 
 CREATE TABLE job_events (
     subscription_id integer NOT NULL,
     event_id integer NOT NULL
 );
-ALTER TABLE job_events OWNER TO jc_admin;
+ALTER TABLE job_events OWNER TO $JCADMIN;
 
 CREATE TABLE job_task_log (
     job_task_log_id bigint NOT NULL,
@@ -245,7 +85,7 @@ CREATE TABLE job_task_log (
     task_outargs jsonb,
     task_inargs jsonb
 );
-ALTER TABLE job_task_log OWNER TO jc_admin;
+ALTER TABLE job_task_log OWNER TO $JCADMIN;
 COMMENT ON COLUMN job_task_log.variables IS 'the new value of the variables on completion of the task
 if the new value is different from the old value';
 
@@ -255,7 +95,7 @@ CREATE SEQUENCE job_task_log_job_task_log_id_seq
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
-ALTER SEQUENCE job_task_log_job_task_log_id_seq OWNER TO jc_admin;
+ALTER SEQUENCE job_task_log_job_task_log_id_seq OWNER TO $JCADMIN;
 ALTER SEQUENCE job_task_log_job_task_log_id_seq OWNED BY job_task_log.job_task_log_id;
 
 CREATE TABLE jobs (
@@ -282,7 +122,7 @@ CREATE TABLE jobs (
     waitforlockvalue text,
     CONSTRAINT check_is_workflow CHECK (is_workflow(workflow_id))
 );
-ALTER TABLE jobs OWNER TO jc_admin;
+ALTER TABLE jobs OWNER TO $JCADMIN;
 
 CREATE SEQUENCE jobs_jobid_seq
     START WITH 1
@@ -290,7 +130,7 @@ CREATE SEQUENCE jobs_jobid_seq
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
-ALTER SEQUENCE jobs_jobid_seq OWNER TO jc_admin;
+ALTER SEQUENCE jobs_jobid_seq OWNER TO $JCADMIN;
 ALTER SEQUENCE jobs_jobid_seq OWNED BY jobs.job_id;
 
 CREATE TABLE jsonb_object_fields (
@@ -299,7 +139,7 @@ CREATE TABLE jsonb_object_fields (
     fields text[],
     CONSTRAINT jsonb_object_fields_check CHECK ((((standard = true) AND (fields IS NULL)) OR ((standard = false) AND (fields IS NOT NULL))))
 );
-ALTER TABLE jsonb_object_fields OWNER TO jc_admin;
+ALTER TABLE jsonb_object_fields OWNER TO $JCADMIN;
 
 CREATE TABLE locks (
 	job_id bigint NOT NULL,
@@ -307,12 +147,12 @@ CREATE TABLE locks (
 	lockvalue text NOT NULL,
 	contended boolean DEFAULT false
 );
-ALTER TABLE locks OWNER TO jc_admin;
+ALTER TABLE locks OWNER TO $JCADMIN;
 
 CREATE TABLE locktypes (
 	locktype text NOT NULL
 );
-ALTER TABLE locktypes OWNER TO jc_admin;
+ALTER TABLE locktypes OWNER TO $JCADMIN;
 
 CREATE TABLE next_tasks (
     from_task_id integer NOT NULL,
@@ -320,14 +160,14 @@ CREATE TABLE next_tasks (
     "when" text NOT NULL,
     CONSTRAINT check_same_workflow CHECK (check_same_workflow(from_task_id, to_task_id))
 );
-ALTER TABLE next_tasks OWNER TO jc_admin;
+ALTER TABLE next_tasks OWNER TO $JCADMIN;
 
 CREATE TABLE queued_events (
     event_id bigint NOT NULL,
     "when" timestamp with time zone DEFAULT now() NOT NULL,
     eventdata jsonb NOT NULL
 );
-ALTER TABLE queued_events OWNER TO jc_admin;
+ALTER TABLE queued_events OWNER TO $JCADMIN;
 
 CREATE SEQUENCE queued_events_event_id_seq
     START WITH 1
@@ -335,7 +175,7 @@ CREATE SEQUENCE queued_events_event_id_seq
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
-ALTER SEQUENCE queued_events_event_id_seq OWNER TO jc_admin;
+ALTER SEQUENCE queued_events_event_id_seq OWNER TO $JCADMIN;
 ALTER SEQUENCE queued_events_event_id_seq OWNED BY queued_events.event_id;
 
 CREATE TABLE tasks (
@@ -352,7 +192,7 @@ CREATE TABLE tasks (
     CONSTRAINT check_is_workflow CHECK (is_workflow(workflow_id)),
     CONSTRAINT check_wait CHECK (check_wait(action_id, wait))
 );
-ALTER TABLE tasks OWNER TO jc_admin;
+ALTER TABLE tasks OWNER TO $JCADMIN;
 
 CREATE SEQUENCE tasks_taskid_seq
     START WITH 1
@@ -360,7 +200,7 @@ CREATE SEQUENCE tasks_taskid_seq
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
-ALTER SEQUENCE tasks_taskid_seq OWNER TO jc_admin;
+ALTER SEQUENCE tasks_taskid_seq OWNER TO $JCADMIN;
 ALTER SEQUENCE tasks_taskid_seq OWNED BY tasks.task_id;
 
 CREATE TABLE worker_actions (
@@ -368,7 +208,7 @@ CREATE TABLE worker_actions (
     action_id integer NOT NULL,
     CONSTRAINT check_is_action CHECK (is_action(action_id))
 );
-ALTER TABLE worker_actions OWNER TO jc_admin;
+ALTER TABLE worker_actions OWNER TO $JCADMIN;
 
 CREATE TABLE workers (
     worker_id bigint NOT NULL,
@@ -377,7 +217,7 @@ CREATE TABLE workers (
     stopped timestamp with time zone,
     last_ping timestamp with time zone DEFAULT now() NOT NULL
 );
-ALTER TABLE workers OWNER TO jc_admin;
+ALTER TABLE workers OWNER TO $JCADMIN;
 
 CREATE SEQUENCE workers_worker_id_seq
     START WITH 1
@@ -385,7 +225,7 @@ CREATE SEQUENCE workers_worker_id_seq
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
-ALTER TABLE workers_worker_id_seq OWNER TO jc_admin;
+ALTER TABLE workers_worker_id_seq OWNER TO $JCADMIN;
 ALTER SEQUENCE workers_worker_id_seq OWNED BY workers.worker_id;
 
 --
@@ -401,7 +241,7 @@ ALTER TABLE ONLY tasks ALTER COLUMN task_id SET DEFAULT nextval('tasks_taskid_se
 ALTER TABLE ONLY workers ALTER COLUMN worker_id SET DEFAULT nextval('workers_worker_id_seq'::regclass);
 
 --
--- Data for Name: action_inputs; Type: TABLE DATA; Schema: jobcenter; Owner: jc_admin
+-- Data for Name: action_inputs; Type: TABLE DATA; Schema: jobcenter; Owner: $JCADMIN
 --
 
 COPY action_inputs (action_id, name, type, optional, "default") FROM stdin;
@@ -420,7 +260,7 @@ COPY action_inputs (action_id, name, type, optional, "default") FROM stdin;
 \.
 
 --
--- Data for Name: action_outputs; Type: TABLE DATA; Schema: jobcenter; Owner: jc_admin
+-- Data for Name: action_outputs; Type: TABLE DATA; Schema: jobcenter; Owner: $JCADMIN
 --
 
 COPY action_outputs (action_id, name, type, optional) FROM stdin;
@@ -454,13 +294,13 @@ COPY actions (action_id, name, type, version, wfmapcode) FROM stdin;
 \.
 
 --
--- Name: actions_actionid_seq; Type: SEQUENCE SET; Schema: jobcenter; Owner: jc_admin
+-- Name: actions_actionid_seq; Type: SEQUENCE SET; Schema: jobcenter; Owner: $JCADMIN
 --
 
 SELECT pg_catalog.setval('actions_actionid_seq', 4, true);
 
 --
--- Data for Name: jsonb_object_fields; Type: TABLE DATA; Schema: jobcenter; Owner: jc_admin
+-- Data for Name: jsonb_object_fields; Type: TABLE DATA; Schema: jobcenter; Owner: $JCADMIN
 --
 
 COPY jsonb_object_fields (typename, standard, fields) FROM stdin;
@@ -641,274 +481,278 @@ ALTER TABLE ONLY worker_actions
     ADD CONSTRAINT worker_actions_worker_id_fkey FOREIGN KEY (worker_id) REFERENCES workers(worker_id) ON DELETE CASCADE;
 
 --
--- Grants
+-- More Grants
 --
 
-REVOKE ALL ON SCHEMA jobcenter FROM PUBLIC;
-GRANT ALL ON SCHEMA jobcenter TO jc_admin;
-GRANT USAGE ON SCHEMA jobcenter TO jc_client;
-GRANT USAGE ON SCHEMA jobcenter TO jc_maestro;
-GRANT USAGE ON SCHEMA jobcenter TO jc_system;
-
 REVOKE ALL ON FUNCTION announce(a_workername text, a_actionname text) FROM PUBLIC;
-GRANT ALL ON FUNCTION announce(a_workername text, a_actionname text) TO jc_system;
+GRANT ALL ON FUNCTION announce(a_workername text, a_actionname text) TO $JCSYSTEM;
 GRANT ALL ON FUNCTION announce(a_workername text, a_actionname text) TO jc_client;
 
 REVOKE ALL ON FUNCTION check_job_is_waiting(bigint, boolean) FROM PUBLIC;
-GRANT ALL ON FUNCTION check_job_is_waiting(bigint, boolean) TO jc_system;
+GRANT ALL ON FUNCTION check_job_is_waiting(bigint, boolean) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION check_same_workflow(a_task1_id integer, a_task2_id integer) FROM PUBLIC;
-GRANT ALL ON FUNCTION check_same_workflow(a_task1_id integer, a_task2_id integer) TO jc_system;
+GRANT ALL ON FUNCTION check_same_workflow(a_task1_id integer, a_task2_id integer) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION check_wait(a_action_id integer, a_wait boolean) FROM PUBLIC;
-GRANT ALL ON FUNCTION check_wait(a_action_id integer, a_wait boolean) TO jc_system;
+GRANT ALL ON FUNCTION check_wait(a_action_id integer, a_wait boolean) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION check_wait_for_task(a_action_id integer, a_wait_for_task integer) FROM PUBLIC;
-GRANT ALL ON FUNCTION check_wait_for_task(a_action_id integer, a_wait_for_task integer) TO jc_system;
+GRANT ALL ON FUNCTION check_wait_for_task(a_action_id integer, a_wait_for_task integer) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION cleanup_on_finish() FROM PUBLIC;
-GRANT ALL ON FUNCTION cleanup_on_finish() TO jc_system;
+GRANT ALL ON FUNCTION cleanup_on_finish() TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION clear_waiting_events() FROM PUBLIC;
-GRANT ALL ON FUNCTION clear_waiting_events() TO jc_system;
+GRANT ALL ON FUNCTION clear_waiting_events() TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION create_job(a_wfname text, a_args jsonb) FROM PUBLIC;
-GRANT ALL ON FUNCTION create_job(a_wfname text, a_args jsonb) TO jc_system;
+GRANT ALL ON FUNCTION create_job(a_wfname text, a_args jsonb) TO $JCSYSTEM;
 GRANT ALL ON FUNCTION create_job(a_wfname text, a_args jsonb) TO jc_client;
 
 REVOKE ALL ON FUNCTION do_branch_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_branch_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO jc_system;
+GRANT ALL ON FUNCTION do_branch_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_branchcasecode(code text, args jsonb, vars jsonb) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_branchcasecode(code text, args jsonb, vars jsonb) TO jc_system;
+GRANT ALL ON FUNCTION do_branchcasecode(code text, args jsonb, vars jsonb) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_check_workers() FROM PUBLIC;
-GRANT ALL ON FUNCTION do_check_workers() TO jc_system;
-GRANT ALL ON FUNCTION do_check_workers() TO jc_maestro;
+GRANT ALL ON FUNCTION do_check_workers() TO $JCSYSTEM;
+GRANT ALL ON FUNCTION do_check_workers() TO $JCMAESTRO;
 
 REVOKE ALL ON FUNCTION do_create_childjob(a_parentworkflow_id integer, a_parenttask_id integer, a_parentjob_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_create_childjob(a_parentworkflow_id integer, a_parenttask_id integer, a_parentjob_id bigint) TO jc_system;
+GRANT ALL ON FUNCTION do_create_childjob(a_parentworkflow_id integer, a_parenttask_id integer, a_parentjob_id bigint) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_end_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_end_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO jc_system;
+GRANT ALL ON FUNCTION do_end_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_eval(code text, args jsonb, vars jsonb) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_eval(code text, args jsonb, vars jsonb) TO jc_system;
+GRANT ALL ON FUNCTION do_eval(code text, args jsonb, vars jsonb) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_eval_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_eval_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO jc_system;
+GRANT ALL ON FUNCTION do_eval_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_imap(code text, args jsonb, vars jsonb) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_imap(code text, args jsonb, vars jsonb) TO jc_system;
+GRANT ALL ON FUNCTION do_imap(code text, args jsonb, vars jsonb) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_inargsmap(a_action_id integer, a_task_id integer, a_args jsonb, a_vars jsonb) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_inargsmap(a_action_id integer, a_task_id integer, a_args jsonb, a_vars jsonb) TO jc_system;
+GRANT ALL ON FUNCTION do_inargsmap(a_action_id integer, a_task_id integer, a_args jsonb, a_vars jsonb) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_jobtask(a_workflow_id integer, a_task_id integer, a_job_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_jobtask(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO jc_system;
-GRANT ALL ON FUNCTION do_jobtask(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO jc_maestro;
+GRANT ALL ON FUNCTION do_jobtask(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO $JCSYSTEM;
+GRANT ALL ON FUNCTION do_jobtask(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO $JCMAESTRO;
 
 REVOKE ALL ON FUNCTION do_jobtaskdone(a_workflow_id integer, a_task_id integer, a_job_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_jobtaskdone(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO jc_system;
-GRANT ALL ON FUNCTION do_jobtaskdone(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO jc_maestro;
+GRANT ALL ON FUNCTION do_jobtaskdone(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO $JCSYSTEM;
+GRANT ALL ON FUNCTION do_jobtaskdone(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO $JCMAESTRO;
 
 REVOKE ALL ON FUNCTION do_jobtaskerror(a_workflow_id integer, a_task_id integer, a_job_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_jobtaskerror(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO jc_system;
-GRANT ALL ON FUNCTION do_jobtaskerror(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO jc_maestro;
+GRANT ALL ON FUNCTION do_jobtaskerror(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO $JCSYSTEM;
+GRANT ALL ON FUNCTION do_jobtaskerror(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO $JCMAESTRO;
 
 REVOKE ALL ON FUNCTION do_omap(code text, vars jsonb, oargs jsonb) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_omap(code text, vars jsonb, oargs jsonb) TO jc_system;
+GRANT ALL ON FUNCTION do_omap(code text, vars jsonb, oargs jsonb) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_outargsmap(a_action_id integer, a_task_id integer, a_oldvars jsonb, a_outargs jsonb) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_outargsmap(a_action_id integer, a_task_id integer, a_oldvars jsonb, a_outargs jsonb) TO jc_system;
+GRANT ALL ON FUNCTION do_outargsmap(a_action_id integer, a_task_id integer, a_oldvars jsonb, a_outargs jsonb) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_ping(a_worker_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_ping(a_worker_id bigint) TO jc_system;
-GRANT ALL ON FUNCTION do_ping(a_worker_id bigint) TO jc_maestro;
+GRANT ALL ON FUNCTION do_ping(a_worker_id bigint) TO $JCSYSTEM;
+GRANT ALL ON FUNCTION do_ping(a_worker_id bigint) TO $JCMAESTRO;
 
 REVOKE ALL ON FUNCTION do_prepare_for_action(a_workflow_id integer, a_task_id integer, a_job_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_prepare_for_action(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO jc_system;
+GRANT ALL ON FUNCTION do_prepare_for_action(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_raise_error(a_workflow_id integer, a_task_id integer, a_job_id bigint, a_errmsg text) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_raise_error(a_workflow_id integer, a_task_id integer, a_job_id bigint, a_errmsg text) TO jc_system;
+GRANT ALL ON FUNCTION do_raise_error(a_workflow_id integer, a_task_id integer, a_job_id bigint, a_errmsg text) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_raise_error_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_raise_error_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO jc_system;
+GRANT ALL ON FUNCTION do_raise_error_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_raise_event_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_raise_event_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO jc_system;
+GRANT ALL ON FUNCTION do_raise_event_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_raise_fatal_error(a_workflow_id integer, a_task_id integer, a_job_id bigint, a_errmsg text) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_raise_fatal_error(a_workflow_id integer, a_task_id integer, a_job_id bigint, a_errmsg text) TO jc_system;
+GRANT ALL ON FUNCTION do_raise_fatal_error(a_workflow_id integer, a_task_id integer, a_job_id bigint, a_errmsg text) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_reap_child_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_reap_child_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO jc_system;
+GRANT ALL ON FUNCTION do_reap_child_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_subscribe_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_subscribe_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO jc_system;
+GRANT ALL ON FUNCTION do_subscribe_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_switch_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_switch_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO jc_system;
+GRANT ALL ON FUNCTION do_switch_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_switchcasecode(code text, args jsonb, vars jsonb) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_switchcasecode(code text, args jsonb, vars jsonb) TO jc_system;
+GRANT ALL ON FUNCTION do_switchcasecode(code text, args jsonb, vars jsonb) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_task_done(a_workflow_id integer, a_task_id integer, a_job_id bigint, a_outargs jsonb, a_notify boolean) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_task_done(a_workflow_id integer, a_task_id integer, a_job_id bigint, a_outargs jsonb, a_notify boolean) TO jc_system;
+GRANT ALL ON FUNCTION do_task_done(a_workflow_id integer, a_task_id integer, a_job_id bigint, a_outargs jsonb, a_notify boolean) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_task_error(a_workflow_id integer, a_task_id integer, a_job_id bigint, a_errargs jsonb) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_task_error(a_workflow_id integer, a_task_id integer, a_job_id bigint, a_errargs jsonb) TO jc_system;
+GRANT ALL ON FUNCTION do_task_error(a_workflow_id integer, a_task_id integer, a_job_id bigint, a_errargs jsonb) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_timeout() FROM PUBLIC;
-GRANT ALL ON FUNCTION do_timeout() TO jc_system;
-GRANT ALL ON FUNCTION do_timeout() TO jc_maestro;
+GRANT ALL ON FUNCTION do_timeout() TO $JCSYSTEM;
+GRANT ALL ON FUNCTION do_timeout() TO $JCMAESTRO;
 
 REVOKE ALL ON FUNCTION do_unsubscribe_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_unsubscribe_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO jc_system;
+GRANT ALL ON FUNCTION do_unsubscribe_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_wait_for_children_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_wait_for_children_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO jc_system;
+GRANT ALL ON FUNCTION do_wait_for_children_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_wait_for_event_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_wait_for_event_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO jc_system;
+GRANT ALL ON FUNCTION do_wait_for_event_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_wfmap(code text, vars jsonb) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_wfmap(code text, vars jsonb) TO jc_system;
+GRANT ALL ON FUNCTION do_wfmap(code text, vars jsonb) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION do_workflowoutargsmap(a_workflow_id integer, a_vars jsonb) FROM PUBLIC;
-GRANT ALL ON FUNCTION do_workflowoutargsmap(a_workflow_id integer, a_vars jsonb) TO jc_system;
+GRANT ALL ON FUNCTION do_workflowoutargsmap(a_workflow_id integer, a_vars jsonb) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION get_job_status(a_job_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION get_job_status(a_job_id bigint) TO jc_system;
+GRANT ALL ON FUNCTION get_job_status(a_job_id bigint) TO $JCSYSTEM;
 GRANT ALL ON FUNCTION get_job_status(a_job_id bigint) TO jc_client;
 
 REVOKE ALL ON FUNCTION get_task(a_workername text, a_actionname text, a_job_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION get_task(a_workername text, a_actionname text, a_job_id bigint) TO jc_system;
+GRANT ALL ON FUNCTION get_task(a_workername text, a_actionname text, a_job_id bigint) TO $JCSYSTEM;
 GRANT ALL ON FUNCTION get_task(a_workername text, a_actionname text, a_job_id bigint) TO jc_client;
 
 REVOKE ALL ON FUNCTION increase_stepcounter() FROM PUBLIC;
-GRANT ALL ON FUNCTION increase_stepcounter() TO jc_system;
+GRANT ALL ON FUNCTION increase_stepcounter() TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION is_action(integer) FROM PUBLIC;
-GRANT ALL ON FUNCTION is_action(integer) TO jc_system;
+GRANT ALL ON FUNCTION is_action(integer) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION is_workflow(integer) FROM PUBLIC;
-GRANT ALL ON FUNCTION is_workflow(integer) TO jc_system;
+GRANT ALL ON FUNCTION is_workflow(integer) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION nexttask(error boolean, workflow_id integer, task_id integer, job_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION nexttask(error boolean, workflow_id integer, task_id integer, job_id bigint) TO jc_system;
+GRANT ALL ON FUNCTION nexttask(error boolean, workflow_id integer, task_id integer, job_id bigint) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION notify_timerchange() FROM PUBLIC;
-GRANT ALL ON FUNCTION notify_timerchange() TO jc_system;
+GRANT ALL ON FUNCTION notify_timerchange() TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION ping(a_worker_id bigint) FROM PUBLIC;
-GRANT ALL ON FUNCTION ping(a_worker_id bigint) TO jc_system;
+GRANT ALL ON FUNCTION ping(a_worker_id bigint) TO $JCSYSTEM;
 GRANT ALL ON FUNCTION ping(a_worker_id bigint) TO jc_client;
 
 REVOKE ALL ON FUNCTION raise_event(a_eventdata jsonb) FROM PUBLIC;
-GRANT ALL ON FUNCTION raise_event(a_eventdata jsonb) TO jc_system;
+GRANT ALL ON FUNCTION raise_event(a_eventdata jsonb) TO $JCSYSTEM;
 GRANT ALL ON FUNCTION raise_event(a_eventdata jsonb) TO jc_client;
 
 REVOKE ALL ON FUNCTION sanity_check_workflow(a_workflow_id integer) FROM PUBLIC;
-GRANT ALL ON FUNCTION sanity_check_workflow(a_workflow_id integer) TO jc_system;
+GRANT ALL ON FUNCTION sanity_check_workflow(a_workflow_id integer) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION task_done(a_jobcookie text, a_out_args jsonb) FROM PUBLIC;
-GRANT ALL ON FUNCTION task_done(a_jobcookie text, a_out_args jsonb) TO jc_system;
+GRANT ALL ON FUNCTION task_done(a_jobcookie text, a_out_args jsonb) TO $JCSYSTEM;
 GRANT ALL ON FUNCTION task_done(a_jobcookie text, a_out_args jsonb) TO jc_client;
 
 REVOKE ALL ON FUNCTION task_failed(a_cookie text, a_errmsg text) FROM PUBLIC;
-GRANT ALL ON FUNCTION task_failed(a_cookie text, a_errmsg text) TO jc_system;
+GRANT ALL ON FUNCTION task_failed(a_cookie text, a_errmsg text) TO $JCSYSTEM;
 GRANT ALL ON FUNCTION task_failed(a_cookie text, a_errmsg text) TO jc_client;
 
 REVOKE ALL ON TABLE _procs FROM PUBLIC;
-GRANT ALL ON TABLE _procs TO jc_admin;
+GRANT ALL ON TABLE _procs TO $JCADMIN;
 
 REVOKE ALL ON TABLE action_inputs FROM PUBLIC;
-GRANT ALL ON TABLE action_inputs TO jc_admin;
-GRANT SELECT ON TABLE action_inputs TO jc_system;
+GRANT ALL ON TABLE action_inputs TO $JCADMIN;
+GRANT SELECT ON TABLE action_inputs TO $JCSYSTEM;
 
 REVOKE ALL ON TABLE action_outputs FROM PUBLIC;
-GRANT ALl ON TABLE action_outputs TO jc_admin;
-GRANT SELECT ON TABLE action_outputs TO jc_system;
+GRANT ALl ON TABLE action_outputs TO $JCADMIN;
+GRANT SELECT ON TABLE action_outputs TO $JCSYSTEM;
 
 REVOKE ALL ON TABLE actions FROM PUBLIC;
-GRANT ALL ON TABLE actions TO jc_admin;
-GRANT SELECT ON TABLE actions TO jc_system;
+GRANT ALL ON TABLE actions TO $JCADMIN;
+GRANT SELECT ON TABLE actions TO $JCSYSTEM;
 
 REVOKE ALL ON SEQUENCE actions_actionid_seq FROM PUBLIC;
-GRANT ALL ON SEQUENCE actions_actionid_seq TO jc_admin;
+GRANT ALL ON SEQUENCE actions_actionid_seq TO $JCADMIN;
 
 REVOKE ALL ON TABLE event_subscriptions FROM PUBLIC;
-GRANT ALL ON TABLE event_subscriptions TO jc_admin;
-GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE event_subscriptions TO jc_system;
+GRANT ALL ON TABLE event_subscriptions TO $JCADMIN;
+GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE event_subscriptions TO $JCSYSTEM;
 
 REVOKE ALL ON SEQUENCE event_subscriptions_subscription_id_seq FROM PUBLIC;
-GRANT ALL ON SEQUENCE event_subscriptions_subscription_id_seq TO jc_admin;
-GRANT ALL ON SEQUENCE event_subscriptions_subscription_id_seq TO jc_system;
+GRANT ALL ON SEQUENCE event_subscriptions_subscription_id_seq TO $JCADMIN;
+GRANT ALL ON SEQUENCE event_subscriptions_subscription_id_seq TO $JCSYSTEM;
 
 REVOKE ALL ON TABLE job_events FROM PUBLIC;
-GRANT ALL ON TABLE job_events TO jc_admin;
-GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE job_events TO jc_system;
+GRANT ALL ON TABLE job_events TO $JCADMIN;
+GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE job_events TO $JCSYSTEM;
 
 REVOKE ALL ON TABLE job_task_log FROM PUBLIC;
-GRANT ALL ON TABLE job_task_log TO jc_admin;
-GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE job_task_log TO jc_system;
+GRANT ALL ON TABLE job_task_log TO $JCADMIN;
+GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE job_task_log TO $JCSYSTEM;
 
 REVOKE ALL ON SEQUENCE job_task_log_job_task_log_id_seq FROM PUBLIC;
-GRANT ALL ON SEQUENCE job_task_log_job_task_log_id_seq TO jc_admin;
-GRANT ALL ON SEQUENCE job_task_log_job_task_log_id_seq TO jc_system;
+GRANT ALL ON SEQUENCE job_task_log_job_task_log_id_seq TO $JCADMIN;
+GRANT ALL ON SEQUENCE job_task_log_job_task_log_id_seq TO $JCSYSTEM;
 
 REVOKE ALL ON TABLE jobs FROM PUBLIC;
-GRANT ALL ON TABLE jobs TO jc_admin;
-GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE jobs TO jc_system;
+GRANT ALL ON TABLE jobs TO $JCADMIN;
+GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE jobs TO $JCSYSTEM;
 
 REVOKE ALL ON SEQUENCE jobs_jobid_seq FROM PUBLIC;
-GRANT ALL ON SEQUENCE jobs_jobid_seq TO jc_admin;
-GRANT ALL ON SEQUENCE jobs_jobid_seq TO jc_system;
+GRANT ALL ON SEQUENCE jobs_jobid_seq TO $JCADMIN;
+GRANT ALL ON SEQUENCE jobs_jobid_seq TO $JCSYSTEM;
 
 REVOKE ALL ON TABLE jsonb_object_fields FROM PUBLIC;
-GRANT ALL ON TABLE jsonb_object_fields TO jc_admin;
-GRANT SELECT ON TABLE jsonb_object_fields TO jc_system;
+GRANT ALL ON TABLE jsonb_object_fields TO $JCADMIN;
+GRANT SELECT ON TABLE jsonb_object_fields TO $JCSYSTEM;
 
 REVOKE ALL ON TABLE locks FROM PUBLIC;
-GRANT ALL ON TABLE locks TO jc_admin;
-GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE locks TO jc_system;
+GRANT ALL ON TABLE locks TO $JCADMIN;
+GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE locks TO $JCSYSTEM;
 
 REVOKE ALL ON TABLE locktypes FROM PUBLIC;
-GRANT ALL ON TABLE locktypes TO jc_admin;
-GRANT SELECT ON TABLE locktypes TO jc_system;
+GRANT ALL ON TABLE locktypes TO $JCADMIN;
+GRANT SELECT ON TABLE locktypes TO $JCSYSTEM;
 
 REVOKE ALL ON TABLE next_tasks FROM PUBLIC;
-GRANT ALL ON TABLE next_tasks TO jc_admin;
-GRANT SELECT ON TABLE next_tasks TO jc_system;
+GRANT ALL ON TABLE next_tasks TO $JCADMIN;
+GRANT SELECT ON TABLE next_tasks TO $JCSYSTEM;
 
 REVOKE ALL ON TABLE queued_events FROM PUBLIC;
-GRANT ALL ON TABLE queued_events TO jc_admin;
-GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE queued_events TO jc_system;
+GRANT ALL ON TABLE queued_events TO $JCADMIN;
+GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE queued_events TO $JCSYSTEM;
 
 REVOKE ALL ON SEQUENCE queued_events_event_id_seq FROM PUBLIC;
-GRANT ALL ON SEQUENCE queued_events_event_id_seq TO jc_admin;
-GRANT ALL ON SEQUENCE queued_events_event_id_seq TO jc_system;
+GRANT ALL ON SEQUENCE queued_events_event_id_seq TO $JCADMIN;
+GRANT ALL ON SEQUENCE queued_events_event_id_seq TO $JCSYSTEM;
 
 REVOKE ALL ON TABLE tasks FROM PUBLIC;
-GRANT ALL ON TABLE tasks TO jc_system;
-GRANT SELECT ON TABLE tasks TO jc_system;
+GRANT ALL ON TABLE tasks TO $JCSYSTEM;
+GRANT SELECT ON TABLE tasks TO $JCSYSTEM;
 
 REVOKE ALL ON SEQUENCE tasks_taskid_seq FROM PUBLIC;
-GRANT ALL ON SEQUENCE tasks_taskid_seq TO jc_admin;
-GRANT ALL ON SEQUENCE tasks_taskid_seq TO jc_system;
+GRANT ALL ON SEQUENCE tasks_taskid_seq TO $JCADMIN;
+GRANT ALL ON SEQUENCE tasks_taskid_seq TO $JCSYSTEM;
 
 REVOKE ALL ON TABLE worker_actions FROM PUBLIC;
-GRANT ALL ON TABLE worker_actions TO jc_admin;
-GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE worker_actions TO jc_system;
+GRANT ALL ON TABLE worker_actions TO $JCADMIN;
+GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE worker_actions TO $JCSYSTEM;
 
 REVOKE ALL ON TABLE workers FROM PUBLIC;
-GRANT ALL ON TABLE workers TO jc_admin;
-GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE workers TO jc_system;
+GRANT ALL ON TABLE workers TO $JCADMIN;
+GRANT SELECT,INSERT,DELETE,TRUNCATE,UPDATE ON TABLE workers TO $JCSYSTEM;
 
 REVOKE ALL ON SEQUENCE workers_worker_id_seq FROM PUBLIC;
-GRANT ALL ON SEQUENCE workers_worker_id_seq TO jc_admin;
-GRANT ALL ON SEQUENCE workers_worker_id_seq TO jc_system;
+GRANT ALL ON SEQUENCE workers_worker_id_seq TO $JCADMIN;
+GRANT ALL ON SEQUENCE workers_worker_id_seq TO $JCSYSTEM;
 
-EOF
+INSERT INTO _procs
+	SELECT
+		p.proname AS "name",
+		md5(pg_catalog.pg_get_functiondef(p.oid)) AS "md5"
+	FROM
+		pg_catalog.pg_proc p
+		JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+	 WHERE
+	 	pg_catalog.pg_function_is_visible(p.oid)
+	 	AND n.nspname = 'jobcenter';
 
+INSERT INTO _schema values ('1');
