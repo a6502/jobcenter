@@ -13,20 +13,22 @@ use Config::Tiny;
 
 exit main(@ARGV);
 
-our ($cfg, $pg, $allprocsq, $procsrcq, $procmd5q);
+# ugly but handy globals
+our ($cfg, $pg, $allprocsq, $procsrcq, $reposchema, $dbschema);
 
 sub main {
 	my %actions = (
 		'check' => \&checkschema,
 		'compare' => \&compprocs,
 		'create' => \&createschema,
-		'dump' => \&dumpprocs,
+		'downgrade' => \&downgradeschema,
+		#'dump' => \&dumpprocs, 
 		'help' => \&help,
 		'load' => \&loadproc,
-		#'revert' => \&revertschema,
 		'save' => \&saveproc,
+		'update' => \&updateprocs,
 		'upgrade' => \&upgradeschema,
-		#'verify' => \&verifyschema,
+		'verify' => \&verifyschema,
 	);
 	
 	my %commands = (
@@ -43,8 +45,8 @@ sub main {
 
  	die "$0: don't know what to do" unless $handler;
 
-	#cfg = Config::Tiny->read('../etc/jobcenter.conf');
-	$cfg = Config::Tiny->read('../etc/jc2.conf');
+	cfg = Config::Tiny->read('../etc/jobcenter.conf');
+	#$cfg = Config::Tiny->read('../etc/jc2.conf');
 	die 'Config Errror: ' . Config::Tiny->errstr() unless $cfg;
 	#print Dumper($cfg);
 
@@ -64,7 +66,20 @@ sub main {
 }
 
 sub help {
-	say "use the source!";
+	print <<'EOF';
+dbdings usage: dbdings <command>
+Schema management commands:
+	check:           check schema version in db and repo
+	downgrade <ver>: try to downgrade db schame version to <ver>
+	upgrade:         try to upgrade db schema version to repo version
+	verify:          verify latest schema upgrade
+Stored procedure management commands:
+	compare:         compare version between db and repo
+	loadproc <proc>: load <proc> from repo into db
+	saveproc <proc>: save <proc> from db to repo
+	update:          update procs in db from repo
+
+EOF
 }
 
 sub checkdbschema {
@@ -83,7 +98,7 @@ sub checkdbschema {
 	$res = $res->array;
 	$res = $$res[0];
 	say 'db schema version ', $res // 'undef';
-	return $res
+	$dbschema = $res;
 }
 
 sub checkreposchema {
@@ -94,36 +109,33 @@ sub checkreposchema {
 	}
 	$tag = $1;
 	say "found repo schema version $tag";
-	return $tag;
+	$reposchema = $tag;
 }
 
+
 sub findschemaupgrades {
-	my ($reposchema, $dbschema) = @_;
-
-	#opendir(my $dh, "$FindBin::Bin/schema") or die "can't opendir $FindBin::Bin/schema : $!";
-	#my @dirs = sort grep { !/^\./ and -d "$FindBin::Bin/schema/$_" } readdir($dh);
-	#closedir($dh);
-	my @dirs = sort <schema/v*/alter{1,2}.sql>;
-
-	say 'dirs: ', join(', ', @dirs);
-	@dirs = grep { my ($v) = $_ =~ m|/v([0-9.]+/)|; say "v: $v"; $v ge $dbschema and $v le $reposchema } @dirs;
-	say 'need to do ', join(', ', @dirs);
+	my @scripts = sort grep { -f $_ or die "$_ not found" } <schema/v*/{alter,verify}.sql>;
+	@scripts = grep { my ($v) = $_ =~ m|/v([0-9.]+)/|; $v gt $dbschema and $v le $reposchema } @scripts;
+	#say 'found scripts: ', join(', ', @scripts);
+	return @scripts;
 }
 
 sub checkschema {
-	my $dbschema = checkdbschema();
-	my $reposchema = checkreposchema();
+	checkdbschema();
+	checkreposchema();
 	unless (defined $dbschema) {
-		say "need to create the schema from scratch";
-		say "call $0 createschema to do that";
-		return 0;
+		die "need to create the schema from scratch\n" .
+		    "call $0 create to do that";
 	}
 	if ($reposchema lt $dbschema) {
-		die "fileschema is lower than dbschema ($reposchema < $dbschema)";
+		die "fileschema is lower than dbschema ($reposchema < $dbschema)\n" .
+		    "downgrade dbschema before reverting repo";
 	}
 	if ($reposchema gt $dbschema) {
-		findschemaupgrades($reposchema, $dbschema);
-		return 0;
+		my @scripts = findschemaupgrades;
+		die 'upgrade scripts not found?' unless @scripts;
+		say 'need to do scripts ', join(', ', @scripts), ' for upgrade';
+		return 1;
 	}		
 	if ($reposchema eq $dbschema) {
 		say "schema is up to date";
@@ -133,21 +145,19 @@ sub checkschema {
 }
 
 sub createschema {
-	my $dbschema = checkdbschema();
+	checkdbschema();
 	die "db already exists?" if $dbschema;
-	my $reposchema = checkreposchema();
+	checkreposchema();
 	say "need to create schema v$reposchema";
 	
-	# find the create scripts
-	#my @scripts = grep { my ($v) = $_ =~ m|^schema/v([0-9.]+)/|; $v le $reposchema } sort <schema/v*/create{1,2}.sql>;
+	# find the most recentcreate scripts
 	my @scripts = (
 		grep { $_ } # only defined items
 		map {
 			# try to find create script in dir
-			my @f = <$_/create{1,2}.sql>;
-			if (@f) {
-				die "did not find 2 create scripts" if $#f != 1;
-				[ $f[0], $f[1] ]
+			my @f = grep { -f $_ } <$_/{create{1,2},verify}.sql>;
+			if ($#f == 2) {
+				[ $f[0], $f[1], $f[2] ]
 			} else {
 				#say 'no scripts in ', $_;
 				undef;
@@ -159,24 +169,107 @@ sub createschema {
 			-d $_ and $v and $v le $reposchema
 		}
 		<schema/v*>
-	)[-1]; # we only want the newest version
-	print "scripts: ", Dumper(\@scripts);
-	my $v = ($scripts[0][0] =~ m|^schema/v([0-9.]+)/|) or die "cannot find script version";
+	)[-1]; # we only want the newest version create scripts
+	#print "scripts: ", Dumper(\@scripts);
 
-	push @scripts, findschemaupgrades($v, $reposchema) if $v lt $reposchema;
-
-	say 'need to do ', join(', ', map { "(@$_[0], @$_[1])"} @scripts);
+	($dbschema) = ($scripts[0][0] =~ m|^schema/v([0-9.]+)/|) or die "cannot find script version";
+	
+	say 'need to do ', join(', ', map { (ref) ? join(', ', @$_) : $_ } @scripts);
 	
 	my @sqls;
 	for (@scripts) {
-		push @sqls, sqlfile(@$_[0]);
-		push @sqls, procs("schema/v$v/procs");
-		push @sqls, sqlfile( @$_[1]);
+		if (ref) {
+			push @sqls, sqlfile(@$_[0]); # create1
+			push @sqls, procs("schema/v$dbschema/procs");
+			push @sqls, sqlfile(@$_[1]); # create1
+			push @sqls, sqlfile(@$_[2]); # verify
+		} else {
+			push @sqls, sqlfile($_);
+		}
 	}
-	execsql(\@sqls);
+	my $res = execsql(\@sqls);
+	die 'create failed' if $res;
 
+	if ($dbschema lt $reposchema) {
+		say "created schema version $dbschema, now upgrading to $reposchema";
+		return upgradeschema();
+	}
+	say "created schema version $dbschema";
 	return 0;
 }
+
+sub upgradeschema {
+	unless (checkschema()) {
+		say "nothing to upgrade?";
+		return 0;
+	}
+	my @scripts = findschemaupgrades($reposchema, $dbschema);
+	
+	say 'need to do ', join(', ', @scripts);
+
+	my @sqls;
+	push @sqls, sqlfile($_) for @scripts;
+	my $res = execsql(\@sqls);
+	
+	die "upgrade failed" if $res;
+
+	$pg->db->query(q|update _schema set version = $1|, $reposchema);
+	# FIXME: check update?
+
+	say "upgraded to $reposchema";
+	return 0	
+}	
+
+sub downgradeschema {
+	my $want = shift;
+	die "downgrade to what version?" unless $want;
+	checkschema();
+	die "want version bigger than repo version" if $want ge $reposchema;
+	if ($dbschema eq $want) {
+		say "already on db schema version $dbschema, nothing to do";
+		return 0;
+	}
+
+	my @scripts = sort grep { -f $_ } <schema/v*/downgrade.sql>;
+	@scripts = grep { my ($v) = $_ =~ m|/v([0-9.]+)/|; $v gt $want and $v le $dbschema } @scripts;
+	die 'nothing to do?' unless @scripts;
+	say 'need to do ', join(', ', @scripts);
+
+	# FIXME: check that downgrades form a sequence
+
+	my @sqls;
+	push @sqls, sqlfile($_) for @scripts;
+	my $res = execsql(\@sqls);
+	
+	die "downgrade failed" if $res;
+
+	$pg->db->query(q|update _schema set version = $1|, $want);
+	# FIXME: check update?
+
+	say "downgraded to $want";
+	return 0
+}
+
+
+sub verifyschema {
+	if (checkschema() != 0) {
+		say "nothing to verify? may need to upgrade first";
+		return 0;
+	}
+
+	my @scripts =  sort <schema/v$reposchema/verify.sql>;
+
+	say 'need to do ', join(', ', @scripts);
+
+	my @sqls;
+	push @sqls, sqlfile($_) for @scripts;
+
+	my $res = execsql(\@sqls);
+	die "verify failed" if $res;
+
+	return 0;
+}	
+
 
 sub execsql {
 	my $sqls = shift;
@@ -205,6 +298,8 @@ EOF
 		or die "cannot start psql: $!";
 	print $fh $$_ for @$sqls;
 	close $fh;
+
+	return $?;
 }
 
 sub sqlfile {
@@ -268,9 +363,6 @@ sub dumpprocs {
 }
 
 sub compprocs {
-	#opendir my $dh, 'procs' or die "ugh";
-	#my @filefuncs = grep { /.sql$/ && -f "procs/$_" } readdir($dh);
-	#closedir $dh;
 	my @filefuncs = sort grep { -f $_ } <procs/*.sql>;
 
 	my $diffs = 0;
@@ -278,21 +370,19 @@ sub compprocs {
 	foreach my $fn (@filefuncs) {
 		#say "fn: $fn";
 		my ($f) = $fn =~ m|^procs/(.*)\.sql$|;
-		my $dbfunc = $pg->db->dollar_only->query($procsrcq, $f)->array;
-		die "no func $f in the db?" unless $dbfunc and @$dbfunc and $$dbfunc[0];
-		my $procmd5 = $pg->db->dollar_only->query($procmd5q, $f)->array;
-		die "no func $f in the procs table?" unless $procmd5 and @$procmd5 and $$procmd5[0];
-		$procmd5 = $$procmd5[0];
+		my $dbmd5 = dbmd5($f);
+		die "no proc $f in the db?" unless $dbmd5;
+		my $procmd5 = procmd5($f);
+		die "no proc $f in the procs table?" unless $procmd5;
 		my $filemd5 = md5sum($fn);
-		my $dbmd5 = md5_hex($$dbfunc[0]);
 		if ($procmd5 ne $dbmd5 and $filemd5 ne $procmd5) {
-			say "$f differs between db and procs table and file";
+			say "proc $f differs between db and procs table and file";
 			$diffs += 2;
 		} elsif ($filemd5 ne $procmd5) {
-			say "$f differs between procs table and file";
+			say "proc $f differs between procs table and file";
 			$diffs++;
 		} elsif ($filemd5 ne $dbmd5) {
-			say "$f differs between db and file";
+			say "proc $f differs between db and file";
 			$diffs++;
 		} else {
 			#say " (did $f)";
@@ -302,7 +392,57 @@ sub compprocs {
 	if ($diffs) {
 		say "found $diffs differences";
 	} else {
-		#say "no differences found";
+		say "no differences found";
+	}
+
+	return 0;
+}
+
+sub updateprocs {
+	checkschema();
+	die "dbschema $dbschema not equal to reposchema $reposchema" if $dbschema ne $reposchema;	
+	
+	#hmm.. reuse comprocs somehow?
+	my @filefuncs = sort grep { -f $_ } <procs/*.sql>;
+
+	my $updated = 0;
+			
+	foreach my $fn (@filefuncs) {
+		#say "fn: $fn";
+		my ($f) = $fn =~ m|^procs/(.*)\.sql$|;
+		my $dbmd5 = dbmd5($f);
+		my $procmd5 = procmd5($f);
+		my $filemd5 = md5sum($fn);
+		if (not $dbmd5 and not $procmd5) {
+			say "loading new proc $f";
+			loadproc($f);
+			$updated++;
+		} elsif ($dbmd5 and not $procmd5) {
+			die "proc $f exists in db but not in procs table.\n".
+			    "manual cleanup required.";
+		} elsif (not $dbmd5 and $procmd5) {
+			die "proc $f exists in procs table but not not in db.\n".
+			    "manual cleanup required.";
+		} elsif ($procmd5 ne $dbmd5 and $filemd5 ne $procmd5) {
+			die "proc $f differs between db and procs table and file.\n".
+			    "manual cleanup required.";
+		} elsif ($filemd5 ne $procmd5) {
+			die "proc $f differs between procs table and file.\n".
+			    "manual cleanup required.";
+		} elsif ($filemd5 ne $dbmd5) {
+			say "loading modified proc $f from file";
+			loadproc($f);
+			$updated++;
+		} else {
+			# up to date ..
+			#say " (did $f)";
+		}
+	}
+
+	if ($updated) {
+		say "updated $updated stored procedures";
+	} else {
+		say "no stored procedures were updated";
 	}
 
 	return 0;
@@ -311,29 +451,16 @@ sub compprocs {
 sub loadproc {
 	my $proc = shift;
 	die "usage: loadproc <procname>" unless $proc;
+	$proc = $1 if $proc =~ m|^proc/(.*)\.sql$|;
 	die "$proc not found in procs dir" unless -f "procs/$proc.sql";
 
-	my $dbmd5 = $pg->db->dollar_only->query($procsrcq, $cfg->{pg}->{db}, $proc)->array;
-	unless ($dbmd5 and @$dbmd5 and $$dbmd5[0]) {
-		warn "no proc $proc in the db?";
-		$dbmd5 = undef;
-	} else {
-		$dbmd5 = md5_hex($$dbmd5[0]);
-	}
-	my $procmd5 = $pg->db->dollar_only->query($procmd5q, $proc)->array;
-	unless ($procmd5 and @$procmd5 and $$procmd5[0]) {
-		warn "no func $proc in the procs table?";
-		$procmd5 = undef;
-	} else {
-		$procmd5 = $$procmd5[0];
-	}
+	my $dbmd5 = dbmd5($proc);
+	my $procmd5 = procmd5($proc);
 
 	die "proc $proc exists in db and not in proc table, refusing to load" if $dbmd5 and not $procmd5;
 	die "proc $proc was changed in the db, refusing to load" if $dbmd5 and $procmd5 and $procmd5 ne $dbmd5;
 
-	open my $procfd, '<', "procs/$proc.sql" or die "Cannot open $proc: $!";
-	my $procsrc = do { local $/; <$procfd>; };
-	close $procfd;
+	my $procsrc = slurp("procs/$proc.sql");
 
         my $filemd5 = md5_hex($procsrc);
 
@@ -369,9 +496,25 @@ sub saveproc {
 	$pg->db->dollar_only->query(q|update _procs set md5=$1 where "name"=$2|, $dbmd5, $proc);
 }
 
-sub upgradeschema {
+sub dbmd5 {
+	my $proc = shift;
+	my $dbmd5 = $pg->db->dollar_only->query($procsrcq, $proc)->array;
+	if ($dbmd5 and @$dbmd5 and $$dbmd5[0]) {
+		return md5_hex($$dbmd5[0]);
+	}
+	warn "no proc $proc in the db?";
+	return undef;
+}
 
-}	
+sub procmd5 {
+	my $proc = shift;
+	my $procmd5 = $pg->db->dollar_only->query(q|SELECT md5 FROM _procs WHERE "name" = $1|, $proc)->array;
+	if ($procmd5 and @$procmd5 and $$procmd5[0]) {
+		return $$procmd5[0];
+	}
+	warn "no func $proc in the procs table?";
+	return undef;
+}
 
 sub md5sum {
 	my $f = shift;
@@ -403,9 +546,5 @@ FROM pg_catalog.pg_proc p
 WHERE pg_catalog.pg_function_is_visible(p.oid)
   AND n.nspname = 'jobcenter'
   AND p.proname = $1
-EOT
-
-$procmd5q = <<'EOT';
-SELECT md5 FROM _procs WHERE "name" = $1
 EOT
 }
