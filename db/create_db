@@ -10,11 +10,12 @@ CLUSTER='--cluster 9.5/main'
 
 # what to create
 
-DBNAME='jc2'
-JCADMIN="${DBNAME}_admin"
-JCCLIENT="${DBNAME}_client"
-JCMAESTRO="${DBNAME}_maestro"
-JCSYSTEM="${DBNAME}_system"
+DBNAME='jobcenter'
+JC='jc'
+JCADMIN="${JC}_admin"
+JCCLIENT="${JC}_client"
+JCMAESTRO="${JC}_maestro"
+JCSYSTEM="${JC}_system"
 DEFPW='password'
 
 # create
