@@ -1,5 +1,6 @@
 #!/usr/bin/env perl
 
+use FindBin;
 use Mojo::Base -base;
 
 exit worker::main();
@@ -74,7 +75,7 @@ sub main {
 	# make our application_name in postgresql our workername
 	$ENV{'PGAPPNAME'} = $workername;
 
-	my $cfg = Config::Tiny->read('../etc/jobcenter.conf');
+	my $cfg = Config::Tiny->read("$FindBin::Bin/../etc/jobcenter.conf");
 	die 'Config Errror: ' . Config::Tiny->errstr() unless $cfg;
 	#print Dumper($cfg);
 

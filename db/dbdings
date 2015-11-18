@@ -2,7 +2,7 @@
 
 use Mojo::Base -base;
 use FindBin;
-use lib "$FindBin::Bin/../lib";
+#use lib "$FindBin::Bin/../lib";
 use Mojo::Util qw( slurp );
 use Mojo::Pg;
 
@@ -45,7 +45,7 @@ sub main {
 
  	die "$0: don't know what to do" unless $handler;
 
-	cfg = Config::Tiny->read('../etc/jobcenter.conf');
+	$cfg = Config::Tiny->read("$FindBin::Bin/../etc/jobcenter.conf");
 	#$cfg = Config::Tiny->read('../etc/jc2.conf');
 	die 'Config Errror: ' . Config::Tiny->errstr() unless $cfg;
 	#print Dumper($cfg);
@@ -291,8 +291,8 @@ EOF
 	
 	open my $fh, '|-', 'psql', '-w', '-e', '-1',
 			'-v', 'ON_ERROR_STOP=1',
-			'-h', $cfg->{super}->{host},
-			'-p', $cfg->{super}->{port},
+			'-h', ($cfg->{super}->{host} or die 'foo'),
+			'-p', ($cfg->{super}->{port} or die 'fooo'),
 			'-d', $cfg->{pg}->{db}
 			#'-U', $cfg->{admin}->{user}
 		or die "cannot start psql: $!";

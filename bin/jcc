@@ -1,7 +1,12 @@
 #!/usr/bin/env perl
 
+# standard stuff
+use Data::Dumper;
+use FindBin;
+
 # mojo stuff
 use Mojo::Base -base;
+use Mojo::Util qw(slurp);
 use Mojo::IOLoop;
 use Mojo::Pg;
 use Mojo::JSON qw(decode_json encode_json);
@@ -9,23 +14,16 @@ use Mojo::JSON qw(decode_json encode_json);
 # other stuff
 use Config::Tiny;
 
-# standard stuff
-use Data::Dumper;
-
 exit main(@ARGV);
 
 sub main {
-	if (scalar @_ != 1) {
+	my ($wff) = @_;
+
+	unless ($wff) {
 		die "usage: $0 <filename>";
 	}
-
-	my ($wff) = @_;
 	
-	open my $wffd, '<', $wff or die "Cannot open $wff: $!";
-	
-	my $wfsrc = do { local $/; <$wffd>; };
-	
-	close $wffd;
+	my $wfsrc = slurp( $wff );
 	
 	my $jp = JobCenter::Parser->new();
 	# pass a refenrence so we can keep the position of the last match
@@ -38,7 +36,7 @@ sub main {
 	# make our application_name in postgresql our clientname
 	$ENV{'PGAPPNAME'} = $clientname;
 
-	my $cfg = Config::Tiny->read('../etc/jobcenter.conf');
+	my $cfg = Config::Tiny->read("$FindBin::Bin/../etc/jobcenter.conf");
 	die 'Config Errror: ' . Config::Tiny->errstr() unless $cfg;
 	#print Dumper($cfg);
 

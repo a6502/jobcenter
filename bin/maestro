@@ -1,5 +1,7 @@
 #!/usr/bin/env perl
 
+use FindBin;
+#use lib "$FindBin::Bin/../lib";
 use Mojo::Base -base;
 use Mojo::IOLoop;
 use Mojo::Pg;
@@ -155,7 +157,7 @@ sub do_settimer {
 
 sub main {
 	$ENV{'PGAPPNAME'} = "maestro [$$]";
-	my $cfg = Config::Tiny->read('../etc/jobcenter.conf');
+	my $cfg = Config::Tiny->read("$FindBin::Bin/../etc/jobcenter.conf");
 	die 'Config Errror: ' . Config::Tiny->errstr() unless $cfg;
 	#print Dumper($cfg);
 
