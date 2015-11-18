@@ -17,3 +17,6 @@ pass=password
 [maestro]
 user=jc_maestro
 pass=password
+
+[system]
+role=jc_system
