@@ -486,7 +486,7 @@ ALTER TABLE ONLY worker_actions
 
 REVOKE ALL ON FUNCTION announce(a_workername text, a_actionname text) FROM PUBLIC;
 GRANT ALL ON FUNCTION announce(a_workername text, a_actionname text) TO $JCSYSTEM;
-GRANT ALL ON FUNCTION announce(a_workername text, a_actionname text) TO jc_client;
+GRANT ALL ON FUNCTION announce(a_workername text, a_actionname text) TO $JCCLIENT;
 
 REVOKE ALL ON FUNCTION check_job_is_waiting(bigint, boolean) FROM PUBLIC;
 GRANT ALL ON FUNCTION check_job_is_waiting(bigint, boolean) TO $JCSYSTEM;
@@ -508,7 +508,7 @@ GRANT ALL ON FUNCTION clear_waiting_events() TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION create_job(a_wfname text, a_args jsonb) FROM PUBLIC;
 GRANT ALL ON FUNCTION create_job(a_wfname text, a_args jsonb) TO $JCSYSTEM;
-GRANT ALL ON FUNCTION create_job(a_wfname text, a_args jsonb) TO jc_client;
+GRANT ALL ON FUNCTION create_job(a_wfname text, a_args jsonb) TO $JCCLIENT;
 
 REVOKE ALL ON FUNCTION do_branch_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) FROM PUBLIC;
 GRANT ALL ON FUNCTION do_branch_task(a_workflow_id integer, a_task_id integer, a_job_id bigint) TO $JCSYSTEM;
@@ -614,11 +614,11 @@ GRANT ALL ON FUNCTION do_workflowoutargsmap(a_workflow_id integer, a_vars jsonb)
 
 REVOKE ALL ON FUNCTION get_job_status(a_job_id bigint) FROM PUBLIC;
 GRANT ALL ON FUNCTION get_job_status(a_job_id bigint) TO $JCSYSTEM;
-GRANT ALL ON FUNCTION get_job_status(a_job_id bigint) TO jc_client;
+GRANT ALL ON FUNCTION get_job_status(a_job_id bigint) TO $JCCLIENT;
 
 REVOKE ALL ON FUNCTION get_task(a_workername text, a_actionname text, a_job_id bigint) FROM PUBLIC;
 GRANT ALL ON FUNCTION get_task(a_workername text, a_actionname text, a_job_id bigint) TO $JCSYSTEM;
-GRANT ALL ON FUNCTION get_task(a_workername text, a_actionname text, a_job_id bigint) TO jc_client;
+GRANT ALL ON FUNCTION get_task(a_workername text, a_actionname text, a_job_id bigint) TO $JCCLIENT;
 
 REVOKE ALL ON FUNCTION increase_stepcounter() FROM PUBLIC;
 GRANT ALL ON FUNCTION increase_stepcounter() TO $JCSYSTEM;
@@ -637,22 +637,22 @@ GRANT ALL ON FUNCTION notify_timerchange() TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION ping(a_worker_id bigint) FROM PUBLIC;
 GRANT ALL ON FUNCTION ping(a_worker_id bigint) TO $JCSYSTEM;
-GRANT ALL ON FUNCTION ping(a_worker_id bigint) TO jc_client;
+GRANT ALL ON FUNCTION ping(a_worker_id bigint) TO $JCCLIENT;
 
 REVOKE ALL ON FUNCTION raise_event(a_eventdata jsonb) FROM PUBLIC;
 GRANT ALL ON FUNCTION raise_event(a_eventdata jsonb) TO $JCSYSTEM;
-GRANT ALL ON FUNCTION raise_event(a_eventdata jsonb) TO jc_client;
+GRANT ALL ON FUNCTION raise_event(a_eventdata jsonb) TO $JCCLIENT;
 
 REVOKE ALL ON FUNCTION sanity_check_workflow(a_workflow_id integer) FROM PUBLIC;
 GRANT ALL ON FUNCTION sanity_check_workflow(a_workflow_id integer) TO $JCSYSTEM;
 
 REVOKE ALL ON FUNCTION task_done(a_jobcookie text, a_out_args jsonb) FROM PUBLIC;
 GRANT ALL ON FUNCTION task_done(a_jobcookie text, a_out_args jsonb) TO $JCSYSTEM;
-GRANT ALL ON FUNCTION task_done(a_jobcookie text, a_out_args jsonb) TO jc_client;
+GRANT ALL ON FUNCTION task_done(a_jobcookie text, a_out_args jsonb) TO $JCCLIENT;
 
 REVOKE ALL ON FUNCTION task_failed(a_cookie text, a_errmsg text) FROM PUBLIC;
 GRANT ALL ON FUNCTION task_failed(a_cookie text, a_errmsg text) TO $JCSYSTEM;
-GRANT ALL ON FUNCTION task_failed(a_cookie text, a_errmsg text) TO jc_client;
+GRANT ALL ON FUNCTION task_failed(a_cookie text, a_errmsg text) TO $JCCLIENT;
 
 REVOKE ALL ON TABLE _procs FROM PUBLIC;
 GRANT ALL ON TABLE _procs TO $JCADMIN;
