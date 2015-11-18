@@ -18,5 +18,9 @@ pass=password
 user=jc_maestro
 pass=password
 
+[super]
+host=/var/run/postgresql
+port=5433
+
 [system]
 role=jc_system
