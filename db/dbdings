@@ -451,7 +451,7 @@ sub updateprocs {
 sub loadproc {
 	my $proc = shift;
 	die "usage: loadproc <procname>" unless $proc;
-	$proc = $1 if $proc =~ m|^proc/(.*)\.sql$|;
+	$proc = $1 if $proc =~ m|^procs/(.*)\.sql$|;
 	die "$proc not found in procs dir" unless -f "procs/$proc.sql";
 
 	my $dbmd5 = dbmd5($proc);
@@ -469,7 +469,8 @@ sub loadproc {
         	return 0;
 	}
 
-	$pg->db->dollar_only->query($procsrc);
+	#$pg->db->dollar_only->query($procsrc);
+	execsql( [ \$procsrc ] );
 	
 	if ($dbmd5) {
 		$pg->db->dollar_only->query(q|update _procs set md5=$1 where "name"=$2|, $filemd5, $proc);
