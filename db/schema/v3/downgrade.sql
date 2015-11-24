@@ -1,0 +1,2 @@
+ALTER TABLE actions DROP COLUMN wfenv;
+DROP TABLE jcenv;
