@@ -426,8 +426,8 @@ sub updateprocs {
 		} elsif ($procmd5 ne $dbmd5 and $filemd5 ne $procmd5) {
 			die "proc $f differs between db and procs table and file.\n".
 			    "manual cleanup required.";
-		} elsif ($filemd5 ne $procmd5) {
-			die "proc $f differs between procs table and file.\n".
+		} elsif ($procmd5 ne $procmd5) {
+			die "proc $f differs between db and procs table.\n".
 			    "manual cleanup required.";
 		} elsif ($filemd5 ne $dbmd5) {
 			say "loading modified proc $f from file";
@@ -454,23 +454,48 @@ sub loadproc {
 	$proc = $1 if $proc =~ m|^procs/(.*)\.sql$|;
 	die "$proc not found in procs dir" unless -f "procs/$proc.sql";
 
-	my $dbmd5 = dbmd5($proc);
 	my $procmd5 = procmd5($proc);
+
+	# get the proc src
+	my $dbprocsrc = $pg->db->dollar_only->query($procsrcq, $proc)->array;
+	$dbprocsrc = ($dbprocsrc and @$dbprocsrc and $$dbprocsrc[0]) ? $$dbprocsrc[0] : undef;
+	my $dbmd5 = ($dbprocsrc) ? md5_hex($dbprocsrc) : undef;
 
 	die "proc $proc exists in db and not in proc table, refusing to load" if $dbmd5 and not $procmd5;
 	die "proc $proc was changed in the db, refusing to load" if $dbmd5 and $procmd5 and $procmd5 ne $dbmd5;
 
 	my $procsrc = slurp("procs/$proc.sql");
 
-        my $filemd5 = md5_hex($procsrc);
+	my $filemd5 = md5_hex($procsrc);
 
-        if ($procmd5 and $filemd5 eq $procmd5) {
-        	say "$proc is alread up-to-date";
-        	return 0;
+	if ($procmd5 and $filemd5 eq $procmd5) {
+		say "$proc is alread up-to-date";
+		return 0;
+	}
+
+	if ($dbprocsrc) {
+		# see if the function signature changed
+		# we may need to drop the functio first
+		$procsrc =~ /^CREATE OR REPLACE FUNCTION\s+(.*)\n\s+RETURNS\s+(.*)\n/m or die 'cannot parse file function definition';
+		my $func = $1;
+		my $funcsig = "$1 RETURNS $2";
+		$dbprocsrc =~ /^CREATE OR REPLACE FUNCTION\s+(.*)\n\s+RETURNS\s+(.*)\n/m or die 'cannot parse db function definition';
+		my $dbfunc = $1;
+		my $dbfuncsig = "$1 RETURNS $2";
+
+		if ($funcsig ne $dbfuncsig) {
+			my $jcsystem = ($cfg->{system}->{role} or die 'no system role configured?');
+			$procsrc = "DROP FUNCTION $dbfunc;\n" . $procsrc . <<"EOT";
+;
+ALTER FUNCTION $func OWNER TO $jcsystem;
+
+EOT
+		}
 	}
 
 	#$pg->db->dollar_only->query($procsrc);
-	execsql( [ \$procsrc ] );
+	my $res = execsql( [ \$procsrc ] );
+	die "loading $proc failed" if $res;
 	
 	if ($dbmd5) {
 		$pg->db->dollar_only->query(q|update _procs set md5=$1 where "name"=$2|, $filemd5, $proc);
@@ -482,7 +507,8 @@ sub loadproc {
 sub saveproc {
 	my $proc = shift;
 	die "usage: saveproc <procname>" unless $proc;
-	warn "$proc not found in procs dir" unless -f "procs/$proc.sql";
+	my $flag = -f "procs/$proc.sql";
+	warn "warnings: $proc not found in procs dir, new function?" unless $flag;
 
 	my $dbprocsrc = $pg->db->dollar_only->query($procsrcq, $proc)->array;
 	die "no proc $proc in the db?" unless $dbprocsrc and @$dbprocsrc and $$dbprocsrc[0];
@@ -494,7 +520,11 @@ sub saveproc {
 	print $procfd $dbprocsrc;
 	close $procfd;
 
-	$pg->db->dollar_only->query(q|update _procs set md5=$1 where "name"=$2|, $dbmd5, $proc);
+	if ($flag) {
+		$pg->db->dollar_only->query(q|update _procs set md5=$1 where "name"=$2|, $dbmd5, $proc);
+	} else {
+		$pg->db->dollar_only->query(q|insert into _procs ("name", md5) values ($1, $2)|, $proc, $dbmd5);
+	}
 }
 
 sub dbmd5 {
