@@ -8,13 +8,14 @@ AS $function$DECLARE
 	v_task_id INT;
 	v_wait boolean;
 	v_args JSONB;
+	v_env JSONB;
 	v_vars JSONB;
 	v_in_args JSONB;
 BEGIN
 	-- find the sub worklow using the task in the parent
 	-- get the arguments and variables as well
 	SELECT
-		action_id, wait, arguments, variables INTO v_workflow_id, v_wait, v_args, v_vars
+		action_id, wait, arguments, environment, variables INTO v_workflow_id, v_wait, v_args, v_env, v_vars
 	FROM 
 		actions
 		JOIN tasks USING (action_id)
@@ -31,7 +32,7 @@ BEGIN
 	END IF;
 
 	BEGIN
-		v_in_args := do_inargsmap(v_workflow_id, a_parenttask_id, v_args, v_vars);
+		v_in_args := do_inargsmap(v_workflow_id, a_parenttask_id, v_args, v_env, v_vars);
 	EXCEPTION WHEN OTHERS THEN
 		RETURN do_raise_error(a_parentworkflow_id, a_parenttask_id, a_parentjob_id, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;

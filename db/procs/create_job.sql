@@ -13,11 +13,12 @@ AS $function$DECLARE
 	v_actual text;
 	v_fields text[];
 	v_val jsonb;
+	v_env jsonb;
 BEGIN
 	-- find the worklow by name
 	-- for now always use the newest version of the workflow
 	SELECT
-		action_id INTO v_workflow_id
+		action_id, wfenv INTO v_workflow_id, v_env
 	FROM 
 		actions
 	WHERE
@@ -73,11 +74,14 @@ BEGIN
 		RAISE EXCEPTION 'no start task in workflow % .', a_wfname;
 	END IF;
 
+	SELECT jcenv FROM jcenv INTO v_val; -- hack, reuse v-val
+	v_env := v_env || v_val; -- jcenv overwrites wfenv
+
 	-- now create the new job and mark the start task 'done'
 	INSERT INTO jobcenter.jobs
-		(workflow_id, task_id, state, arguments, task_entered, task_started, task_completed)
+		(workflow_id, task_id, state, arguments, environment, task_entered, task_started, task_completed)
 	VALUES
-		(v_workflow_id, v_task_id, 'done', a_args, now(), now(), now())
+		(v_workflow_id, v_task_id, 'done', a_args, v_env, now(), now(), now())
 	RETURNING
 		job_id INTO o_job_id;
 

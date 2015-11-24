@@ -4,13 +4,14 @@ CREATE OR REPLACE FUNCTION jobcenter.do_eval_task(a_workflow_id integer, a_task_
  SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$DECLARE
 	v_args jsonb;
+	v_env jsonb;
 	v_oldvars jsonb;
 	v_code text;
 	v_newvars jsonb;
 BEGIN
 	-- paranoia check with side effects
 	SELECT
-		arguments, variables, imapcode INTO v_args, v_oldvars, v_code
+		arguments, environment, variables, imapcode INTO v_args, v_env, v_oldvars, v_code
 	FROM
 		jobs
 		JOIN tasks USING (workflow_id, task_id)

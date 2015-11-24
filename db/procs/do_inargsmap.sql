@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.do_inargsmap(a_action_id integer, a_task_id integer, a_args jsonb, a_vars jsonb)
+CREATE OR REPLACE FUNCTION jobcenter.do_inargsmap(a_action_id integer, a_task_id integer, a_args jsonb, a_env jsonb, a_vars jsonb)
  RETURNS jsonb
  LANGUAGE plpgsql
  SET search_path TO jobcenter, pg_catalog, pg_temp
@@ -14,7 +14,7 @@ AS $function$DECLARE
 	v_inargs jsonb;
 BEGIN
 	SELECT imapcode INTO v_code FROM tasks WHERE task_id = a_task_id;
-	v_inargs := do_imap(v_code, a_args, a_vars);
+	v_inargs := do_imap(v_code, a_args, a_env, a_vars);
 
 	--RAISE NOTICE 'v_inargs now %', v_inargs;
 	-- now check if everything is there and check types

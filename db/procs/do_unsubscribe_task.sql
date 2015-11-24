@@ -4,6 +4,7 @@ CREATE OR REPLACE FUNCTION jobcenter.do_unsubscribe_task(a_workflow_id integer, 
  SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$DECLARE
 	v_args jsonb;
+	v_env jsonb;
 	v_vars jsonb;
 	v_action_id int;
 	v_name text;
@@ -12,7 +13,7 @@ AS $function$DECLARE
 BEGIN
 	-- paranoia check with side effects
 	SELECT
-		arguments, variables, action_id INTO v_args, v_vars, v_action_id
+		arguments, environment, variables, action_id INTO v_args, v_env, v_vars, v_action_id
 	FROM
 		jobs
 		JOIN tasks USING (workflow_id, task_id)
@@ -31,7 +32,7 @@ BEGIN
 	END IF;
 
 	BEGIN
-		v_inargs := do_inargsmap(v_action_id, a_task_id, v_args, v_vars);
+		v_inargs := do_inargsmap(v_action_id, a_task_id, v_args, v_env, v_vars);
 	EXCEPTION WHEN OTHERS THEN
 		RETURN do_raise_error(a_workflow_id, a_task_id, a_job_id, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;

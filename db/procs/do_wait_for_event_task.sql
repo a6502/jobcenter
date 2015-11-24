@@ -5,6 +5,7 @@ CREATE OR REPLACE FUNCTION jobcenter.do_wait_for_event_task(a_workflow_id intege
 AS $function$DECLARE
 	v_action_id integer;
 	v_args jsonb;
+	v_env jsonb;
 	v_vars jsonb;
 	v_inargs jsonb;
 	v_timeout timestamptz;
@@ -24,7 +25,7 @@ BEGIN
 		AND task_id = a_task_id
 		AND workflow_id = a_workflow_id		
 	RETURNING
-		arguments, variables INTO v_args, v_vars;
+		arguments, environment, variables INTO v_args, v_env, v_vars;
 
 	IF NOT FOUND THEN
 		-- FIXME: should not happen, as this is an internal function
@@ -41,7 +42,7 @@ BEGIN
 	
 	--RAISE NOTICE 'do_inargsmap action_id % task_id % argstrue % vars % ', v_action_id, a_task_id, v_args, v_vars;
 	BEGIN
-		v_inargs := do_inargsmap(v_action_id, a_task_id, v_args, v_vars);
+		v_inargs := do_inargsmap(v_action_id, a_task_id, v_args, v_env, v_vars);
 	EXCEPTION WHEN OTHERS THEN
 		RETURN do_raiseerror(a_workflow_id, a_task_id, a_job_id, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;	
