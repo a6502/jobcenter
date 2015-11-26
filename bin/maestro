@@ -114,7 +114,7 @@ sub do_timeout {
 	say "do_timeout called!";
 	eval {
 		my $res = $pg->db->query(q[select do_timeout()])->array;
-		if ($res and @$res[0] and @$res[0]) {
+		if ($res and @$res and @$res[0]) {
 			my $foo = @$res[0];
 			$foo = 1 if $foo < 1;
 			my $now = time();
