@@ -33,7 +33,7 @@ BEGIN
 
 	-- check error status
 	IF a_outargs ? 'error' THEN
-		PERFORM do_task_error(v_workflow_id, v_task_id, v_job_id, a_outargs->'error');
+		PERFORM do_task_error(a_workflow_id, a_task_id, a_job_id, a_outargs->'error');
 		RETURN;
 	END IF;
 
