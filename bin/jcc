@@ -70,7 +70,7 @@ sub new {
 	my $self = bless {
 		src => undef,
 		pos => undef,
-		labels => {},
+		labels => undef,
 	}, $class;
 	return $self;
 }
@@ -81,6 +81,8 @@ sub parse {
 
 	say 'got src: ', $$src;
 	$self->{src} = $src;
+	$self->{pos} = 0;
+	$self->{labels} = {};
 
 	local $@;
 	my $res = eval { $self->parse_workflow };
@@ -567,6 +569,10 @@ sub error {
 	die $error;
 }
 
+#################################################
+#
+# code generator
+#
 package JobCenter::CodeGenerator;
 
 use Mojo::Base -base;
@@ -609,7 +615,9 @@ sub generate {
 	my ($self, $wf) = @_;
 	die 'not a workflow' unless blessed($wf) eq 'workflow';
 	
+	$self->{oetid} = undef;
 	$self->{labels} = $wf->{labels};
+	$self->{fixup} = [];
 
 	say "\nbegin";
 	my $tx  = $self->{db}->begin;
