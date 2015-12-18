@@ -5,14 +5,16 @@ CREATE OR REPLACE FUNCTION jobcenter.do_wait_for_children_task(a_workflow_id int
 AS $function$DECLARE
 	v_state job_state;
 	v_childjob_id bigint;
+	v_wait boolean;
 	v_errargs jsonb;
+	v_out_args jsonb;
 BEGIN
 	-- this functions can be called in two ways:
 	-- 1. from do_jobtask direcetly
 	-- 2. from do_end_task of a child job.
 	-- paranoia check
 	SELECT
-		state INTO v_state
+		state, wait INTO v_state, v_wait
 	FROM
 		jobs
 		JOIN tasks USING (workflow_id, task_id)
@@ -22,8 +24,10 @@ BEGIN
 		AND workflow_id = a_workflow_id
 		AND task_id= a_task_id
 		AND state IN ('ready', 'blocked')
-		AND actions.type = 'system'
-		AND actions.name = 'wait_for_children';
+		AND (
+			(actions.type = 'system' AND actions.name = 'wait_for_children')
+			OR (actions.type = 'workflow')
+		);
 
 	IF NOT FOUND THEN
 		-- FIXME: call do_raise_error instead?
@@ -75,12 +79,33 @@ BEGIN
 
 	RAISE NOTICE 'all children of % are zombies', a_job_id;
 
-	-- mark as done so that do_jobtaskdone works
-	UPDATE jobs SET
-		state = 'done',
-		task_completed = now()
-	WHERE
-		job_id = a_job_id;
+	IF v_wait THEN
+		-- reap child	
+		UPDATE
+			jobs
+		SET
+			state = 'finished',
+			job_finished = now(),
+			task_completed = now()
+		WHERE
+			parenttask_id = a_task_id
+			AND parentjob_id = a_job_id
+			AND state = 'zombie'
+		RETURNING job_id, out_args INTO v_childjob_id, v_out_args;
+
+		RAISE NOTICE 'child job % done', v_childjob_id;
+		-- mark us as done
+		PERFORM do_task_done(a_workflow_id, a_task_id, a_job_id, v_out_args, false);
+
+	ELSE
+		-- a reap_child_job task will to the reaping
+		-- mark as done so that do_jobtaskdone works
+		UPDATE jobs SET
+			state = 'done',
+			task_completed = now()
+		WHERE
+			job_id = a_job_id;
+	END IF;
 
 	RETURN do_jobtaskdone(a_workflow_id, a_task_id, a_job_id);
 END
