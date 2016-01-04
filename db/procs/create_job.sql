@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.create_job(a_wfname text, a_args jsonb)
+CREATE OR REPLACE FUNCTION jobcenter.create_job(a_wfname text, a_args jsonb, a_tag text DEFAULT NULL::text)
  RETURNS TABLE(o_job_id bigint, o_listenstring text)
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -14,17 +14,24 @@ AS $function$DECLARE
 	v_fields text[];
 	v_val jsonb;
 	v_env jsonb;
+	v_tags text[] DEFAULT ARRAY['default'];
 BEGIN
+	IF a_tag IS NOT NULL AND a_tag <> 'default' THEN
+		v_tags = string_to_array(a_tag, ':') || v_tags;
+	END IF;
+
 	-- find the worklow by name
-	-- for now always use the newest version of the workflow
 	SELECT
-		action_id, wfenv INTO v_workflow_id, v_env
+		action_id, wfenv INTO STRICT v_workflow_id, v_env
 	FROM 
 		actions
+		LEFT JOIN action_version_tags USING (action_id)
 	WHERE
 		type = 'workflow'
 		AND name = a_wfname
-	ORDER BY version DESC LIMIT 1;
+		AND (tag = ANY(v_tags) OR tag IS NULL)
+	ORDER BY array_position(v_tags, tag), version DESC LIMIT 1;
+
 	IF NOT FOUND THEN
 		RAISE EXCEPTION 'no workflow named %.', a_wfname;
 	END IF;
