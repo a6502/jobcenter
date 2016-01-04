@@ -18,11 +18,11 @@ use JobCenter::SimpleClient;
 exit main(@ARGV);
 
 sub main {
-	if (scalar @_ != 2) {
-		die "usage: $0 <wfname> <jsonblob>";
+	if (scalar @_ < 2 or scalar @_ > 3) {
+		die "usage: $0 <wfname> <jsonblob> [<versiontag>]";
 	}
 
-	my ($wfname, $inargs) = @_;
+	my ($wfname, $inargs, $vtag) = @_;
 
 	my $cfg = Config::Tiny->read("$FindBin::Bin/../etc/jobcenter.conf");
 
@@ -41,7 +41,7 @@ sub main {
 	$inargs = eval $inargs ;
 	print 'inargs: ', Dumper($inargs);
 
-	my $res = $client->call($wfname, $inargs);
+	my $res = $client->call($wfname, $inargs, $vtag);
 
 	if ($res) {
 		say 'result: ', Dumper($res);
