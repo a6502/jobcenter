@@ -17,10 +17,17 @@ use Config::Tiny;
 exit main(@ARGV);
 
 sub main {
-	my ($wff) = @_;
+	my $tags;
+	if ($_[0] eq '--tags') {
+		shift;
+		$tags = shift;
+		die 'no tags?' unless $tags;
+	}
+
+	my $wff = shift;
 
 	unless ($wff) {
-		die "usage: $0 <filename>";
+		die "usage: $0 [--tags <tag1[:tagN]>] <filename>";
 	}
 	
 	my $wfsrc = slurp( $wff );
@@ -49,7 +56,7 @@ sub main {
 		. '/' . $cfg->{pg}->{db}
 	);
 
-	my $jcg = JobCenter::CodeGenerator->new($pg->db);
+	my $jcg = JobCenter::CodeGenerator->new($pg->db, $tags);
 	$jcg->generate($wf);
 
 	say "the end is nigh!";
@@ -599,10 +606,11 @@ use constant {
 };
 
 sub new {
-	my ($class, $db) = @_;
+	my ($class, $db, $tags) = @_;
 	my $self = bless {
 		wfid => undef,  # workflow_id
 		db => $db,	# db connection to use
+		tags => $tags,	# version tags
 		oetid => undef, # current on_error_task_id
 		labels => {},	# labels to be filled with task_ids
 		fixup => [],	# list of tasks that need the next_task set
@@ -622,8 +630,9 @@ sub generate {
 	say "\nbegin";
 	my $tx  = $self->{db}->begin;
 
-	my $version = 0;
+	my $version = 1;
 	# find out if a version alreay exists, if so increase version
+	# FIXME: race condition when multiples jcc's compile the same wf at the same time..
 	{
 		my $res = $self->{db}->dollar_only->query(
 			q|select version from actions where name = $1 and type = 'workflow' order by version desc limit 1|, 
@@ -655,6 +664,15 @@ sub generate {
 			q|insert into action_outputs (action_id, name, type, optional) values ($1, $2, $3, $4) returning action_id|,
 			$wfid, $$out[0], $$out[1], (($$out[2] && $$out[2] eq 'optional') ? 'true' : 'false')
 		);
+	}
+
+	if ($self->{tags}) {
+		for my $tag (split /:/, $self->{tags}) {
+			$self->qs(
+				q|insert into action_version_tags (action_id, tag) values ($1, $2) returning action_id|,
+				$wfid, $tag
+			);
+		}
 	}
 
 	my ($first, $last) = $self->gen_do($wf->{do}); # first and last task_id of block
@@ -704,7 +722,31 @@ sub gen_do {
 
 sub gen_call {
 	my ($self, $call) = @_;
-	my $aid = $self->qs( q|select action_id from actions where name = $1|, $call->{what});
+	#my $aid = $self->qs( q|select action_id from actions where name = $1|, $call->{what});
+	# resolve calls to actions and workflows with the same tags we are compiling with
+	my $tags = '{default}';
+	# FIXME: would there be any logical reason to have default in the search path
+	#        and not have it at the last position?
+	if ($self->{tags} and $self->{tags} ne 'default') {
+		my @tags = split /:/, $self->{tags};
+		push @tags, 'default';
+		$tags = '{' . join(',', @tags) . '}';
+	}
+
+	my $aid = $self->qs( <<'EOF', $call->{what}, $tags);
+SELECT
+	action_id
+FROM
+	actions
+	LEFT JOIN action_version_tags USING (action_id)
+WHERE
+	name = $1
+	AND (tag = ANY($2) OR tag IS NULL)
+	ORDER BY array_position($2, tag), version DESC LIMIT 1;
+EOF
+
+	die "action $call->{what} not found?" unless $aid;
+
 	my $imap = $call->{imap} // '';
 	my $omap = $call->{omap} // '';
 	my $tid = $self->instask($aid, imapcode => $imap, omapcode => $omap);
