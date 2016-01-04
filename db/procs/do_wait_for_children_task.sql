@@ -5,7 +5,7 @@ CREATE OR REPLACE FUNCTION jobcenter.do_wait_for_children_task(a_workflow_id int
 AS $function$DECLARE
 	v_state job_state;
 	v_childjob_id bigint;
-	v_wait boolean;
+	v_action_type action_type;
 	v_errargs jsonb;
 	v_out_args jsonb;
 BEGIN
@@ -14,7 +14,7 @@ BEGIN
 	-- 2. from do_end_task of a child job.
 	-- paranoia check
 	SELECT
-		state, wait INTO v_state, v_wait
+		state, actions.type INTO v_state, v_action_type
 	FROM
 		jobs
 		JOIN tasks USING (workflow_id, task_id)
@@ -26,7 +26,7 @@ BEGIN
 		AND state IN ('ready', 'blocked')
 		AND (
 			(actions.type = 'system' AND actions.name = 'wait_for_children')
-			OR (actions.type = 'workflow')
+			OR (actions.type = 'workflow' and tasks.wait = true)
 		);
 
 	IF NOT FOUND THEN
@@ -79,8 +79,8 @@ BEGIN
 
 	RAISE NOTICE 'all children of % are zombies', a_job_id;
 
-	IF v_wait THEN
-		-- reap child	
+	IF v_action_type = 'workflow' THEN
+		-- reap child directly
 		UPDATE
 			jobs
 		SET
