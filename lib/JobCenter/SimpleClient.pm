@@ -58,6 +58,7 @@ sub call {
 	my $self = shift;
 	my $wfname = shift or die 'no workflowname?';
 	my $inargs = shift // '{}';
+	my $vtag = shift;
 
 	if ($self->{json}) {
 		# sanity check json string
@@ -73,12 +74,22 @@ sub call {
 	# create_job throws an error when:
 	# - wfname does not exist
 	# - inargs not valid
-	($job_id, $listenstring) = $pgh->selectrow_array(
-		q[select * from create_job($1, $2)],
-		{},
-		$wfname,
-		$inargs
-	);
+	if ($vtag) {
+		($job_id, $listenstring) = $pgh->selectrow_array(
+			q[select * from create_job($1, $2, $3)],
+			{},
+			$wfname,
+			$inargs,
+			$vtag
+		);
+	} else {
+		($job_id, $listenstring) = $pgh->selectrow_array(
+			q[select * from create_job($1, $2)],
+			{},
+			$wfname,
+			$inargs
+		);
+	}
 	die "no result from call to create_job" unless $job_id;
 	say STDERR "job_id $job_id listenstring $listenstring" if $self->{debug};
 
