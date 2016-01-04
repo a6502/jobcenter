@@ -451,7 +451,7 @@ sub updateprocs {
 sub loadproc {
 	my $proc = shift;
 	die "usage: loadproc <procname>" unless $proc;
-	$proc = $1 if $proc =~ m|^procs/(.*)\.sql$|;
+	$proc = $1 if $proc =~ m|(?:procs/)?(.*)\.sql$|;
 	die "$proc not found in procs dir" unless -f "procs/$proc.sql";
 
 	my $procmd5 = procmd5($proc);
@@ -473,25 +473,36 @@ sub loadproc {
 		return 0;
 	}
 
+	# get function name
+	$procsrc =~ /^CREATE OR REPLACE FUNCTION\s+(.*)\n\s+RETURNS\s+(.*)\n/m or die 'cannot parse file function definition';
+	my $func = $1;
+	my $funcsig = "$1 RETURNS $2";
+	# ugh.. we need to filter out default arguments here
+	# let's try a quick hack:
+	$func =~ s/ DEFAULT .*?(,|\))/$1/g;
+
 	if ($dbprocsrc) {
 		# see if the function signature changed
 		# we may need to drop the functio first
-		$procsrc =~ /^CREATE OR REPLACE FUNCTION\s+(.*)\n\s+RETURNS\s+(.*)\n/m or die 'cannot parse file function definition';
-		my $func = $1;
-		my $funcsig = "$1 RETURNS $2";
 		$dbprocsrc =~ /^CREATE OR REPLACE FUNCTION\s+(.*)\n\s+RETURNS\s+(.*)\n/m or die 'cannot parse db function definition';
 		my $dbfunc = $1;
 		my $dbfuncsig = "$1 RETURNS $2";
+		# ugh.. we need to filter out default arguments here
+		# let's try a quick hack:
+		$dbfunc =~ s/ DEFAULT .*?(,|\))/$1/g;
 
 		if ($funcsig ne $dbfuncsig) {
-			my $jcsystem = ($cfg->{system}->{role} or die 'no system role configured?');
-			$procsrc = "DROP FUNCTION $dbfunc;\n" . $procsrc . <<"EOT";
+			$procsrc = "DROP FUNCTION $dbfunc;\n" . $procsrc;
+		}
+	}
+
+	# always set owner, not actually necessary when replacing a function..
+	my $jcsystem = ($cfg->{system}->{role} or die 'no system role configured?');
+	$procsrc .= <<"EOT";
 ;
 ALTER FUNCTION $func OWNER TO $jcsystem;
 
 EOT
-		}
-	}
 
 	#$pg->db->dollar_only->query($procsrc);
 	my $res = execsql( [ \$procsrc ] );
@@ -507,6 +518,7 @@ EOT
 sub saveproc {
 	my $proc = shift;
 	die "usage: saveproc <procname>" unless $proc;
+	$proc = $1 if $proc =~ m|(?:procs/)?(.*)\.sql$|;
 	my $flag = -f "procs/$proc.sql";
 	warn "warnings: $proc not found in procs dir, new function?" unless $flag;
 
