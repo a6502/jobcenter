@@ -42,7 +42,8 @@ BEGIN
 	SET
 		job_finished = now(),
 		task_started = now(),
-		task_completed = now()
+		task_completed = now(),
+		timeout = null
 	WHERE
 		job_id = a_job_id;
 

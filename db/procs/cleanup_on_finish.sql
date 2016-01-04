@@ -28,7 +28,8 @@ BEGIN
 	SET
 		state = 'error',
 		out_args = '"aborted by parent job"'::jsonb,
-		job_finished = now()
+		job_finished = now(),
+		timeout = null
 	WHERE
 		parentjob_id = NEW.job_id
 		AND state NOT IN ('finished','error');
