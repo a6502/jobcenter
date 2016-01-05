@@ -75,8 +75,8 @@ Schema management commands:
 	verify:          verify latest schema upgrade
 Stored procedure management commands:
 	compare:         compare version between db and repo
-	loadproc <proc>: load <proc> from repo into db
-	saveproc <proc>: save <proc> from db to repo
+	load <proc>:     load <proc> from repo into db
+	save <proc>:     save <proc> from db to repo
 	update:          update procs in db from repo
 
 EOF
