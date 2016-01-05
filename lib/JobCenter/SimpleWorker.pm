@@ -87,14 +87,24 @@ sub announce {
 }
 
 sub withdraw {
-	die 'aaargh';
+	my $self = shift;
+	my $actionname = shift or die 'no actionname?';
+	my ($res) = $self->{pgh}->selectrow_array(
+			q[select withdraw($1, $2)],
+			{},
+			$self->{workername},
+			$actionname
+		);
+	die "no result" unless defined $res;
+	return $res;
 }
 
 sub work {
 	my $self = shift;
 
 	my $poll = IO::Poll->new();
-	open my $pgfd, '<&', $self->{pgh}->{pg_socket} or die "Can't dup: $!";
+	#open my $pgfd, '<&', $self->{pgh}->{pg_socket} or die "Can't dup: $!";
+	open my $pgfd, '<&=', $self->{pgh}->{pg_socket} or die "Can't fdopen: $!";
 	$poll->mask($pgfd => POLLIN);
 	my $now = time();
 	my $timeout = $now + $self->{ping};
@@ -151,5 +161,83 @@ sub get_task {
 	say "done with action $action->{actionname} for job $job_id\n" if $self->{debug};
 }
 
-
 1;
+
+=encoding utf8
+
+=head1 NAME
+
+JobCenter::SimpleWorker - simple blocking JobCenter client
+
+=head1 SYNOPSIS
+
+ use JobCenter::SimpleWorker;
+
+ my $client = JobCenter::SimpleWorker->new(
+        cfgpath => "$FindBin::Bin/../etc/jobcenter.conf",
+        debug => 1,
+ );
+
+ my $result = $client->call($wfname, $inargs);
+
+=head1 DESCRIPTION
+
+"JobCenter::SimpleWorker" is a class to build a simple blocking client for the
+JobCenter workflow engine. It has minimal (non-core) dependencies.
+
+=head1 METHODS
+
+=head2 new
+
+$client = JobCenter::SimpleWorker->new(%arguments);
+
+Class method that returns a new JobCenter::SimpleWorker object.
+
+Valid arguments are:
+
+=over 4
+
+=item - cfgpath: path to a JobCenter configuration file.
+
+ (either cfgpath or pgdsn, pguser and pgpass need to be supplied)
+
+=item - clientname: postgresql clientname to use.
+
+Z<>
+
+=item - debug: when true prints debugging on stderr.
+
+(default false)
+
+=item - json flag:
+
+ when true expects the inargs to be valid json.
+ when false a perl hashref is expected and json encoded.
+ (default true)
+
+=item - pgdsn: dbi dsn for postgresql
+
+=item - pguser: postgresql user
+
+=item - pgpass: postgresql pass
+
+ (either cfgpath or pgdsn, pguser and pgpass need to be supplied)
+
+=item - timeout: how long to wait for the call to complete
+
+ (default 60 seconds)
+
+=back
+
+=head2 call
+
+$result = $client->call('my1stworkflow', '{"input":"foo"}');
+
+Calls the workflow named the first argument with the inargs of the second argument.
+Throws an error if anything goes wrong.
+
+=head1 SEE ALSO
+
+L<Jobcenter::SimpleWorker>, L<simpleclient>, L<simpleclient2>.
+
+=cut
