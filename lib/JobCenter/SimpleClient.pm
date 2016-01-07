@@ -67,9 +67,11 @@ sub call {
 	} else {
 		die  'inargs should be a hashref' unless ref $inargs eq 'HASH';
 		$inargs = encode_json($inargs);
+		say "inargs as json: $inargs" if $self->{debug};
 	}
 
 	my $pgh = $self->{pgh};
+	$pgh->ping() or die qq{Ping failed!};
 	my ($job_id, $listenstring);
 	# create_job throws an error when:
 	# - wfname does not exist
@@ -96,25 +98,25 @@ sub call {
 	$pgh->do('LISTEN ' . $pgh->quote_identifier($listenstring));
 
 	my $poll = IO::Poll->new();
-	open my $pgfd, '<&=', $self->{pgh}->{pg_socket} or die "Can't fdopen: $!";
+	#open my $pgfd, '<&=', $self->{pgh}->{pg_socket} or die "Can't fdopen: $!";
+	# use dup here, because the fd will be closed when it goes out of scope...
+	open my $pgfd, '<&', $self->{pgh}->{pg_socket} or die "Can't dup: $!";
 	$poll->mask($pgfd => POLLIN);
 	my $now = time();
 	my $timeout = $now + $self->{timeout};
+	my $outargs;
 
 	while ($timeout > $now) {
 		# there is a race condition between create_job and listen, so we have
 		# to call get_job_status now to see if the job has finished already
 		# if not, we wait for the notification
 		
-		my ($outargs) = $pgh->selectrow_array(
+		($outargs) = $pgh->selectrow_array(
 			q[select * from get_job_status($1)],
 			{},
 			$job_id
 		);
-		if ($outargs) {
-			return $outargs if $self->{json};
-			return decode_json($outargs);
-		}
+		last if $outargs;
 
 		say STDERR "timeout: ", $timeout - $now if $self->{debug};
 		my $ret = $poll->poll($timeout - $now);
@@ -125,7 +127,13 @@ sub call {
 		$now = time();
 	}
 	# timeout
-	die 'call timed out';
+	die 'call timed out' if $timeout < $now;
+
+	$pgh->do('UNLISTEN ' . $pgh->quote_identifier($listenstring));
+
+	say "outargs as json: $outargs" if $self->{debug};
+	return $outargs if $self->{json};
+	return decode_json($outargs);
 }
 
 1;
