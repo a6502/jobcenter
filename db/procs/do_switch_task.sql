@@ -4,6 +4,7 @@ CREATE OR REPLACE FUNCTION jobcenter.do_switch_task(a_workflow_id integer, a_tas
  SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$DECLARE
 	v_args jsonb;
+	v_env jsonb;
 	v_vars jsonb;
 	v_casecode text;
 	v_when text;
@@ -12,8 +13,8 @@ AS $function$DECLARE
 BEGIN
 	-- paranoia check with side effects
 	SELECT
-		arguments, variables, casecode, next_task_id INTO
-		v_args, v_vars, v_casecode, v_nexttask_id
+		arguments, environment, variables, casecode, next_task_id INTO
+		v_args, v_env, v_vars, v_casecode, v_nexttask_id
 	FROM
 		jobs
 		JOIN tasks USING (workflow_id, task_id)
@@ -32,7 +33,7 @@ BEGIN
 	END IF;
 
 	BEGIN
-		v_when := do_switchcasecode(v_casecode, v_args, v_vars);
+		v_when := do_switchcasecode(v_casecode, v_args, v_env, v_vars);
 	EXCEPTION WHEN OTHERS THEN
 		RETURN do_raise_error(a_workflow_id, a_task_id, a_job_id, format('caught exception in do_switchcasecode sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;

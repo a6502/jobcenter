@@ -13,7 +13,7 @@ AS $function$DECLARE
 BEGIN
 	-- paranoia check with side effects
 	SELECT
-		arguments, envirionment, variables, action_id INTO v_args, v_env, v_vars, v_action_id
+		arguments, environment, variables, action_id INTO v_args, v_env, v_vars, v_action_id
 	FROM
 		jobs
 		JOIN tasks USING (workflow_id, task_id)

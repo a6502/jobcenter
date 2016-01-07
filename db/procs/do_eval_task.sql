@@ -31,7 +31,7 @@ BEGIN
 	END IF;
 
 	BEGIN
-		v_newvars := do_eval(v_code, v_args, v_oldvars);
+		v_newvars := do_eval(v_code, v_args, v_env, v_oldvars);
 	EXCEPTION WHEN OTHERS THEN
 		RETURN do_raise_error(a_workflow_id, a_task_id, a_job_id, format('caught exception in do_eval sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;
