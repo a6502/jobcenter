@@ -965,9 +965,10 @@ sub instask {
 # query with single return value
 sub qs {
 	my ($self, $q, @a) = @_;
+	my $as = join(',', map { $_ // '' } @a);
 	my $res = $self->{db}->dollar_only->query($q, @a)->array;
-	die "query failed" unless $res and @$res and @$res[0];
-	say "query: $q [", join(',', map { $_ // '' } @a), "] => @$res[0]";
+	die "query $q [$as]failed" unless $res and @$res and @$res[0];
+	say "query: $q [$as] => @$res[0]";
 	return @$res[0];
 }
 
