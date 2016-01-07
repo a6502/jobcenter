@@ -3,7 +3,7 @@ CREATE OR REPLACE FUNCTION jobcenter.check_same_workflow(a_task1_id integer, a_t
  LANGUAGE plpgsql
  SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$BEGIN
- 	RAISE NOTICE 'a_task1_id % a_task2_id %', a_task1_id, a_task2_id;
+ 	--RAISE NOTICE 'a_task1_id % a_task2_id %', a_task1_id, a_task2_id;
 	IF a_task1_id IS NULL or a_task2_id IS NULL THEN
 		RETURN TRUE;
 	END IF;
