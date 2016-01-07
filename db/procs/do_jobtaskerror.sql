@@ -28,11 +28,15 @@ BEGIN
 		RAISE EXCEPTION 'do_jobtaskerror called for job not in error state %', a_job_id;
 	END IF;	
 
-	IF v_errortask_id IS NOT NULL
-	   AND v_outargs ? 'class' 
-	   AND v_outargs ->> 'class' <> 'fatal' THEN
+	RAISE NOTICE 'v_erortask_id %, v_outargs %', v_errortask_id, v_outargs;
+	IF v_errortask_id IS NOT NULL -- we have a error task
+		AND v_outargs ? 'error' -- and some sort of error object
+		AND (
+			( v_outargs -> 'error' ? 'class' AND v_outargs #>> '{error,class}' <> 'fatal')
+			OR (NOT v_outargs -> 'error' ? 'class') -- and the error is not fatal
+		) THEN
 		RAISE NOTICE 'calling errortask %', v_errortask_id;
-		RETURN nexttask(false, a_workflow_id, a_task_id, a_job_id);
+		RETURN nexttask(false, a_workflow_id, v_errortask_id, a_job_id);
 	END IF;
 
 	-- default error behaviour:
