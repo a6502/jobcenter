@@ -61,8 +61,11 @@ BEGIN
 
 	IF FOUND THEN -- raise error
 		v_errargs = jsonb_build_object(
-			'msg', format('childjob %s raised error', v_childjob_id),
-			'error', v_errargs
+			'error', jsonb_build_object(
+				'msg', format('childjob %s raised error', v_childjob_id),
+				'class', 'childerror',
+				'error', v_errargs -> 'error'
+			)
 		);
 		PERFORM do_task_error(a_workflow_id, a_task_id, a_job_id, v_errargs);
 		RETURN null;

@@ -6,8 +6,10 @@ AS $function$DECLARE
 	v_error jsonb;
 BEGIN
 	v_error = jsonb_build_object(
-		'class', 'fatal',
-		'msg', a_errmsg
+		'error', jsonb_build_object(
+			'class', 'fatal',
+			'msg', a_errmsg
+		)
 	);
 
 	UPDATE jobs SET
