@@ -22,7 +22,7 @@ BEGIN
 
 	-- find the worklow by name
 	SELECT
-		action_id, wfenv INTO STRICT v_workflow_id, v_env
+		action_id, wfenv INTO v_workflow_id, v_env
 	FROM 
 		actions
 		LEFT JOIN action_version_tags USING (action_id)
@@ -33,7 +33,7 @@ BEGIN
 	ORDER BY array_position(v_tags, tag), version DESC LIMIT 1;
 
 	IF NOT FOUND THEN
-		RAISE EXCEPTION 'no workflow named %.', a_wfname;
+		RAISE EXCEPTION 'no workflow named %', a_wfname;
 	END IF;
 
 	-- check parameters
