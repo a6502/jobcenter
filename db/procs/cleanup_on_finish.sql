@@ -27,7 +27,7 @@ BEGIN
 		jobs
 	SET
 		state = 'error',
-		out_args = '"aborted by parent job"'::jsonb,
+		out_args = '{"error":{"msg":"aborted by parent job","class":"abort"}}'::jsonb,
 		job_finished = now(),
 		timeout = null
 	WHERE
