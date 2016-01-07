@@ -9,7 +9,7 @@ workflow "sleeptest" [
 	]
 	wfomap [[
 		$o{out} = $v{thing};
-		$o{event} = $v{event} if $v{event};
+		#$o{event} = $v{event} if $v{event};
 	]]
 	do [
 		wait_for_event [

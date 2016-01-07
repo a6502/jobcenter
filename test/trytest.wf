@@ -6,15 +6,20 @@ workflow "trytest" [
 	]
 	out [
 		out number;
+		whut string optional;
 	]
 	wfomap [[
 		$o{out} = $v{thing};
+		$o{whut} = $v{whut} if $v{whut};
 	]]
 	do [
 		try [
 			eval [[ $v{thing} = $a{i1} / $a{i2} ]]
 		] catch [
-			eval [[ $v{thing} = 0.123456789 ]]
+			eval [[
+				$v{thing} = 0.123456789;
+				$v{whut} = 'division by zero' if $a{i2} == 0;
+			]]
 		]
 	]
 ]
