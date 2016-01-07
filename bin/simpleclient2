@@ -19,7 +19,7 @@ exit main(@ARGV);
 
 sub main {
 	if (scalar @_ < 2 or scalar @_ > 3) {
-		die "usage: $0 <wfname> <jsonblob> [<versiontag>]";
+		die "usage: $0 <wfname> <perlhash> [<versiontag>]";
 	}
 
 	my ($wfname, $inargs, $vtag) = @_;
