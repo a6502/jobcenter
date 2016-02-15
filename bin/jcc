@@ -690,7 +690,7 @@ sub generate {
 	}
 
 	# maybe move this to a deferred trigger on actions?
-	$self->qs(q|select sanity_check_workflow($1)|, $wfid);
+	$self->qs(q|select do_sanity_check_workflow($1)|, $wfid);
 
 	say "commit";
 	$tx->commit;
