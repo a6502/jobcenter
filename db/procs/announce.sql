@@ -15,13 +15,9 @@ BEGIN
 		EXIT WHEN found;
 		-- not there, so try to insert the worker
 		-- if someone else inserts the same worker concurrently,
-		-- we could get a unique-key failure
-		BEGIN
-			INSERT INTO workers(name) VALUES (a_workername) RETURNING worker_id INTO v_worker_id;
-			EXIT; /* exit loop when insert succeeded */
-		EXCEPTION WHEN unique_violation THEN
-			-- Do nothing, and loop to try the UPDATE again.
-		END;
+		-- we could get a unique-key failure, so use on conflict do nothing
+		INSERT INTO workers(name) VALUES (a_workername) INTO v_worker_id ON CONFLICT DO NOTHING RETURNING worker_id;
+		EXIT WHEN found; -- exit loop when insert succeeded
 	END LOOP;
 	SELECT action_id INTO v_action_id FROM actions WHERE name = a_actionname ORDER BY version DESC LIMIT 1;
 	IF NOT found THEN
