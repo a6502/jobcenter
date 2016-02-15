@@ -100,6 +100,9 @@ BEGIN
 	WHEN 'action' THEN
 		-- notify workers
 		RETURN do_prepare_for_action(a_workflow_id, a_task_id, a_job_id);
+	WHEN 'procedure' THEN
+		-- call stored procedure
+		RETURN do_call_stored_procedure(a_workflow_id, a_task_id, a_job_id);
 	ELSE
 		-- should not happen
 		RAISE EXCEPTION 'unknown action_type % for task_id %', v_action_type, a_task_id;
