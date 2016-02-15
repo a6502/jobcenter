@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.check_same_workflow(a_task1_id integer, a_task2_id integer)
+CREATE OR REPLACE FUNCTION jobcenter.do_check_same_workflow(a_task1_id integer, a_task2_id integer)
  RETURNS boolean
  LANGUAGE plpgsql
  SET search_path TO jobcenter, pg_catalog, pg_temp

@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.notify_timerchange()
+CREATE OR REPLACE FUNCTION jobcenter.do_notify_timerchange()
  RETURNS trigger
  LANGUAGE plpgsql
  SET search_path TO jobcenter, pg_catalog, pg_temp

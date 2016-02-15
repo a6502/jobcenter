@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.is_workflow(integer)
+CREATE OR REPLACE FUNCTION jobcenter.do_is_workflow(integer)
  RETURNS boolean
  LANGUAGE sql
  SET search_path TO jobcenter, pg_catalog, pg_temp

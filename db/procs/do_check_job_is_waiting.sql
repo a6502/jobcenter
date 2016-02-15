@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.check_job_is_waiting(bigint, boolean)
+CREATE OR REPLACE FUNCTION jobcenter.do_check_job_is_waiting(bigint, boolean)
  RETURNS boolean
  LANGUAGE sql
  SET search_path TO jobcenter, pg_catalog, pg_temp

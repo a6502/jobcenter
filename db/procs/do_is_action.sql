@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.is_action(integer)
+CREATE OR REPLACE FUNCTION jobcenter.do_is_action(integer)
  RETURNS boolean
  LANGUAGE sql
  SET search_path TO jobcenter, pg_catalog, pg_temp

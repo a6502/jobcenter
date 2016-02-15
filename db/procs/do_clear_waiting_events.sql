@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.clear_waiting_events()
+CREATE OR REPLACE FUNCTION jobcenter.do_clear_waiting_events()
  RETURNS trigger
  LANGUAGE plpgsql
  SET search_path TO jobcenter, pg_catalog, pg_temp

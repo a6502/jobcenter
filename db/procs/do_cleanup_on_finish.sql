@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.cleanup_on_finish()
+CREATE OR REPLACE FUNCTION jobcenter.do_cleanup_on_finish()
  RETURNS trigger
  LANGUAGE plpgsql
  SET search_path TO jobcenter, pg_catalog, pg_temp

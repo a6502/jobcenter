@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.increase_stepcounter()
+CREATE OR REPLACE FUNCTION jobcenter.do_increase_stepcounter()
  RETURNS trigger
  LANGUAGE plpgsql
  SET search_path TO jobcenter, pg_catalog, pg_temp

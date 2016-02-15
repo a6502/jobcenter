@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.check_wait(a_action_id integer, a_wait boolean)
+CREATE OR REPLACE FUNCTION jobcenter.do_check_wait(a_action_id integer, a_wait boolean)
  RETURNS boolean
  LANGUAGE plpgsql
  SET search_path TO jobcenter, pg_catalog, pg_temp

@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.sanity_check_workflow(a_workflow_id integer)
+CREATE OR REPLACE FUNCTION jobcenter.do_sanity_check_workflow(a_workflow_id integer)
  RETURNS boolean
  LANGUAGE plpgsql
  SET search_path TO jobcenter, pg_catalog, pg_temp
