@@ -16,9 +16,6 @@ use Time::HiRes qw( time ); #qw( clock_gettime CLOCK_REALTIME );
 
 # some globals
 our ($pg, $tmr, $next);
-#my $pg;
-#my $tmr;
-#my $next;
 
 sub do_check_workers {
 	say "checking workers";
@@ -31,50 +28,33 @@ sub do_next_cb {
 		say "got errror $err";
 		return;
 	}
-	#say "db: $db res: $res";
-	#print 'db : ', Dumper($db);
-	#print 'res: ', Dumper($res);
 	my $r = $res->array;
 	$res->sth->finish;
 	#print 'r: ', Dumper($r);
 	return unless @$r and defined @$r[1];
-	my ($error, $workflow_id, $task_id, $job_id) = @$r;
+	my ($error, $jobtask) = @$r;
 	if ($error) {
-		say "error condition, calling errortask ($workflow_id:$task_id:$job_id)";
-		do_jobtaskerror($db, $workflow_id, $task_id, $job_id);
+		say "do_next_cb: error condition, calling errortask ($jobtask)";
+		do_jobtaskerror($db, $jobtask);
 	} else {
-		say "next: ($workflow_id:$task_id:$job_id)";
-		do_jobtask($db, $workflow_id, $task_id, $job_id);	
+		say "do_next_cb: next: ($jobtask)";
+		do_jobtask($db, $jobtask);
 	}
 }
 
 sub do_jobtask {
-	my ($db, $workflow_id, $task_id, $job_id) = @_;
-	#say "db: $db";
+	my ($db, $jobtask) = @_;
 	eval {
-
-		$db->query(q[select * from do_jobtask($1, $2, $3)], $workflow_id, $task_id, $job_id, \&do_next_cb);
-=pod
-		$db->query(q[select * from do_jobtask($1, $2, $3)], $workflow_id, $task_id, $job_id, sub {
-			my ($db2, $err, $res) = @_;
-			if ($err and $err =~ /^ERROR:  deadlock detected/) {
-				say "got deadlock, retrying ($workflow_id:$task_id:$job_id)";
-				do_jobtask($db2, $workflow_id, $task_id, $job_id); # retry
-			} else {
-				do_next_cb(@_);
-			}
-		});
-=cut
-
+		$db->query(q[select * from do_jobtask($1)], $jobtask, \&do_next_cb);
 	};
 	say $@ if $@;
-	say "done with do_jobtask\n";
+	#say "done with do_jobtask\n";
 }
 
 sub do_jobtaskerror {
-	my ($db, $workflow_id, $task_id, $job_id) = @_;
+	my ($db, $jobtask) = @_;
 	eval {
-		$db->query(q[select * from do_jobtaskerror($1, $2, $3)], $workflow_id, $task_id, $job_id, \&do_next_cb);
+		$db->query(q[select * from do_jobtaskerror($1)], $jobtask, \&do_next_cb);
 	};
 	say $@ if $@;
 	#say "done with do_jobtaskerror\n";
@@ -84,8 +64,7 @@ sub do_notify_jobtaskdone {
 	my ($pubsub, $payload) = @_;
 	say "got NOTIFY jobtaskdone, '$payload';";
 	eval {
-		my ($workflow_id, $task_id, $job_id) = split /:/, $payload;
-		$pg->db->query(q[select * from do_jobtaskdone($1, $2, $3)], $workflow_id, $task_id, $job_id, \&do_next_cb );
+		$pg->db->query(q[select * from do_jobtaskdone($1)], $payload, \&do_next_cb );
 	};
 	say $@ if $@;
 	#say "done with jobtaskdone\n";
@@ -95,8 +74,7 @@ sub do_notify_jobtaskerror {
 	my ($pubsub, $payload) = @_;
 	say "got NOTIFY jobtaskerror, '$payload';";
 	eval {
-		my ($workflow_id, $task_id, $job_id) = split /:/, $payload;
-		$pg->db->query(q[select * from do_jobtaskerror($1, $2, $3)], $workflow_id, $task_id, $job_id, \&do_next_cb );
+		$pg->db->query(q[select * from do_jobtaskerror($1)], $payload, \&do_next_cb );
 	};
 	say $@ if $@;
 	#say "done with jobtaskerror\n";
