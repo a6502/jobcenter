@@ -1,8 +1,13 @@
 
 --
 
+-- hack because the alter type cannot be within a transaction:
+commit;
+
 ALTER TYPE action_type
-          ADD VALUE 'procedure' AFTER 'action';
+         ADD VALUE 'procedure' AFTER 'action';
+
+begin;
 
 ---
 
@@ -43,7 +48,8 @@ CREATE TRIGGER on_job_finished
           ON jobs
           FOR EACH ROW
           WHEN ((new.job_finished IS NOT NULL))
-          EXECUTE PROCEDURE do_cleanup_on_finish()
+          EXECUTE PROCEDURE do_cleanup_on_finish();
+
 --
 
 ALTER FUNCTION notify_timerchange()
@@ -126,27 +132,33 @@ ALTER FUNCTION sanity_check_workflow(integer)
 
 --
 
-update _procs set name = 'do_check_job_is_waiting' where name = 'check_job_is_waiting';
+update _procs set name = 'do_check_job_is_waiting', md5 = md5(pg_get_functiondef('do_check_job_is_waiting'::regproc)) where name = 'check_job_is_waiting';
 
-update _procs set name = 'do_check_same_workflow' where name = 'check_same_workflow';
+update _procs set name = 'do_check_same_workflow', md5 = md5(pg_get_functiondef('do_check_same_workflow'::regproc)) where name = 'check_same_workflow';
 
-update _procs set name = 'do_check_wait' where name = 'check_wait';
+update _procs set name = 'do_check_wait', md5 = md5(pg_get_functiondef('do_check_wait'::regproc)) where name = 'check_wait';
 
-update _procs set name = 'do_check_wait_for_task' where name = 'check_wait_for_task';
+update _procs set name = 'do_check_wait_for_task', md5 = md5(pg_get_functiondef('do_check_wait_for_task'::regproc)) where name = 'check_wait_for_task';
 
-update _procs set name = 'do_cleanup_on_finish' where name = 'cleanup_on_finish';
+update _procs set name = 'do_cleanup_on_finish', md5 = md5(pg_get_functiondef('do_cleanup_on_finish'::regproc)) where name = 'cleanup_on_finish';
 
-update _procs set name = 'do_clear_waiting_events' where name = 'clear_waiting_events';
+update _procs set name = 'do_clear_waiting_events', md5 = md5(pg_get_functiondef('do_clear_waiting_events'::regproc)) where name = 'clear_waiting_events';
 
-update _procs set name = 'do_increase_stepcounter' where name = 'increase_stepcounter';
+update _procs set name = 'do_increase_stepcounter', md5 = md5(pg_get_functiondef('do_increase_stepcounter'::regproc)) where name = 'increase_stepcounter';
 
-update _procs set name = 'do_is_action' where name = 'is_action';
+update _procs set name = 'do_is_action', md5 = md5(pg_get_functiondef('do_is_action'::regproc)) where name = 'is_action';
 
-update _procs set name = 'do_is_workflow' where name = 'is_workflow';
+update _procs set name = 'do_is_workflow', md5 = md5(pg_get_functiondef('do_is_workflow'::regproc)) where name = 'is_workflow';
 
-update _procs set name = 'do_notify_timerchange' where name = 'notify_timerchange';
+update _procs set name = 'do_notify_timerchange', md5 = md5(pg_get_functiondef('do_notify_timerchange'::regproc)) where name = 'notify_timerchange';
 
-update _procs set name = 'do_sanity_check_workflow' where name = 'sanity_check_workflow';
+update _procs set name = 'do_sanity_check_workflow', md5 = md5(pg_get_functiondef('do_sanity_check_workflow'::regproc)) where name = 'sanity_check_workflow';
+
+--
+
+-- ensure some minimal filling
+insert INTO version_tags values ('stable') on conflict do nothing;
+insert INTO version_tags values ('unittest')  on conflict do nothing;
 
 --
 
@@ -163,9 +175,6 @@ CREATE TYPE nextjobtask AS
         ALTER TYPE nextjobtask
           OWNER TO jc_admin;
 
+-- we'll do this in v6?
 -- DROP TYPE jobcenter.nexttask;
-
-
-
-
 

@@ -9,7 +9,7 @@ DECLARE
 		'action_version_tags',
 		'actions',
 		'event_subscriptions',
-		'jcenv'
+		'jcenv',
 		'job_events',
 		'job_task_log',
 		'jobs',
@@ -27,7 +27,7 @@ DECLARE
 		'on_job_finished',
 		'on_job_state_change',
 		'on_job_task_change',
-		'on_jobs_timerchange',
+		'on_jobs_timerchange'
 	];
 	v_i text;
 BEGIN
