@@ -110,17 +110,20 @@ sub work {
 	my $timeout = $now + $self->{ping};
 
 	while (not $self->{exit}) {
-		say "timout: ", $timeout - $now if $self->{debug};
-		my $ret = $poll->poll($timeout - $now);
-		$now = time();
-		if ( $ret == 1 and ($poll->handles( POLLIN ))[0] == $pgfd ) {
-			my @not;
-			# get all pending notifications
+		my @not;
+		# get all pending notifications
+		push @not, $_ while $_ = $self->{pgh}->pg_notifies();
+		say "timeout: ", $timeout - $now if $self->{debug};
+		unless (@not) {	# poll if there are not notifications waiting
+			my $ret = $poll->poll($timeout - $now);
+			# we don't actually care about the return code?
+			# get all notifications that came in during the poll
 			push @not, $_ while $_ = $self->{pgh}->pg_notifies();
-			# execute
-			$self->get_task($_) for @not;
 		}
-		if ( $now >= $timeout ) {
+		$now = time();
+		# execute
+		$self->get_task($_) for @not;
+		if ($now >= $timeout) {
 			$self->ping();
 			$timeout = $now + $self->{ping};
 		}
