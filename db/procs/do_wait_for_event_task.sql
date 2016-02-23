@@ -1,5 +1,5 @@
-CREATE OR REPLACE FUNCTION jobcenter.do_wait_for_event_task(a_workflow_id integer, a_task_id integer, a_job_id bigint)
- RETURNS nexttask
+CREATE OR REPLACE FUNCTION jobcenter.do_wait_for_event_task(a_jobtask jobtask)
+ RETURNS nextjobtask
  LANGUAGE plpgsql
  SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$DECLARE
@@ -15,21 +15,23 @@ AS $function$DECLARE
 	v_event_id bigint;
 	v_when timestamptz;
 	v_eventdata jsonb;
+	v_changed boolean;
+	v_newvars jsonb;
 BEGIN
 	-- first mark job waiting
 	UPDATE jobs SET
 		state = 'waiting',
 		task_started = now()
 	WHERE
-		job_id = a_job_id
-		AND task_id = a_task_id
-		AND workflow_id = a_workflow_id		
+		job_id = a_jobtask.job_id
+		AND task_id = a_jobtask.task_id
+		AND workflow_id = a_jobtask.workflow_id
 	RETURNING
 		arguments, environment, variables INTO v_args, v_env, v_vars;
 
 	IF NOT FOUND THEN
 		-- FIXME: should not happen, as this is an internal function
-		RAISE EXCEPTION 'do_wait_for_event task % not found', a_task_id;
+		RAISE EXCEPTION 'do_wait_for_event task % not found', a_jobtask.task_id;
 	END IF;
 
 	SELECT
@@ -42,9 +44,9 @@ BEGIN
 	
 	--RAISE NOTICE 'do_inargsmap action_id % task_id % argstrue % vars % ', v_action_id, a_task_id, v_args, v_vars;
 	BEGIN
-		v_inargs := do_inargsmap(v_action_id, a_task_id, v_args, v_env, v_vars);
+		v_inargs := do_inargsmap(v_action_id, a_jobtask.task_id, v_args, v_env, v_vars);
 	EXCEPTION WHEN OTHERS THEN
-		RETURN do_raiseerror(a_workflow_id, a_task_id, a_job_id, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
+		RETURN do_raiseerror(a_jobtask, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;	
 	--RAISE NOTICE 'v_inargs %', v_inargs;
 
@@ -64,7 +66,7 @@ BEGIN
 		JOIN job_events USING (subscription_id)
 		JOIN queued_events USING (event_id)
 	WHERE
-		job_id = a_job_id
+		job_id = a_jobtask.job_id
 		AND name = ANY(v_names)
 	ORDER BY event_id
 	LIMIT 1 FOR UPDATE OF job_events, queued_events;
@@ -85,15 +87,21 @@ BEGIN
 		v_eventdata = jsonb_build_object(
 			'event', v_eventdata
 		);
-		PERFORM do_task_done(a_workflow_id, a_task_id, a_job_id, v_eventdata, false);
-		RETURN do_jobtaskdone(a_workflow_id, a_task_id, a_job_id);
+
+		BEGIN
+			SELECT vars_changed, newvars INTO v_changed, v_newvars FROM do_outargsmap(a_jobtask, v_eventdata);
+		EXCEPTION WHEN OTHERS THEN
+			RETURN do_raise_error(a_jobtask, format('caught exception in do_outargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM)::jsonb);
+		END;
+
+		RETURN do_task_epilogue(a_jobtask, v_changed, v_newvars, v_inargs, v_eventdata);
 	END IF;
 
 	-- actually need to wait, mark which subscriptions we are waiting on
 	UPDATE event_subscriptions SET
 		waiting = true
 	WHERE
-		job_id = a_job_id
+		job_id = a_jobtask.job_id
 		AND "name" = ANY(v_names);
 
 	RAISE NOTICE 'waiting for %', v_names;
@@ -102,7 +110,7 @@ BEGIN
 	UPDATE jobs SET
 		timeout = v_timeout
 	WHERE
-		job_id = a_job_id;
+		job_id = a_jobtask.job_id;
 
 	RETURN null; -- no next task
 END

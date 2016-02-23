@@ -1,5 +1,5 @@
-CREATE OR REPLACE FUNCTION jobcenter.do_create_childjob(a_parentworkflow_id integer, a_parenttask_id integer, a_parentjob_id bigint)
- RETURNS nexttask
+CREATE OR REPLACE FUNCTION jobcenter.do_create_childjob(a_parentjobtask jobtask)
+ RETURNS nextjobtask
  LANGUAGE plpgsql
  SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$DECLARE
@@ -21,20 +21,20 @@ BEGIN
 		JOIN tasks USING (action_id)
 		JOIN jobs USING (workflow_id, task_id)
 	WHERE
-		workflow_id = a_parentworkflow_id
-		AND task_id = a_parenttask_id
-		AND job_id = a_parentjob_id
+		workflow_id = a_parentjobtask.workflow_id
+		AND task_id = a_parentjobtask.task_id
+		AND job_id = a_parentjobtask.job_id
 		AND type = 'workflow';
 
 	IF NOT FOUND THEN
 		-- FIXME: or is this a do_raiserror kind of error?
-		RAISE EXCEPTION 'no workflow found for workflow % task %.', a_parentworkflow_id, a_parenttask_id;
+		RAISE EXCEPTION 'no workflow found for workflow % task %.', a_parentjobtask.workflow_id, a_parentjobtask.task_id;
 	END IF;
 
 	BEGIN
-		v_in_args := do_inargsmap(v_workflow_id, a_parenttask_id, v_args, v_env, v_vars);
+		v_in_args := do_inargsmap(v_workflow_id, a_parentjobtask.task_id, v_args, v_env, v_vars);
 	EXCEPTION WHEN OTHERS THEN
-		RETURN do_raise_error(a_parentworkflow_id, a_parenttask_id, a_parentjob_id, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
+		RETURN do_raise_error(a_parentjobtask, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;
 	
 	-- ok, now find the start task of the workflow
@@ -56,36 +56,26 @@ BEGIN
 	INSERT INTO jobcenter.jobs
 		(workflow_id, task_id, parentjob_id, parenttask_id, state, arguments, task_entered, task_started, task_completed)
 	VALUES
-		(v_workflow_id, v_task_id, a_parentjob_id, a_parenttask_id, 'done', v_in_args, now(), now(), now())
+		(v_workflow_id, v_task_id, a_parentjobtask.job_id, a_parentjobtask.task_id, 'done', v_in_args, now(), now(), now())
 	RETURNING
 		job_id INTO v_job_id;
 
 	-- now wake up maestro for the new job
-	RAISE NOTICE 'NOTIFY "jobtaskdone", %', (v_workflow_id::TEXT || ':' || v_task_id::TEXT || ':' || v_job_id::TEXT );
-	PERFORM pg_notify( 'jobtaskdone',  (v_workflow_id::TEXT || ':' || v_task_id::TEXT || ':' || v_job_id::TEXT ));
+	--RAISE NOTICE 'NOTIFY "jobtaskdone", %', (v_workflow_id::TEXT || ':' || v_task_id::TEXT || ':' || v_job_id::TEXT );
+	PERFORM pg_notify( 'jobtaskdone',  ( '(' || v_workflow_id || ',' || v_task_id || ',' || v_job_id || ')' ));
 
 	IF v_wait THEN
 		-- mark the parent job as blocked
 		UPDATE jobs SET
 			state = 'blocked',
 			task_started = now(),
-			waitfortask_id = a_parenttask_id
-		WHERE job_id = a_parentjob_id;
+			waitfortask_id = a_parentjobtask.task_id
+		WHERE job_id = a_parentjobtask.job_id;
 		RETURN null; -- and no next task
 	ELSE
-		-- mark the parent job as done
-		UPDATE jobs SET
-			state = 'done',
-			task_started = now(),
-			task_completed = now()
-		WHERE job_id = a_parentjob_id;
-		-- update log
-		INSERT INTO job_task_log (job_id, workflow_id, task_id, task_entered, task_started, task_completed)
-			SELECT job_id, workflow_id, task_id, task_entered, task_started, task_completed
-			FROM jobs
-			WHERE job_id = a_parentjob_id;		
-		-- and return the next_task
-		RETURN do_jobtaskdone(a_parentworkflow_id, a_parenttask_id, a_parentjob_id);
+		-- continue to next task
+		-- logging the child job_id in the out_args field
+		RETURN do_task_epilogue(a_parentjobtask, false, null, null, to_jsonb(v_job_id));
 	END IF;
 	
 	-- not reached

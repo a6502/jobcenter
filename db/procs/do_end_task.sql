@@ -1,5 +1,5 @@
-CREATE OR REPLACE FUNCTION jobcenter.do_end_task(a_workflow_id integer, a_task_id integer, a_job_id bigint)
- RETURNS nexttask
+CREATE OR REPLACE FUNCTION jobcenter.do_end_task(a_jobtask jobtask)
+ RETURNS nextjobtask
  LANGUAGE plpgsql
  SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$DECLARE
@@ -19,24 +19,24 @@ BEGIN
 		JOIN tasks USING (workflow_id, task_id)
 		JOIN actions USING (action_id)
 	WHERE
-		job_id = a_job_id
-		AND workflow_id = a_workflow_id
-		AND task_id= a_task_id
+		job_id = a_jobtask.job_id
+		AND workflow_id = a_jobtask.workflow_id
+		AND task_id= a_jobtask.task_id
 		AND state = 'ready'
 		AND actions.type = 'system'
 		AND actions.name = 'end';
 
 	IF NOT FOUND THEN
-		RAISE EXCEPTION 'do_end_task called for non-end-task %', a_task_id;
+		RAISE EXCEPTION 'do_end_task called for non-end-task %', a_jobtask.task_id;
 	END IF;
 
 	BEGIN
-		v_outargs := do_workflowoutargsmap(a_workflow_id, v_variables);
+		v_outargs := do_workflowoutargsmap(a_jobtask.workflow_id, v_variables);
 	EXCEPTION WHEN OTHERS THEN
-		RETURN do_raise_error(a_workflow_id, a_task_id, a_job_id, format('caught exception in do_workflowoutargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
+		RETURN do_raise_error(a_jobtask, format('caught exception in do_workflowoutargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;
 			
-	RAISE NOTICE 'do_end_task wf % task % job % vars % => outargs %', a_workflow_id, a_task_id, a_job_id, v_variables, v_outargs;
+	RAISE NOTICE 'do_end_task wf % task % job % vars % => outargs %', a_jobtask.workflow_id, a_jobtask.task_id, a_jobtask.job_id, v_variables, v_outargs;
 
 	IF v_parentjob_id IS NULL THEN
 		-- mark job as finished
@@ -49,11 +49,11 @@ BEGIN
 			task_completed = now(),
 			out_args = v_outargs
 		WHERE
-			job_id = a_job_id;
+			job_id = a_jobtask.job_id;
 
 		-- and let any waiting clients know
-		RAISE NOTICE 'NOTIFY job:%:finished', a_job_id;
-		PERFORM pg_notify('job:' || a_job_id || ':finished', '42');
+		RAISE NOTICE 'NOTIFY job:%:finished', a_jobtask.job_id;
+		PERFORM pg_notify('job:' || a_jobtask.job_id || ':finished', '42');
 		RETURN null; -- no next task
 	END IF;
 
@@ -65,7 +65,7 @@ BEGIN
 		task_started = now(),
 		out_args = v_outargs
 	WHERE
-		job_id = a_job_id;
+		job_id = a_jobtask.job_id;
 
 	-- check if the parent is already waiting for us
 	-- we need locking here to prevent a race condition with wait_for_children
@@ -85,7 +85,7 @@ BEGIN
 
 	IF FOUND THEN
 		-- poke parent
-		RETURN do_wait_for_children_task(v_parentworkflow_id, v_parenttask_id, v_parentjob_id);
+		RETURN do_wait_for_children_task((v_parentworkflow_id, v_parenttask_id, v_parentjob_id)::jobtask);
 	ELSE
 		-- remain a zombie until the parent finds for us
 		RAISE NOTICE 'parent not found %', now();

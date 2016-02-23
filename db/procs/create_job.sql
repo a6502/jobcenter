@@ -94,7 +94,7 @@ BEGIN
 
 	-- wake up maestro
 	--RAISE NOTICE 'NOTIFY "jobtaskdone", %', (v_workflow_id::TEXT || ':' || v_task_id::TEXT || ':' || o_job_id::TEXT );
-	PERFORM pg_notify( 'jobtaskdone',  (v_workflow_id::TEXT || ':' || v_task_id::TEXT || ':' || o_job_id::TEXT ));
+	PERFORM pg_notify( 'jobtaskdone',  ( '(' || v_workflow_id || ',' || v_task_id || ',' || o_job_id || ')' ));
 	
 	o_listenstring := 'job:' || o_job_id::TEXT || ':finished';
 	-- and inform the caller

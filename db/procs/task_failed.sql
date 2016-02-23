@@ -30,5 +30,5 @@ BEGIN
 	);	
 	-- v_errargs = jsonb_build_object('error', v_errarrgs);
 
-	PERFORM do_task_error(v_workflow_id, v_task_id, v_job_id, v_errargs);
+	PERFORM do_task_error((v_workflow_id, v_task_id, v_job_id)::jobtask, v_errargs);
 END$function$

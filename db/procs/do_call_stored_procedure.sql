@@ -1,5 +1,5 @@
-CREATE OR REPLACE FUNCTION jobcenter.do_call_stored_procedure(a_workflow_id integer, a_task_id integer, a_job_id bigint)
- RETURNS nexttask
+CREATE OR REPLACE FUNCTION jobcenter.do_call_stored_procedure(a_jobtask jobtask)
+ RETURNS nextjobtask
  LANGUAGE plpgsql
  SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$DECLARE
@@ -11,6 +11,8 @@ AS $function$DECLARE
 	v_in_args jsonb;
 	v_out_args jsonb;
 	v_user name;
+	v_changed boolean;
+	v_newvars jsonb;
 BEGIN
 	-- get the arguments and variables
 	SELECT
@@ -21,14 +23,14 @@ BEGIN
 		JOIN tasks USING (action_id)
 		JOIN jobs USING (workflow_id, task_id)
 	WHERE
-		workflow_id = a_workflow_id
-		AND task_id = a_task_id
-		AND job_id = a_job_id
+		workflow_id = a_jobtask.workflow_id
+		AND task_id = a_jobtask.task_id
+		AND job_id = a_jobtask.job_id
 		AND type = 'procedure';
 
 	IF NOT FOUND THEN
 		-- FIXME: or is this a do_raiserror kind of error?
-		RAISE EXCEPTION 'no procedure found for workflow % task %.', a_workflow_id, a_task_id;
+		RAISE EXCEPTION 'no procedure found for workflow % task %.', a_jobtask.workflow_id, a_jobtask.task_id;
 	END IF;
 
 	-- first mark job working
@@ -36,17 +38,17 @@ BEGIN
 		state = 'working',
 		task_started = now()
 	WHERE
-		job_id = a_job_id
-		AND task_id = a_task_id
-		AND workflow_id = a_workflow_id	;
+		job_id = a_jobtask.job_id
+		AND task_id = a_jobtask.task_id
+		AND workflow_id = a_jobtask.workflow_id	;
 
 	BEGIN
-		v_in_args := do_inargsmap(v_action_id, a_task_id, v_args, v_env, v_vars);
+		v_in_args := do_inargsmap(v_action_id, a_jobtask.task_id, v_args, v_env, v_vars);
 	EXCEPTION WHEN OTHERS THEN
-		RETURN do_raise_error(a_workflow_id, a_task_id, a_job_id, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
+		RETURN do_raise_error(a_jobtask, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;
 	
-	RAISE NOTICE 'in do_call_stored_procedure: session_user: % current user: %', session_user, current_user;
+	--RAISE NOTICE 'in do_call_stored_procedure: session_user: % current user: %', session_user, current_user;
 
 	--IF NOT has_function_privilege(session_user, v_procname || '(jsonb)', 'execute') THEN
 	--	RETURN do_raise_error(a_workflow_id, a_task_id, a_job_id, format('user %s may not call function %s', session_user, v_procname));
@@ -56,9 +58,14 @@ BEGIN
 		-- FIXME: do something like v_procname = join('.', map { quote_ident($_) } split /\./ v_procname;
 		EXECUTE 'SELECT * FROM ' || v_procname || '( $1 )' INTO STRICT v_out_args USING v_in_args;
 	EXCEPTION WHEN OTHERS THEN
-		RETURN do_raise_error(a_workflow_id, a_task_id, a_job_id, format('caught exception in stored procedure %s sqlstate %s sqlerrm %s', v_procname, SQLSTATE, SQLERRM));
+		RETURN do_raise_error(a_jobtask, format('caught exception in stored procedure %s sqlstate %s sqlerrm %s', v_procname, SQLSTATE, SQLERRM));
 	END;
 
-	PERFORM do_task_done(a_workflow_id, a_task_id, a_job_id, v_out_args, false);
-	RETURN do_jobtaskdone(a_workflow_id, a_task_id, a_job_id);
+	BEGIN
+		SELECT vars_changed, newvars INTO v_changed, v_newvars FROM do_outargsmap(a_jobtask, v_out_args);
+	EXCEPTION WHEN OTHERS THEN
+		RETURN do_raise_error(a_jobtask, format('caught exception in do_outargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
+	END;
+
+	RETURN do_task_epilogue(a_jobtask, v_changed, v_newvars, v_in_args, v_out_args);
 END$function$

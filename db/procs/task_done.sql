@@ -23,5 +23,5 @@ BEGIN
 		RETURN;
 	END IF;	
 
-	PERFORM do_task_done(v_workflow_id, v_task_id, v_job_id, a_out_args, true);
+	PERFORM do_task_done((v_workflow_id, v_task_id, v_job_id)::jobtask, a_out_args);
 END$function$

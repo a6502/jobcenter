@@ -1,10 +1,10 @@
-CREATE OR REPLACE FUNCTION jobcenter.do_unlock_task(a_workflow_id integer, a_task_id integer, a_job_id bigint)
- RETURNS nexttask
+CREATE OR REPLACE FUNCTION jobcenter.do_unlock_task(a_jobtask jobtask)
+ RETURNS nextjobtask
  LANGUAGE plpgsql
  SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$DECLARE
 	v_args jsonb;
-	v_env jsbon;
+	v_env jsonb;
 	v_vars jsonb;
 	v_action_id int;
 	v_inargs jsonb;
@@ -14,6 +14,7 @@ AS $function$DECLARE
 	v_waitjob_id bigint;
 	v_waittask_id int;
 	v_waitworkflow_id int;
+	v_waitjobtask jobtask;
 BEGIN
 	-- paranoia check with side effects
 	SELECT
@@ -23,22 +24,22 @@ BEGIN
 		JOIN tasks USING (workflow_id, task_id)
 		JOIN actions USING (action_id)
 	WHERE
-		job_id = a_job_id
-		AND task_id = a_task_id
-		AND workflow_id = a_workflow_id
+		job_id = a_jobtask.job_id
+		AND task_id = a_jobtask.task_id
+		AND workflow_id = a_jobtask.workflow_id
 		AND actions.type = 'system'
 		AND actions.name = 'unlock';
 		
 	IF NOT FOUND THEN
 		-- FIXME: call do_raise_error instead?
-		RAISE EXCEPTION 'do_unlock_task called for non-unlock-task %', a_task_id;
+		RAISE EXCEPTION 'do_unlock_task called for non-unlock-task %', a_jobtask.task_id;
 	END IF;
 
 	--RAISE NOTICE 'do_inargsmap action_id % task_id % args % vars % ', v_action_id, a_task_id, v_args, v_vars;
 	BEGIN
-		v_inargs := do_inargsmap(v_action_id, a_task_id, v_args, v_env, v_vars);
+		v_inargs := do_inargsmap(v_action_id, a_jobtask.task_id, v_args, v_env, v_vars);
 	EXCEPTION WHEN OTHERS THEN
-		RETURN do_raise_error(a_workflow_id, a_task_id, a_job_id, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
+		RETURN do_raise_error(a_jobtask, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;
 		
 	RAISE NOTICE 'do_unlock_task v_inargs %', v_inargs;
@@ -55,14 +56,14 @@ BEGIN
 	DELETE FROM
 		locks
 	WHERE
-		job_id = a_job_id
+		job_id = a_jobtask.job_id
 		AND locktype =  v_locktype
 		AND lockvalue = v_lockvalue
 	RETURNING contended INTO v_contended;
 
 	IF NOT FOUND THEN
 		-- or do a warning instead?
-		RETURN do_raise_error(a_workflow_id, a_task_id, a_job_id, format('tried to unlock not held lock locktype %s lockvalue %s', v_locktype, v_lockvalue));
+		RETURN do_raise_error(a_jobtask, format('tried to unlock not held lock locktype %s lockvalue %s', v_locktype, v_lockvalue));
 	END IF;
 
 	IF v_contended THEN
@@ -88,27 +89,14 @@ BEGIN
 				task_completed = now()
 			WHERE
 				job_id = v_waitjob_id;
-			-- log something
-			INSERT INTO job_task_log (job_id, workflow_id, task_id, task_entered, task_started, task_completed)
-			SELECT job_id, workflow_id, task_id, task_entered, task_started, task_completed
-			FROM jobs
-			WHERE job_id = v_waitjob_id;
+
+			-- log completion of lock task
+			v_waitjobtask = (v_waitworkflow_id,v_waittask_id,v_waitjob_id)::jobtask;
+			PERFORM do_log(v_waitjob_id, false, jsonb_build_object('locktype', v_locktype, 'lockvalue', v_lockvalue), null);
 			-- wake up maestro
-			PERFORM pg_notify( 'jobtaskdone',  (v_waitworkflow_id::TEXT || ':' || v_waittask_id::TEXT || ':' || v_waitjob_id::TEXT ));
+			PERFORM pg_notify( 'jobtaskdone', v_waitjobtask::text);
 		END IF;
 	END IF;
 
-	UPDATE jobs SET
-		state = 'done',
-		task_started = now(),
-		task_completed = now()
-	WHERE
-		job_id = a_job_id;
-	-- log something
-	INSERT INTO job_task_log (job_id, workflow_id, task_id, task_entered, task_started, task_completed)
-	SELECT job_id, workflow_id, task_id, task_entered, task_started, task_completed
-	FROM jobs
-	WHERE job_id = a_job_id;
-	
-	RETURN do_jobtaskdone(a_workflow_id, a_task_id, a_job_id);
+	RETURN do_task_epilogue(a_jobtask, false, null, v_inargs, null);
 END;$function$

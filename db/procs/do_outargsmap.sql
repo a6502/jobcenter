@@ -1,8 +1,10 @@
-CREATE OR REPLACE FUNCTION jobcenter.do_outargsmap(a_action_id integer, a_task_id integer, a_oldvars jsonb, a_outargs jsonb)
- RETURNS jsonb
+CREATE OR REPLACE FUNCTION jobcenter.do_outargsmap(a_jobtask jobtask, a_outargs jsonb)
+ RETURNS TABLE(vars_changed boolean, newvars jsonb)
  LANGUAGE plpgsql
  SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$DECLARE
+	v_action_id integer;
+	v_oldvars jsonb;
 	v_key text;
 	v_type text;
 	v_opt boolean;
@@ -10,14 +12,50 @@ AS $function$DECLARE
 	v_code text;
 	v_fields text[];
 	v_val jsonb;
-	v_newvars jsonb;
 BEGIN
-	a_outargs := COALESCE(a_outargs, '{}'::jsonb);
-	v_newvars := COALESCE(a_oldvars, '{}'::jsonb);
+	-- the job may not actually be in the state the jobtask tuple suggest
+	-- because we may be reaping a child job started by a older task
+	-- so we need 2 queries:
+	-- first get the vars using our job_id
+	SELECT
+		variables INTO v_oldvars
+	FROM
+		jobs
+	WHERE
+		job_id = a_jobtask.job_id
+	FOR UPDATE OF jobs;
 
-	RAISE NOTICE 'a_oldvars % a_outargs %', a_oldvars, a_outargs;
+	IF NOT FOUND THEN
+		RAISE NOTICE 'outargsarsmap: job_id % not found', a_jobtask.job_id;
+		RETURN;
+	END IF;
+
+
+	-- now get the rest using the task and job_id
+	SELECT
+		action_id, omapcode
+		INTO v_action_id, v_code
+	FROM
+		tasks
+		JOIN actions USING (action_id)
+	WHERE
+		task_id = a_jobtask.task_id
+		AND workflow_id = a_jobtask.workflow_id;
+
+	IF NOT FOUND THEN
+		RAISE NOTICE 'outargsarsmap: task % not found', a_jobtask.task_id;
+		RETURN;
+	END IF;
+
+	a_outargs := COALESCE(a_outargs, '{}'::jsonb);
+	-- omap also initializes oldvars to empty, but then we would log a change if newvars is also empty
+	v_oldvars := COALESCE(v_oldvars, '{}'::jsonb);
+
+	RAISE NOTICE 'v_oldvars % a_outargs %', v_oldvars, a_outargs;
+
+	-- first check if all the required outargs are there
 	FOR v_key, v_type, v_opt IN SELECT "name", "type", optional
-			FROM action_outputs WHERE action_id = a_action_id LOOP
+			FROM action_outputs WHERE action_id = v_action_id LOOP
 
 		IF NOT a_outargs ? v_key THEN
 			IF NOT v_opt THEN
@@ -44,13 +82,12 @@ BEGIN
 		END IF;
 	END LOOP;
 
-	SELECT omapcode INTO v_code FROM tasks WHERE task_id = a_task_id;
-	v_newvars := do_omap(v_code, v_newvars, a_outargs);
+	-- now run the mapping code
+	SELECT omapcode INTO v_code FROM tasks WHERE task_id = a_jobtask.task_id;
+	newvars := do_omap(v_code, v_oldvars, a_outargs);
 
-	IF a_oldvars IS NULL AND v_newvars = '{}'::jsonb THEN
-		-- nothing has really changed
-		RETURN NULL;
-	END IF;
+	vars_changed := v_oldvars IS DISTINCT FROM newvars;
 
-	RETURN v_newvars;
+	RETURN NEXT;
+	RETURN;
 END$function$

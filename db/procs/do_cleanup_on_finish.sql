@@ -62,12 +62,9 @@ BEGIN
 				WHERE
 					job_id = v_waitjob_id;
 				-- log something
-				INSERT INTO job_task_log (job_id, workflow_id, task_id, task_entered, task_started, task_completed)
-				SELECT job_id, workflow_id, task_id, task_entered, task_started, task_completed
-				FROM jobs
-				WHERE job_id = v_waitjob_id;
+				PERFORM do_log(v_waitjob_id, false, null, null);
 				-- wake up maestro
-				PERFORM pg_notify( 'jobtaskdone',  (v_waitworkflow_id::TEXT || ':' || v_waittask_id::TEXT || ':' || v_waitjob_id::TEXT ));
+				PERFORM pg_notify( 'jobtaskdone',  ( '(' || v_waitworkflow_id || ',' || v_waittask_id || ',' || v_waitjob_id || ')' ));
 			END IF;
 				
 		END IF;

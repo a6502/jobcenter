@@ -1,5 +1,5 @@
-CREATE OR REPLACE FUNCTION jobcenter.do_jobtaskerror(a_workflow_id integer, a_task_id integer, a_job_id bigint)
- RETURNS nexttask
+CREATE OR REPLACE FUNCTION jobcenter.do_jobtaskerror(a_jobtask jobtask)
+ RETURNS nextjobtask
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO jobcenter, pg_catalog, pg_temp
@@ -19,24 +19,24 @@ BEGIN
 		jobs
 		JOIN tasks USING (workflow_id, task_id)
 	WHERE
-		job_id = a_job_id
-		AND task_id = a_task_id
-		AND workflow_id = a_workflow_id
+		job_id = a_jobtask.job_id
+		AND task_id = a_jobtask.task_id
+		AND workflow_id = a_jobtask.workflow_id
 		AND state = 'error';
 	
 	IF NOT FOUND THEN
-		RAISE EXCEPTION 'do_jobtaskerror called for job not in error state %', a_job_id;
+		RAISE EXCEPTION 'do_jobtaskerror called for job not in error state %', a_jobtask.job_id;
 	END IF;	
 
 	RAISE NOTICE 'v_erortask_id %, v_outargs %', v_errortask_id, v_outargs;
-	IF v_errortask_id IS NOT NULL -- we have a error task
+	IF v_errortask_id IS NOT NULL -- we have an error task
 		AND v_outargs ? 'error' -- and some sort of error object
 		AND (
 			( v_outargs -> 'error' ? 'class' AND v_outargs #>> '{error,class}' <> 'fatal')
 			OR (NOT v_outargs -> 'error' ? 'class') -- and the error is not fatal
 		) THEN
 		RAISE NOTICE 'calling errortask %', v_errortask_id;
-		RETURN nexttask(false, a_workflow_id, v_errortask_id, a_job_id);
+		RETURN (false, (a_jobtask.workflow_id, v_errortask_id, a_jobtask.job_id)::jobtask)::nextjobtask;
 	END IF;
 
 	-- default error behaviour:
@@ -49,13 +49,13 @@ BEGIN
 		task_completed = now(),
 		timeout = null
 	WHERE
-		job_id = a_job_id;
+		job_id = a_jobtask.job_id;
 
 	IF v_parentjob_id IS NULL THEN
 		-- throw error to the client
-		RAISE NOTICE 'job:%:finished', a_job_id;
-		PERFORM pg_notify('job:finished', a_job_id::TEXT);
-		PERFORM pg_notify('job:' || a_job_id || ':finished', '42');
+		RAISE NOTICE 'job:%:finished', a_jobtask.job_id;
+		PERFORM pg_notify('job:finished', a_jobtask.job_id::TEXT);
+		PERFORM pg_notify('job:' || a_jobtask.job_id || ':finished', '42');
 		RETURN NULL;
 	END IF;
 
@@ -82,7 +82,7 @@ BEGIN
 		RAISE NOTICE 'unblock job %, error %', v_parentjob_id, v_outargs;
 		-- and call do_task error
 		-- FIXME: transform error object
-		RETURN do_wait_for_children_task(v_parentworkflow_id, v_parenttask_id, v_parentjob_id);
+		RETURN do_wait_for_children_task((v_parentworkflow_id, v_parenttask_id, v_parentjob_id)::jobtask);
 		--PERFORM do_task_error(v_parentworkflow_id, v_parenttask_id, v_parentjob_id, v_outargs);
 	END IF;
 

@@ -10,10 +10,12 @@ AS $function$DECLARE
 	v_state job_state;
 	v_next integer;
 	v_eventdata jsonb;
+	v_jobtask jobtask;
 BEGIN
 	FOR v_job_id, v_task_id, v_workflow_id, v_state IN SELECT job_id, task_id, workflow_id, state
 			FROM jobs WHERE timeout < now() LOOP
-		RAISE NOTICE 'job % state %', v_job_id, v_state;
+		--RAISE NOTICE 'job % state %', v_job_id, v_state;
+		v_jobtask := (v_workflow_id, v_task_id, v_job_id)::jobtask;
 		CASE v_state
 		WHEN 'waiting', 'sleeping' THEN
 			-- done waiting or sleeping then
@@ -26,15 +28,15 @@ BEGIN
 			v_eventdata = jsonb_build_object(
 				'event', v_eventdata
 			);
-			RAISE NOTICE 'timeout of job %', v_job_id;
-			PERFORM do_task_done(v_workflow_id, v_task_id, v_job_id, v_eventdata, true);
+			RAISE NOTICE 'timeout for job %', v_job_id;
+			PERFORM do_task_done(v_jobtask, v_eventdata);
 		WHEN 'working' THEN
 			RAISE NOTICE 'job % timed out in task %', v_job_id, v_task_id;
 			v_eventdata = jsonb_build_object(
 				'name', 'timeout',
 				'when', now()
 			);			
-			PERFORM do_task_error(v_workflow_id, v_task_id, v_job_id, v_eventdata);
+			PERFORM do_task_error(v_jobtask, v_eventdata);
 		END CASE;
 	END LOOP;
 
