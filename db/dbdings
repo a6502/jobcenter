@@ -374,13 +374,24 @@ sub compprocs {
 		#say "fn: $fn";
 		my ($f) = $fn =~ m|^procs/(.*)\.sql$|;
 		my $dbmd5 = dbmd5($f);
-		die "no proc $f in the db?" unless $dbmd5;
+		unless ($dbmd5) {
+			#warn "no proc $f in the db?";
+			$diffs++;
+			next
+		}
 		my $procmd5 = procmd5($f);
-		die "no proc $f in the procs table?" unless $procmd5;
+		unless ($procmd5) {
+			#warn "no proc $f in the procs table?";
+			$diffs++;
+			next;
+		}
 		my $filemd5 = md5sum($fn);
-		if ($procmd5 ne $dbmd5 and $filemd5 ne $procmd5) {
+		if ($procmd5 ne $dbmd5 and $dbmd5 ne $filemd5 and $filemd5 ne $procmd5) {
 			say "proc $f differs between db and procs table and file";
-			$diffs += 2;
+			$diffs += 3;
+		} elsif ($dbmd5 eq $filemd5 and $filemd5 ne $procmd5) {
+			say "proc $f procs table out of sync";
+			$diffs++;
 		} elsif ($filemd5 ne $procmd5) {
 			say "proc $f differs between procs table and file";
 			$diffs++;
@@ -426,10 +437,14 @@ sub updateprocs {
 		} elsif (not $dbmd5 and $procmd5) {
 			die "proc $f exists in procs table but not not in db.\n".
 			    "manual cleanup required.";
-		} elsif ($procmd5 ne $dbmd5 and $filemd5 ne $procmd5) {
+		} elsif ($procmd5 ne $dbmd5 and $dbmd5 ne $filemd5 and $filemd5 ne $procmd5) {
 			die "proc $f differs between db and procs table and file.\n".
 			    "manual cleanup required.";
-		} elsif ($procmd5 ne $procmd5) {
+		} elsif ($dbmd5 ne $procmd5 and $dbmd5 eq $filemd5) {
+			say "proc md5sum out of sync, updating";
+			loadproc($f);
+			$updated++;
+		} elsif ($dbmd5 ne $procmd5) {
 			die "proc $f differs between db and procs table.\n".
 			    "manual cleanup required.";
 		} elsif ($filemd5 ne $dbmd5) {
@@ -463,13 +478,11 @@ sub loadproc {
 	my $dbprocsrc = $pg->db->dollar_only->query($procsrcq, $proc)->array;
 	$dbprocsrc = ($dbprocsrc and @$dbprocsrc and $$dbprocsrc[0]) ? $$dbprocsrc[0] : undef;
 	my $dbmd5 = ($dbprocsrc) ? md5_hex($dbprocsrc) : undef;
+	my $procsrc = slurp("procs/$proc.sql");
+	my $filemd5 = md5_hex($procsrc);
 
 	die "proc $proc exists in db and not in proc table, refusing to load" if $dbmd5 and not $procmd5;
-	die "proc $proc was changed in the db, refusing to load" if $dbmd5 and $procmd5 and $procmd5 ne $dbmd5;
-
-	my $procsrc = slurp("procs/$proc.sql");
-
-	my $filemd5 = md5_hex($procsrc);
+	die "proc $proc was changed in the db, refusing to load" if $dbmd5 and $procmd5 and $procmd5 ne $dbmd5 and $dbmd5 ne $filemd5;
 
 	if ($procmd5 and $filemd5 eq $procmd5) {
 		say "$proc is alread up-to-date";
