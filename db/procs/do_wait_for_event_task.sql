@@ -69,7 +69,7 @@ BEGIN
 		job_id = a_jobtask.job_id
 		AND name = ANY(v_names)
 	ORDER BY event_id
-	LIMIT 1 FOR UPDATE OF job_events, queued_events;
+	LIMIT 1; -- FOR UPDATE OF job_events, queued_events;
 
 	IF FOUND THEN
 		-- delete this job_event
@@ -91,7 +91,7 @@ BEGIN
 		BEGIN
 			SELECT vars_changed, newvars INTO v_changed, v_newvars FROM do_outargsmap(a_jobtask, v_eventdata);
 		EXCEPTION WHEN OTHERS THEN
-			RETURN do_raise_error(a_jobtask, format('caught exception in do_outargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM)::jsonb);
+			RETURN do_raise_error(a_jobtask, format('caught exception in do_outargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 		END;
 
 		RETURN do_task_epilogue(a_jobtask, v_changed, v_newvars, v_inargs, v_eventdata);
@@ -108,7 +108,8 @@ BEGIN
 
 	-- and set the timeout
 	UPDATE jobs SET
-		timeout = v_timeout
+		timeout = v_timeout,
+		out_args = v_inargs
 	WHERE
 		job_id = a_jobtask.job_id;
 
