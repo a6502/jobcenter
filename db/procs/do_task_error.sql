@@ -8,7 +8,7 @@ BEGIN
 	UPDATE jobs SET
 		state = 'error',
 		task_completed = now(),
-		waitfortask_id = NULL,
+		--waitfortask_id = NULL,
 		cookie = NULL,
 		timeout = NULL,
 		out_args = a_errargs
