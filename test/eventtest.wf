@@ -20,7 +20,7 @@ workflow "eventtest" [
 			imap [[ $i{events} = ["my1stevent"] ]]
 			omap [[ $v{event} = $o{event} ]]
 		]
-		if [[ $v{event}->{name} == "my1stevent" ]] then [
+		if [[ $v{event}->{name} eq "my1stevent" ]] then [
 			eval [[ $v{thing} = 'got my1stevent' ]]
 		] else [
 			eval [[ $v{thing} = 'got something else' ]]
