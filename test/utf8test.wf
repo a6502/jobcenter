@@ -1,0 +1,18 @@
+# eval
+workflow "utf8test" [
+	in [
+		in1 string;
+		in2 string;
+	]
+	out [
+		out string;
+	]
+	wfomap [[
+		$o{out} = $v{thing};
+	]]
+	do [
+		eval [[ 
+			$v{thing} = "“$a{in1} $a{in2}”"
+		]]
+	]
+]
