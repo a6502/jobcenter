@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.get_task(a_workername text, a_actionname text, a_job_id bigint)
+CREATE OR REPLACE FUNCTION jobcenter.get_task(a_workername text, a_actionname text, a_job_id bigint DEFAULT NULL::bigint, a_pattern jsonb DEFAULT NULL::jsonb)
  RETURNS TABLE(o_job_cookie text, o_in_args jsonb)
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -8,6 +8,10 @@ AS $function$DECLARE
 	v_worker_id bigint;
 	v_workflow_id int;
 	v_task_id int;
+	v_key text;
+	v_val jsonb;
+	v_havepat jsonb DEFAULT '{}'::jsonb;
+	v_havenotpat jsonb DEFAULT '{}'::jsonb;
 BEGIN
 	SELECT
 		worker_id INTO v_worker_id
@@ -46,17 +50,47 @@ BEGIN
 		RAISE EXCEPTION 'worker % has not announced action %.', a_workername, a_actionname;
 	END IF;
 
-	SELECT 
-		workflow_id, task_id INTO v_workflow_id, v_task_id
-	FROM
-		tasks AS t
-		JOIN jobs AS j USING (task_id, workflow_id)
-	WHERE
-		j.job_id = a_job_id
-		AND t.action_id = v_action_id
-		AND state = 'ready'
-		AND pg_try_advisory_xact_lock(job_id)
-	FOR UPDATE OF j; -- sigh: because of jobs as j
+	IF a_pattern IS NULL THEN
+		SELECT
+			workflow_id, task_id INTO v_workflow_id, v_task_id
+		FROM
+			jobs AS j
+			JOIN tasks AS t USING (task_id, workflow_id)
+		WHERE
+			j.job_id = a_job_id
+			AND t.action_id = v_action_id
+			AND state = 'ready'
+			--AND pg_try_advisory_xact_lock(job_id)
+		FOR UPDATE OF j SKIP LOCKED; -- sigh: because of jobs as j
+	ELSE
+		FOR v_key, v_val IN SELECT * FROM jsonb_each(a_pattern) LOOP
+			IF v_key ~~ '!%' THEN
+				v_havenotpat := jsonb_set(v_havenotpat, ARRAY[right(v_key,-1)], v_val);
+			ELSE
+				v_havepat := jsonb_set(v_havepat, ARRAY[v_key], v_val);
+			END IF;
+		END LOOP;
+
+		IF v_havenotpat = '{}'::jsonb THEN
+			v_havenotpat = 'null'::jsonb;
+		END IF;
+
+		RAISE NOTICE 'havepat % havenotpat %', v_havepat, v_havenotpat;
+
+		SELECT
+			workflow_id, task_id INTO v_workflow_id, v_task_id
+		FROM
+			jobs AS j
+			JOIN tasks AS t USING (task_id, workflow_id)
+		WHERE
+			j.job_id = a_job_id
+			AND t.action_id = v_action_id
+			AND state = 'ready'
+			AND out_args @> v_havepat
+			AND NOT out_args @> v_havenotpat
+			--AND pg_try_advisory_xact_lock(job_id)
+		FOR UPDATE OF j SKIP LOCKED; -- sigh: because of jobs as j
+	END IF;
 
 	IF NOT FOUND THEN
 		-- RAISE NOTICE 'task not found for job_id % and action_id %', a_job_id, v_action_id;
