@@ -21,13 +21,12 @@ BEGIN
 	END;
 
 	-- bleh.. we want the 'old' value of out args..
-	SELECT out_args INTO v_inargs FROM jobs WHERE job_id = a_jobtask.job_id FOR UPDATE OF jobs;
+	SELECT out_args INTO v_inargs FROM jobs WHERE job_id = a_jobtask.job_id; -- FOR UPDATE OF jobs;
 
 	UPDATE jobs SET
 		state = 'done',
-		variables = CASE WHEN v_changed THEN v_newvars ELSE null END,
+		variables = v_newvars,
 		task_completed = now(),
-		waitfortask_id = NULL,
 		cookie = NULL,
 		timeout = NULL
 	WHERE job_id = a_jobtask.job_id;
@@ -35,6 +34,7 @@ BEGIN
 	PERFORM do_log(a_jobtask.job_id, v_changed, v_inargs, a_outargs);
 
 	-- wake the maestro
+	RAISE NOTICE 'NOTIFY "jobtaskdone", %', a_jobtask::text;
 	PERFORM pg_notify('jobtaskdone', a_jobtask::text);
 
 	RETURN;
