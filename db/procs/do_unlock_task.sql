@@ -7,18 +7,23 @@ AS $function$DECLARE
 	v_env jsonb;
 	v_vars jsonb;
 	v_action_id int;
-	v_inargs jsonb;
+	v_parentjob_id bigint;
 	v_locktype text;
 	v_lockvalue text;
-	v_contended boolean;
+	v_stringcode text;
+	v_contended integer;
 	v_waitjob_id bigint;
 	v_waittask_id int;
 	v_waitworkflow_id int;
+	v_waitinherit boolean;
 	v_waitjobtask jobtask;
 BEGIN
 	-- paranoia check with side effects
 	SELECT
-		arguments, environment, variables, action_id INTO v_args, v_env, v_vars, v_action_id
+		arguments, environment, variables, action_id, parentjob_id,
+		attributes->>'locktype', attributes->>'lockvalue', attributes->>'stringcode'
+		INTO v_args, v_env, v_vars, v_action_id, v_parentjob_id,
+		v_locktype, v_lockvalue, v_stringcode
 	FROM
 		jobs
 		JOIN tasks USING (workflow_id, task_id)
@@ -35,68 +40,33 @@ BEGIN
 		RAISE EXCEPTION 'do_unlock_task called for non-unlock-task %', a_jobtask.task_id;
 	END IF;
 
-	--RAISE NOTICE 'do_inargsmap action_id % task_id % args % vars % ', v_action_id, a_task_id, v_args, v_vars;
-	BEGIN
-		v_inargs := do_inargsmap(v_action_id, a_jobtask.task_id, v_args, v_env, v_vars);
-	EXCEPTION WHEN OTHERS THEN
-		RETURN do_raise_error(a_jobtask, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
-	END;
-		
-	RAISE NOTICE 'do_unlock_task v_inargs %', v_inargs;
+	IF v_lockvalue IS NULL THEN
+		BEGIN
+			v_lockvalue := do_stringcode(v_stringcode, v_args, v_env, v_vars);
+		EXCEPTION WHEN OTHERS THEN
+			RETURN do_raise_error(a_jobtask,
+				format('caught exception in do_stringcode sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
+		END;
+	END IF;
 
-	-- and what subscriptions we are actually interested in
-	-- (do_inargsmap has made sure those fields exist?)
-	v_locktype := v_inargs->>'locktype';
-	v_lockvalue := v_inargs->>'lockvalue';
+	RAISE NOTICE 'do_unlock_task locktype "%" lockvalue "%:', v_locktype, v_lockvalue;
 
-	-- we need an exlusive lock on the locks table to prevent a race condition
-	-- between setting the contented flag and updating job state
-	LOCK TABLE locks IN SHARE ROW EXCLUSIVE MODE;
-
-	DELETE FROM
+	SELECT
+		contended INTO v_contended
+	FROM
 		locks
 	WHERE
 		job_id = a_jobtask.job_id
 		AND locktype =  v_locktype
 		AND lockvalue = v_lockvalue
-	RETURNING contended INTO v_contended;
+	FOR UPDATE OF locks;
 
 	IF NOT FOUND THEN
 		-- or do a warning instead?
 		RETURN do_raise_error(a_jobtask, format('tried to unlock not held lock locktype %s lockvalue %s', v_locktype, v_lockvalue));
 	END IF;
 
-	IF v_contended THEN
-		SELECT 
-			job_id, task_id, workflow_id
-			INTO v_waitjob_id, v_waittask_id, v_waitworkflow_id
-		FROM
-			jobs
-		WHERE
-			waitforlocktype = v_locktype
-			AND waitforlockvalue = v_lockvalue
-			AND state = 'sleeping'
-		FOR UPDATE OF jobs;
-		
-		IF FOUND THEN
-			-- create lock for blocked task
-			INSERT INTO locks (job_id, locktype, lockvalue) VALUES (v_waitjob_id, v_locktype, v_lockvalue);
-			-- mark task done
-			UPDATE jobs SET
-				state = 'done',
-				waitforlocktype = null,
-				waitforlockvalue = null,
-				task_completed = now()
-			WHERE
-				job_id = v_waitjob_id;
+	PERFORM do_unlock(v_locktype, v_lockvalue, v_contended, a_jobtask.job_id, v_parentjob_id);
 
-			-- log completion of lock task
-			v_waitjobtask = (v_waitworkflow_id,v_waittask_id,v_waitjob_id)::jobtask;
-			PERFORM do_log(v_waitjob_id, false, jsonb_build_object('locktype', v_locktype, 'lockvalue', v_lockvalue), null);
-			-- wake up maestro
-			PERFORM pg_notify( 'jobtaskdone', v_waitjobtask::text);
-		END IF;
-	END IF;
-
-	RETURN do_task_epilogue(a_jobtask, false, null, v_inargs, null);
+	RETURN do_task_epilogue(a_jobtask, false, null, jsonb_build_object('locktype', v_locktype, 'lockvalue', v_lockvalue), null);
 END;$function$

@@ -7,9 +7,10 @@ AS $function$DECLARE
 	v_env jsonb;
 	v_vars jsonb;
 	v_action_id int;
-	v_inargs jsonb;
 	v_locktype text;
 	v_lockvalue text;
+	v_lockinherit boolean;
+	v_stringcode text;
 	v_gotlock boolean DEFAULT false;
 	v_parentjob_id bigint;
 	v_lockjob_id bigint;
@@ -17,8 +18,12 @@ AS $function$DECLARE
 BEGIN
 	-- paranoia check with side effects
 	SELECT
-		arguments, environment, variables, action_id, parentjob_id
-		INTO v_args, v_env, v_vars, v_action_id, v_parentjob_id
+		arguments, environment, variables, action_id, parentjob_id,
+		attributes->>'locktype', attributes->>'lockvalue', (attributes->>'lockinherit')::boolean,
+		attributes->>'stringcode'
+		INTO v_args, v_env, v_vars, v_action_id, v_parentjob_id,
+		v_locktype, v_lockvalue, v_lockinherit,
+		v_stringcode
 	FROM
 		jobs
 		JOIN tasks USING (workflow_id, task_id)
@@ -35,92 +40,80 @@ BEGIN
 		RAISE EXCEPTION 'do_lock_task called for non-lock-task %', a_jobtask.task_id;
 	END IF;
 
-	--RAISE NOTICE 'do_inargsmap action_id % task_id % args % vars % ', v_action_id, a_task_id, v_args, v_vars;
-	BEGIN
-		v_inargs := do_inargsmap(v_action_id, a_jobtask.task_id, v_args, v_env, v_vars);
-	EXCEPTION WHEN OTHERS THEN
-		RETURN do_raise_error(a_jobtask, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
-	END;
-		
-	RAISE NOTICE 'do_lock_task v_inargs %', v_inargs;
-
-	-- and what subscriptions we are actually interested in
-	-- (do_inargsmap has made sure those fields exist?)
-	v_locktype := v_inargs->>'locktype';
-	v_lockvalue := v_inargs->>'lockvalue';
-
-	-- we need an exlusive lock on the locks table to prevent a race condition
-	-- between setting the contented flag and updating job state
-	-- (and maybe for the deadlock detection too)
-	LOCK TABLE locks IN SHARE ROW EXCLUSIVE MODE;
-
-	BEGIN
-		INSERT INTO locks (job_id, locktype, lockvalue) VALUES (a_jobtask.job_id, v_locktype, v_lockvalue);
-		v_gotlock := true;
-	EXCEPTION WHEN unique_violation THEN
-		SELECT job_id INTO v_lockjob_id FROM locks WHERE locktype=v_locktype AND lockvalue = v_lockvalue FOR UPDATE;
-		-- select should return something here because of the unique violation
-		IF v_lockjob_id = a_jobtask.job_id THEN
-			-- we already have the lock
-			v_gotlock := true; -- FIXME: or error?
-		ELSIF v_lockjob_id = v_parentjob_id THEN
-			-- todo: steal lock from parent
-		END IF;
-	END;
-
-	IF NOT v_gotlock THEN
-		-- mark current lock as contended
-		UPDATE locks SET contended=true WHERE locktype=v_locktype AND lockvalue = v_lockvalue;
-
-		-- mark ourselves as waiting for this lock
-		-- fixme: log inargs?
-		UPDATE jobs SET
-			state = 'sleeping', -- FIXME: whut
-			waitforlocktype = v_locktype,
-			waitforlockvalue = v_lockvalue,
-			task_started = now()
-		WHERE
-			job_id = a_jobtask.job_id;
-
-		-- now see if we have a cycle of sleeping jobs
-		WITH RECURSIVE detect_deadlock(job_id, path, cycle) AS (
-				SELECT
-					 job_id,
-					 ARRAY[job_id] as path,
-					 false as cycle
-				FROM
-					 jobs
-				WHERE
-					job_id = v_lockjob_id
-					AND state = 'sleeping'
-			UNION ALL
-				SELECT
-					l.job_id,
-					path || l.job_id,
-					l.job_id = ANY(path)
-				FROM
-					jobs j
-					JOIN locks l on j.waitforlocktype=l.locktype AND j.waitforlockvalue=l.lockvalue
-					JOIN detect_deadlock dd ON j.job_id = dd.job_id
-				WHERE
-					j.state = 'sleeping' AND
-					NOT cycle
-		)
-		SELECT path INTO v_deadlockpath FROM detect_deadlock WHERE cycle=true;
-
-		IF v_deadlockpath IS NOT NULL THEN
-			-- now what?
-			-- if the error proves fatal then the cleanup trigger
-			-- will cleanup our locks and unlock the other job(s)
+	IF v_lockvalue IS NULL THEN
+		BEGIN
+			v_lockvalue := do_stringcode(v_stringcode, v_args, v_env, v_vars);
+		EXCEPTION WHEN OTHERS THEN
 			RETURN do_raise_error(a_jobtask,
-					format('deadlock trying to get locktype %s lockvalue %s path %s',
-						v_locktype, v_lockvalue, array_to_string(v_deadlockpath, ', ')
-					)
-				);
-		END IF;
+				format('caught exception in do_stringcode sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
+		END;
+	END IF;
+		
+	RAISE NOTICE 'do_lock_task locktype "%" lockvalue "%"', v_locktype, v_lockvalue;
 
-		RETURN null; -- no next task
-	END IF;		
+	INSERT INTO 
+		locks (job_id, locktype, lockvalue, inheritable)
+	VALUES
+		(a_jobtask.job_id, v_locktype, v_lockvalue, v_lockinherit)
+	ON CONFLICT (locktype, lockvalue) DO UPDATE
+	SET contended = locks.contended + 1 WHERE locks.locktype=v_locktype AND locks.lockvalue = v_lockvalue
+	RETURNING job_id INTO v_lockjob_id;
 
-	RETURN do_task_epilogue(a_jobtask, false, null, v_inargs, null);
+	IF v_lockjob_id = a_jobtask.job_id THEN
+		-- now that was easy
+		RETURN do_task_epilogue(a_jobtask, false, null, jsonb_build_object('locktype', v_locktype, 'lockvalue', v_lockvalue), null);
+	END IF;
+	
+	-- see if we can inherit the lock
+	--IF v_lockjob_id = v_parentjob_id
+
+	-- mark ourselves as waiting for this lock
+	-- fixme: log inargs?
+	UPDATE jobs SET
+		state = 'sleeping', -- FIXME: whut
+		waitforlocktype = v_locktype,
+		waitforlockvalue = v_lockvalue,
+		waitforlockinherit = v_lockinherit,
+		task_started = now()
+	WHERE
+		job_id = a_jobtask.job_id;
+
+	-- now see if we have a cycle of sleeping jobs
+	WITH RECURSIVE detect_deadlock(job_id, path, cycle) AS (
+			SELECT
+				 job_id,
+				 ARRAY[job_id] as path,
+				 false as cycle
+			FROM
+				 jobs
+			WHERE
+				job_id = v_lockjob_id
+				AND state = 'sleeping'
+		UNION ALL
+			SELECT
+				l.job_id,
+				path || l.job_id,
+				l.job_id = ANY(path)
+			FROM
+				jobs j
+				JOIN locks l on j.waitforlocktype=l.locktype AND j.waitforlockvalue=l.lockvalue
+				JOIN detect_deadlock dd ON j.job_id = dd.job_id
+			WHERE
+				j.state = 'sleeping' AND
+				NOT cycle
+	)
+	SELECT path INTO v_deadlockpath FROM detect_deadlock WHERE cycle=true;
+
+	IF v_deadlockpath IS NOT NULL THEN
+		-- now what?
+		-- if the error proves fatal then the cleanup
+		-- will cleanup our locks and unlock the other job(s)
+		RETURN do_raise_error(a_jobtask,
+				format('deadlock trying to get locktype %s lockvalue %s path %s',
+					v_locktype, v_lockvalue, array_to_string(v_deadlockpath, ', ')
+				)
+			);
+	END IF;
+
+	RETURN null; -- no next task
 END;$function$

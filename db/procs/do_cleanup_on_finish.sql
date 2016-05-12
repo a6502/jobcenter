@@ -1,28 +1,44 @@
-CREATE OR REPLACE FUNCTION jobcenter.do_cleanup_on_finish()
- RETURNS trigger
+CREATE OR REPLACE FUNCTION jobcenter.do_cleanup_on_finish(a_jobtask jobtask)
+ RETURNS void
  LANGUAGE plpgsql
  SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$DECLARE
-	v_job_id bigint;
+	v_parentjob_id bigint;
 	v_locktype text;
 	v_lockvalue text;
-	v_contended boolean;
-	v_waitjob_id bigint;
-	v_waittask_id int;
-	v_waitworkflow_id int;
+	v_contended integer;
+	v_tmpjob_id bigint;
+	v_tmptask_id int;
+	v_tmpworkflow_id int;
+	v_tmpinherit boolean;
 BEGIN
+	RAISE NOTICE 'do_cleanup_on_finish %', a_jobtask;
 	-- paranoia
-	IF NEW.job_finished IS NULL THEN
-		RETURN null;
+	SELECT
+		parentjob_id INTO v_parentjob_id
+	FROM
+		jobs
+	WHERE
+		job_id = a_jobtask.job_id
+		AND (
+			(state IN ('finished', 'error') AND job_finished IS NOT NULL)
+			OR
+			state IN ('zombie')
+		);
+
+	IF NOT FOUND THEN
+		RETURN;
 	END IF;
 
-	-- delete subscribtions
-	DELETE FROM event_subscriptions WHERE job_id = NEW.job_id;
+	-- delete subscriptions
+	DELETE FROM event_subscriptions WHERE job_id = a_jobtask.job_id;
 	-- fkey cascaded delete should delete from job_events
 	-- now delete events that no-one is waiting for anymore
 	-- FIXME: use knowledge of what was deleted?
 	DELETE FROM queued_events WHERE event_id NOT IN (SELECT event_id FROM job_events);
-	-- abort any child jobs
+
+	/*
+	-- abort any still running child jobs
 	UPDATE
 		jobs
 	SET
@@ -31,44 +47,27 @@ BEGIN
 		job_finished = now(),
 		timeout = null
 	WHERE
-		parentjob_id = NEW.job_id
-		AND state NOT IN ('finished','error');
+		parentjob_id = a_jobtask.job_id
+		AND state NOT IN ('finished', 'error');
+	*/
 
-	-- unlock all locks
-	LOCK TABLE locks IN SHARE ROW EXCLUSIVE MODE;
+	-- signal any remaining child jobs to abort cq raise an abort error
+	UPDATE
+		jobs
+	SET
+		aborted = true
+	WHERE
+		parentjob_id = a_jobtask.job_id
+		AND state NOT IN ('finished', 'error', 'zombie');
+
+	-- unlock all remaining locks
+	-- FIXME: call unlock somehow?
+	--LOCK TABLE locks IN SHARE ROW EXCLUSIVE MODE;
 	FOR v_locktype, v_lockvalue, v_contended IN
-			DELETE FROM locks WHERE job_id=NEW.job_id RETURNING locktype, lockvalue LOOP
-		IF v_contended THEN
-			SELECT 
-				job_id, task_id, workflow_id
-				INTO v_waitjob_id, v_waittask_id, v_waitworkflow_id
-			FROM
-				jobs
-			WHERE
-				waitforlocktype = v_locktype
-				AND waitforlockvalue = v_lockvalue
-				AND state = 'sleeping'
-			FOR UPDATE OF jobs;
-			
-			IF FOUND THEN
-				-- create lock for blocked task
-				INSERT INTO locks (job_id, locktype, lockvalue) VALUES (v_waitjob_id, v_locktype, v_lockvalue);
-				-- mark task done
-				UPDATE jobs SET
-					state = 'done',
-					waitforlocktype = null,
-					waitforlockvalue = null,
-					task_completed = now()
-				WHERE
-					job_id = v_waitjob_id;
-				-- log something
-				PERFORM do_log(v_waitjob_id, false, null, null);
-				-- wake up maestro
-				PERFORM pg_notify( 'jobtaskdone',  ( '(' || v_waitworkflow_id || ',' || v_waittask_id || ',' || v_waitjob_id || ')' ));
-			END IF;
-				
-		END IF;
+			SELECT locktype, lockvalue, contended FROM locks WHERE job_id=a_jobtask.job_id FOR UPDATE LOOP
+		PERFORM do_unlock(v_locktype, v_lockvalue, v_contended, a_jobtask.job_id, v_parentjob_id);
 	END LOOP;
+
 	-- done cleaning up?
-	RETURN null;
+	RETURN;
 END$function$
