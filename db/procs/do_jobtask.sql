@@ -8,6 +8,8 @@ AS $function$DECLARE
 	v_action_id int;
 	v_actionname text;
 	v_steps int;
+	v_max_steps int;
+	v_aborted boolean;
 	v_nexttask_id int;
 BEGIN
 	UPDATE jobs SET
@@ -21,17 +23,21 @@ BEGIN
 		workflow_id = a_jobtask.workflow_id
 		AND job_id = a_jobtask.job_id
 		AND state IN ('plotting', 'error')
-	RETURNING stepcounter INTO v_steps;
+	RETURNING stepcounter, max_steps, aborted INTO v_steps, v_max_steps, v_aborted;
 
 	IF NOT FOUND THEN
 		RETURN null; -- or what?
 	END IF;
 
-	-- FIXME: make configurable
-	IF v_steps > 50 THEN
-		--RAISE EXCEPTION 'maximum steps exceeded: % > 50', v_steps;
+	-- check for fatal errors first
+	IF v_steps > v_max_steps THEN
 		-- raise fatal error
-		RETURN do_raise_error(a_jobtask, format('maximum steps exceeded: %s > 50', v_steps), true);
+		RETURN do_raise_error(a_jobtask, format('maximum step count exceeded: %s > %s', v_steps, v_max_steps), 'fatal');
+	END IF;
+
+	IF v_aborted THEN
+		-- raise abort error
+		RETURN do_raise_error(a_jobtask, 'aborted by parent job', 'abort');
 	END IF;
 
 	SELECT
@@ -113,10 +119,5 @@ BEGIN
 
 	-- should not get here
 	RETURN null;
-EXCEPTION
-	WHEN deadlock_detected THEN
-	-- just retry current step
-	RAISE NOTICE 'deadlock detected, retrying jobtask';
-	RETURN (false, a_jobtask)::nextjobtask;
 END
 $function$
