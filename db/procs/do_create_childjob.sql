@@ -15,7 +15,8 @@ BEGIN
 	-- find the sub worklow using the task in the parent
 	-- get the arguments and variables as well
 	SELECT
-		action_id, wait, arguments, environment, variables INTO v_workflow_id, v_wait, v_args, v_env, v_vars
+		action_id, wait, arguments, environment, variables
+		INTO v_workflow_id, v_wait, v_args, v_env, v_vars
 	FROM 
 		actions
 		JOIN tasks USING (action_id)
@@ -54,26 +55,28 @@ BEGIN
 
 	-- now create the new job and mark the start task 'done'
 	INSERT INTO jobcenter.jobs
-		(workflow_id, task_id, parentjob_id, parenttask_id, state, arguments, task_entered, task_started, task_completed)
+		(workflow_id, task_id, parentjob_id, parenttask_id, parentwait,
+		 state, arguments, environment, task_entered, task_started, task_completed)
 	VALUES
-		(v_workflow_id, v_task_id, a_parentjobtask.job_id, a_parentjobtask.task_id, 'done', v_in_args, now(), now(), now())
+		(v_workflow_id, v_task_id, a_parentjobtask.job_id, a_parentjobtask.task_id, v_wait,
+		 'done', v_in_args, v_env, now(), now(), now())
 	RETURNING
 		job_id INTO v_job_id;
-
-	-- now wake up maestro for the new job
-	--RAISE NOTICE 'NOTIFY "jobtaskdone", %', (v_workflow_id::TEXT || ':' || v_task_id::TEXT || ':' || v_job_id::TEXT );
-	PERFORM pg_notify( 'jobtaskdone',  ( '(' || v_workflow_id || ',' || v_task_id || ',' || v_job_id || ')' ));
 
 	IF v_wait THEN
 		-- mark the parent job as blocked
 		UPDATE jobs SET
 			state = 'blocked',
 			task_started = now(),
-			waitfortask_id = a_parentjobtask.task_id
+			out_args = to_jsonb(v_job_id) -- store child job_id somewhere
 		WHERE job_id = a_parentjobtask.job_id;
-		RETURN null; -- and no next task
+		-- and continue with the childjob
+		RETURN do_task_epilogue((v_workflow_id, v_task_id, v_job_id)::jobtask, false, null, null, null);
 	ELSE
-		-- continue to next task
+		-- wake up the maestro for the new job
+		--RAISE NOTICE 'NOTIFY "jobtaskdone", %', (v_workflow_id::TEXT || ':' || v_task_id::TEXT || ':' || v_job_id::TEXT );
+		PERFORM pg_notify( 'jobtaskdone',  ( '(' || v_workflow_id || ',' || v_task_id || ',' || v_job_id || ')' ));
+		-- and continue to next task
 		-- logging the child job_id in the out_args field
 		RETURN do_task_epilogue(a_parentjobtask, false, null, null, to_jsonb(v_job_id));
 	END IF;
