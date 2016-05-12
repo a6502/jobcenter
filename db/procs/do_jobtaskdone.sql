@@ -6,7 +6,7 @@ CREATE OR REPLACE FUNCTION jobcenter.do_jobtaskdone(a_jobtask jobtask)
 AS $function$DECLARE
 	v_nexttask_id int;
 BEGIN
-	--RAISE NOTICE 'do_next_task % % %', a_workflow_id, a_task_id, a_job_id;
+	RAISE NOTICE 'do_jobtaskdone(%, %, %)', a_jobtask.workflow_id, a_jobtask.task_id, a_jobtask.job_id;
 
 	UPDATE jobs
 		SET state = 'plotting'
