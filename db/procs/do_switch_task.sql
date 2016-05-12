@@ -6,15 +6,15 @@ AS $function$DECLARE
 	v_args jsonb;
 	v_env jsonb;
 	v_vars jsonb;
-	v_casecode text;
+	v_stringcode text;
 	v_when text;
 	v_nexttask_id integer;
 	v_targettask_id integer;
 BEGIN
 	-- paranoia check with side effects
 	SELECT
-		arguments, environment, variables, casecode, next_task_id INTO
-		v_args, v_env, v_vars, v_casecode, v_nexttask_id
+		arguments, environment, variables, attributes->>'stringcode', next_task_id INTO
+		v_args, v_env, v_vars, v_stringcode, v_nexttask_id
 	FROM
 		jobs
 		JOIN tasks USING (workflow_id, task_id)
@@ -33,9 +33,9 @@ BEGIN
 	END IF;
 
 	BEGIN
-		v_when := do_switchcasecode(v_casecode, v_args, v_env, v_vars);
+		v_when := do_stringcode(v_stringcode, v_args, v_env, v_vars);
 	EXCEPTION WHEN OTHERS THEN
-		RETURN do_raise_error(a_jobtask, format('caught exception in do_switchcasecode sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
+		RETURN do_raise_error(a_jobtask, format('caught exception in do_stringcode sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;
 
 	SELECT

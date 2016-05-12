@@ -22,18 +22,17 @@ BEGIN
 	FROM
 		jobs
 	WHERE
-		job_id = a_jobtask.job_id
-	FOR UPDATE OF jobs;
+		job_id = a_jobtask.job_id;
+	--FOR UPDATE OF jobs;
 
 	IF NOT FOUND THEN
-		RAISE NOTICE 'outargsarsmap: job_id % not found', a_jobtask.job_id;
+		RAISE NOTICE 'do_outargsarsmap: job_id % not found', a_jobtask.job_id;
 		RETURN;
 	END IF;
 
-
 	-- now get the rest using the task and job_id
 	SELECT
-		action_id, omapcode
+		action_id, attributes->>'omapcode'
 		INTO v_action_id, v_code
 	FROM
 		tasks
@@ -43,7 +42,7 @@ BEGIN
 		AND workflow_id = a_jobtask.workflow_id;
 
 	IF NOT FOUND THEN
-		RAISE NOTICE 'outargsarsmap: task % not found', a_jobtask.task_id;
+		RAISE NOTICE 'do_outargsarsmap: task % not found', a_jobtask.task_id;
 		RETURN;
 	END IF;
 
@@ -51,7 +50,7 @@ BEGIN
 	-- omap also initializes oldvars to empty, but then we would log a change if newvars is also empty
 	v_oldvars := COALESCE(v_oldvars, '{}'::jsonb);
 
-	RAISE NOTICE 'v_oldvars % a_outargs %', v_oldvars, a_outargs;
+	RAISE NOTICE 'do_outargsmap: v_oldvars % a_outargs %', v_oldvars, a_outargs;
 
 	-- first check if all the required outargs are there
 	FOR v_key, v_type, v_opt IN SELECT "name", "type", optional
@@ -83,8 +82,10 @@ BEGIN
 	END LOOP;
 
 	-- now run the mapping code
-	SELECT omapcode INTO v_code FROM tasks WHERE task_id = a_jobtask.task_id;
+	--SELECT omapcode INTO v_code FROM tasks WHERE task_id = a_jobtask.task_id;
+	RAISE NOTICE 'foo!';
 	newvars := do_omap(v_code, v_oldvars, a_outargs);
+	RAISE NOTICE 'bar!';
 
 	vars_changed := v_oldvars IS DISTINCT FROM newvars;
 

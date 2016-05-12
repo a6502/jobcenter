@@ -13,7 +13,7 @@ AS $function$DECLARE
 	v_val jsonb;
 	v_inargs jsonb;
 BEGIN
-	SELECT imapcode INTO v_code FROM tasks WHERE task_id = a_task_id;
+	SELECT attributes->>'imapcode' INTO v_code FROM tasks WHERE task_id = a_task_id;
 	v_inargs := do_imap(v_code, a_args, a_env, a_vars);
 
 	--RAISE NOTICE 'v_inargs now %', v_inargs;
@@ -27,19 +27,19 @@ BEGIN
 			IF v_actual = 'object' THEN
 				SELECT fields INTO v_fields FROM jsonb_object_fields WHERE typename = v_type;
 				IF NOT v_val ?& v_fields THEN
-					RAISE EXCEPTION 'input parameter % with value % does have required fields %', v_key, v_val, v_fields;
+					RAISE EXCEPTION 'input parameter "%" with value "%" does have required fields %', v_key, v_val, v_fields;
 				END IF;
 			ELSIF v_actual = null OR v_actual = v_type THEN
 				-- ok?
 				NULL;
 			ELSE
-				RAISE EXCEPTION 'input parameter % has wrong type % (should be %)', v_key, v_actual, v_type;
+				RAISE EXCEPTION 'input parameter "%" has wrong type % (should be %)', v_key, v_actual, v_type;
 			END IF;
 		ELSE
 			IF v_opt THEN
 				v_inargs := jsonb_set(v_inargs, ARRAY[v_key], v_def);
 			ELSE
-				RAISE EXCEPTION 'required input parameter % not found', v_key;
+				RAISE EXCEPTION 'required input parameter "%" not found', v_key;
 			END IF;
 		END IF;
 
