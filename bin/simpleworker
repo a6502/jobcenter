@@ -24,7 +24,7 @@ sub main {
 
 	my $worker = Jobcenter::SimpleWorker->new(
 		cfgpath => "$FindBin::Bin/../etc/jobcenter.conf",
-		debug => 0,
+		debug => 1,
 	);
 	die 'no worker?' unless $worker;
 
@@ -44,16 +44,22 @@ sub main {
 
 sub do_add {
 	my ($job_id, $vars) = @_;
-	$vars->{counter} += $vars->{step} || 1;
+	my $out = {};
+	$out->{counter} = $vars->{counter} + ($vars->{step} || 1);
+	return $out;
 }
 
 sub do_square {
 	my ($job_id, $vars) = @_;
-	$vars->{square} = $vars->{root}**2;
+	my $out = {};
+	$out->{square} = $vars->{root}**2;
+	return $out;
 }
 
 sub do_div {
 	my ($job_id, $vars) = @_;
-	$vars->{quotient} = $vars->{dividend} / $vars->{divisor};
+	my $out = {};
+	$out->{quotient} = $vars->{dividend} / $vars->{divisor};
+	return $out;
 }
 

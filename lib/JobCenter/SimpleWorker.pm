@@ -8,6 +8,7 @@ use 5.10.0;
 use Data::Dumper;
 use FindBin;
 use IO::Poll qw(POLLIN);
+use Module::Load qw(load);
 use Time::HiRes qw(time);
 
 # non standard modules that should be available as packages even on rhel-6
@@ -18,18 +19,26 @@ use JSON qw(decode_json encode_json);
 
 sub new {
 	my ($class, %args) = @_;
-	die 'no cfgpath?' unless $args{cfgpath};	
 	my $workername = $args{workername} ||  "$0 [$$]";
-	my $cfg = Config::Tiny->read($args{cfgpath});
-	die 'failed to read config ' . $args{cfgpath} . ': ' . Config::Tiny->errstr unless $cfg;
+	my ($cfg, $pgdsn, $pguser, $pgpass);
+	if ($args{cfgpath}) {
+		load Config::Tiny;
+		$cfg = Config::Tiny->read($args{cfgpath});
+		die 'failed to read config ' . $args{cfgpath} . ': ' . Config::Tiny->errstr unless $cfg;
+		$pgdsn = 'dbi:Pg:dbname=' . $cfg->{pg}->{db}
+			. ';host=' . $cfg->{pg}->{host}
+			. ';port=' . $cfg->{pg}->{port};
+		$pguser = $cfg->{client}->{user};
+		$pgpass = $cfg->{client}->{pass};
+	} else {
+		$pgdsn = $args{pgdsn} or die 'no pgdsn?';
+		$pguser = $args{pguser} or die 'no pguser?';
+		$pgpass = $args{pgpass} or die 'no pgpass?';
+	}
 	# make our workername the application_name visible in postgresql
 	$ENV{'PGAPPNAME'} = $workername;
 	my $pgh = DBI->connect(
-		'dbi:Pg:dbname=' . $cfg->{pg}->{db}
-		. ';host=' . $cfg->{pg}->{host}
-		. ';port=' . $cfg->{pg}->{port},
-		$cfg->{client}->{user},
-		$cfg->{client}->{pass},
+		$pgdsn,	$pguser, $pgpass,
 		{
 			AutoCommit => 1,
 			RaiseError => 1,
@@ -83,6 +92,8 @@ sub announce {
 		actionname => $actionname,
 	};
 	$self->{worker_id} = $worker_id;
+	say "registered worker_id $worker_id for action $actionname",
+		" with listensting $listenstring" if $self->{debug};
 	return 1;
 }
 
@@ -148,19 +159,23 @@ sub get_task {
 	my $pgh = $self->{pgh};
 	say "get_task: workername $self->{workername}, actionname $action->{actionname}, job_id $job_id"
 		if $self->{debug};
-	my ($cookie, $vars) = $pgh->selectrow_array(q[select * from get_task($1, $2, $3)], {},
+	my ($cookie, $inargs) = $pgh->selectrow_array(q[select * from get_task($1, $2, $3)], {},
 					$self->{workername}, $action->{actionname}, $job_id);
 	return unless $cookie;
-	say "cookie $cookie invars $vars" if $self->{debug};
-	$vars = decode_json( $vars );
+	say "cookie $cookie inargs $inargs" if $self->{debug};
+	$inargs = decode_json( $inargs ); #fixme: eval?
+	my $outargs;
 	local $@;
 	eval {
-		&{$action->{cb}}($job_id, $vars);
+		$outargs = &{$action->{cb}}($job_id, $inargs);
 	};
-	$vars = {'error' => 'something bad happened: ' . $@} if $@;
-	$vars = encode_json( $vars );
-	say "outvars $vars" if $self->{debug};
-	$pgh->do(q[select task_done($1, $2)], {}, $cookie, $vars);
+	$outargs = {'error' => 'something bad happened: ' . $@} if $@;
+	eval {
+		$outargs = encode_json( $outargs );
+	};
+	$outargs = {'error' => 'cannot json encde outargs: ' . $@} if $@;
+	say "outargs $outargs" if $self->{debug};
+	$pgh->do(q[select task_done($1, $2)], {}, $cookie, $outargs);
 	say "done with action $action->{actionname} for job $job_id\n" if $self->{debug};
 }
 
