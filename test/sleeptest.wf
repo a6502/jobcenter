@@ -19,7 +19,7 @@ workflow "sleeptest" [
 		if [[ $v{event}->{name} == 'timeout' ]] then [
 			eval [[ $v{thing} = 'got timeout' ]]
 		] else [
-			eval [[ $v{thing} = 'got something else ' . encode_json( $v{event} ) ]]
+			eval [[ $v{thing} = 'got something else ' . to_json( $v{event} ) ]]
 		]
 	]
 ]
