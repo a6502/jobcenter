@@ -1,17 +1,21 @@
-#!/usr/bin/perl
+#!/usr/bin/perl -CSDAL
 
 use strict;
 use warnings;
 use 5.10.0;
+#use open qw(:std :utf8);
+use open ':locale';
 
 # standard modules
 use Data::Dumper;
+#use Encode qw(decode_utf8);
 use FindBin;
 
 # JobCenter
 use lib "$FindBin::Bin/../lib";
 use JobCenter::SimpleClient;
 
+#exit main(map { decode_utf8($_, 1) } @ARGV);
 exit main(@ARGV);
 
 sub main {

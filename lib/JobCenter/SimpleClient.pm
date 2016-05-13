@@ -6,6 +6,7 @@ use 5.10.0;
 
 # standard modules
 use Data::Dumper;
+use Encode qw(decode_utf8 encode_utf8);
 use IO::Poll qw(POLLIN);
 use Module::Load qw(load);
 use Time::HiRes qw(time);
@@ -62,7 +63,7 @@ sub call {
 
 	if ($self->{json}) {
 		# sanity check json string
-		my $inargsp = decode_json($inargs);
+		my $inargsp = decode_json(encode_utf8($inargs));
 		die 'inargs is not a json object' unless ref $inargsp eq 'HASH';
 	} else {
 		die  'inargs should be a hashref' unless ref $inargs eq 'HASH';
@@ -120,7 +121,7 @@ sub call {
 
 		say STDERR "timeout: ", $timeout - $now if $self->{debug};
 		my $ret = $poll->poll($timeout - $now);
-		# why poll returns doesn't matter here
+		# why poll returns doesn't matter here because
 		# we only poll on 1 fd and we only listen to 1 channel
 		# so it it either the timeout, caught by the while condition
 		# or the notification we were waiting for
