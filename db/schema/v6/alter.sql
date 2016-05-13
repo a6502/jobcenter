@@ -36,6 +36,8 @@ GRANT SELECT, UPDATE, INSERT, TRUNCATE, DELETE ON TABLE jobs_archive TO $JCSYSTE
 ALTER FUNCTION do_check_workers()
   RENAME TO do_archival_and_cleanup;
 
+update _procs set name = 'do_archival_and_cleanup', md5 = md5(pg_get_functiondef('do_archival_and_cleanup'::regproc)) where name = 'do_check_workers';
+
 alter table jobs add column max_steps integer not null default 100;
 
 alter table jobs_archive add column max_steps integer not null default 100;
@@ -89,7 +91,7 @@ GRANT SELECT ON TABLE jc_roles TO $JCSYSTEM;
 GRANT SELECT ON TABLE jc_role_members TO $JCSYSTEM;
 GRANT SELECT ON TABLE jc_impersonate_roles TO $JCSYSTEM;
 
-alter table actions rename column role to rolename;
+alter table actions add column rolename text;
 
 alter table actions add constraint action_rolename_fkey foreign key (rolename) references jc_roles(rolename) ON UPDATE CASCADE ON DELETE restrict;
 
@@ -134,11 +136,11 @@ alter table tasks drop column omapcode;
 
 alter function do_branchcasecode(code text, args jsonb, env jsonb, vars jsonb) rename to do_boolcode;
 
-update _procs set name = 'do_boolcode' where name = 'do_branchcasecode';
+update _procs set name = 'do_boolcode', md5 = md5(pg_get_functiondef('do_boolcode'::regproc)) where name = 'do_branchcasecode';
 
 alter function do_switchcasecode(code text, args jsonb, env jsonb, vars jsonb) rename to do_stringcode;
 
-update _procs set name = 'do_stringcode' where name = 'do_switchcasecode';
+update _procs set name = 'do_stringcode', md5 = md5(pg_get_functiondef('do_stringcode'::regproc)) where name = 'do_switchcasecode';
 
 alter table locks add column inheritable boolean default false;
 
@@ -146,6 +148,8 @@ alter table jobs add column waitforlockinherit boolean;
 
 alter function do_wfmap(code text, vars jsonb) rename to do_wfomap;
 
-update _procs set name = 'do_wfomap' where name = 'do_wfmap';
+update _procs set name = 'do_wfomap', md5 = md5(pg_get_functiondef('do_wfomap'::regproc)) where name = 'do_wfmap';
+
+insert into locktypes values ('foo'),('abc'),('slot'),('schloss');
 
 

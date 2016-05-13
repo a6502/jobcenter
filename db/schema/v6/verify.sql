@@ -6,7 +6,7 @@ DECLARE
 		'jc_impersonate_roles',
 		'jc_role_members',
 		'jc_roles',
-		'jobs_archive',
+		'jobs_archive'
 	];
 	v_i text;
 BEGIN
