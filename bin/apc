@@ -25,10 +25,10 @@ sub main {
 	
 	my $asrc = slurp( $af );
 	
-	my $ap = JobCenter::ActionParser->new();
+	my $app = JobCenter::APParser->new();
 	# pass a refenrence so we can keep the position of the last match
 	# and safe some copying..
-	my $actions = $ap->parse(\$asrc);
+	my $actions = $app->parse(\$asrc);
 	print 'actions : ', Dumper($actions);
 
 	# what do we call ourselves
@@ -50,8 +50,8 @@ sub main {
 		. '/' . $cfg->{pg}->{db}
 	);
 
-	my $ag = JobCenter::ActionGenerator->new($pg->db);
-	$ag->generate($_) for @$actions;
+	my $apg = JobCenter::APGenerator->new($pg->db);
+	$apg->generate($_) for @$actions;
 
 	say "the end is nigh!";
 	return 0;
@@ -60,7 +60,7 @@ sub main {
 #
 #
 #
-package JobCenter::ActionParser;
+package JobCenter::APParser;
 
 use Mojo::Base -base;
 use Data::Dumper;
@@ -85,7 +85,7 @@ sub parse {
 	$self->{pos} = 0;
 
 	local $@;
-	my $res = eval { $self->parse_actions };
+	my $res = eval { $self->parse_actionsandprocedures };
 	$self->error($@) if $@;
 	return $res;
 }
@@ -94,7 +94,7 @@ sub parse {
 #
 # top level
 #
-sub parse_actions {
+sub parse_actionsandprocedures {
 	my $self = shift;
 	my $src = $self->{src};
 	my @actions = ();
@@ -102,11 +102,12 @@ sub parse_actions {
 	while (1) {
 		$self->find_next_token;
 		say 'at: ', substr($$src, pos $$src, 10);
-		last unless $$src =~ /\Gaction/cgms;
+		last unless $$src =~ /\G(action|procedure)/cgms;
 		$self->{pos} = pos $$src;
-		say 'found action';
+		my $found = $1;
+		say "found $found";
 
-		my $action = bless {}, 'action';
+		my $action = bless {}, $found;
 
 		my $name = $self->parse_ident;
 		say 'found action name: ', $name; #, ' pos ', $self->{pos};
@@ -278,7 +279,7 @@ sub error {
 #
 # action generatror
 #
-package JobCenter::ActionGenerator;
+package JobCenter::APGenerator;
 
 use Mojo::Base -base;
 use Mojo::Util qw( quote );
@@ -295,17 +296,18 @@ sub new {
 
 sub generate {
 	my ($self, $wf) = @_;
-	die 'not an actions' unless blessed($wf) eq 'action';
+	my $what = blessed($wf);
+	die 'not an action or procedure' unless $what eq 'action' or $what eq 'procedure';
 	
 	say "\nbegin";
 	my $tx  = $self->{db}->begin;
 
-	my $version = 0;
+	my $version = 1; # start at 1
 	# find out if a version alreay exists, if so increase version
 	{
 		my $res = $self->{db}->dollar_only->query(
-			q|select version from actions where name = $1 and type = 'action' order by version desc limit 1|, 
-			$wf->{name}
+			q|select version from actions where name = $1 and type = $2 order by version desc limit 1|, 
+			$wf->{name}, $what
 		)->array;
 		#print 'res: ', Dumper($res);
 		if ( $res and @$res and @$res[0] >= 0 ) {
@@ -314,8 +316,8 @@ sub generate {
 	}
 
 	my $aid = $self->qs(
-		q|insert into actions (name, type, version) values ($1, 'action', $2) returning action_id|, 
-		$wf->{name}, $version
+		q|insert into actions (name, type, version) values ($1, $2, $3) returning action_id|, 
+		$wf->{name}, $what, $version
 	);
 	say "aid: $aid";
 
