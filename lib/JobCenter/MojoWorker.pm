@@ -9,34 +9,52 @@ BEGIN {
 	$ENV{'MOJO_REACTOR'} = 'Mojo::Reactor::Poll';
 }
 
+use strict;
+use warnings;
+
 # mojo
 use Mojo::Base 'Mojo::EventEmitter';
 use Mojo::IOLoop;
-use Mojo::Pg;
 use Mojo::JSON qw(decode_json encode_json);
+use Mojo::Log;
+use Mojo::Pg;
 
 # standard
+use Cwd qw(realpath);
 use Data::Dumper;
+use File::Basename;
+use FindBin;
 use IO::Pipe;
 
 # other
 use Config::Tiny;
 
+# jobcenter
+use JobCenter::MojoWorker::Task;
+use JobCenter::Util;
 
-has [qw(cfg pg workername debug ping tmr)];
+has [qw(cfg daemon debug json log pg pid_file ping tmr worker_id workername)];
 
 sub new {
 	my ($class, %args) = @_;
 	my $self = $class->SUPER::new();
 
-	die 'no cfgpath?' unless $args{cfgpath};	
-	my $workername = $args{workername} ||  "$0 [$$]";
-	my $cfg = Config::Tiny->read($args{cfgpath});
-	die 'failed to read config ' . $args{cfgpath} . ': ' . Config::Tiny->errstr unless $cfg;
+	my $cfg;
+	if ($args{cfg}) {
+		$cfg = $args{cfg};
+	} elsif ($args{cfgpath}) {
+		$cfg = Config::Tiny->read($args{cfgpath});
+		die 'failed to read config ' . $args{cfgpath} . ': ' . Config::Tiny->errstr unless $cfg;
+	} else {
+		die 'no cfg or cfgpath?';
+	}
 
+	my $workername = $args{workername} || fileparse($0);
+	my $pid_file = $cfg->{pid_file} // realpath("$FindBin::Bin/../log/$workername.pid");
+	die "$workername already running?" if check_pid($pid_file);
 
 	# make our workername the application_name visible in postgresql
-	$ENV{'PGAPPNAME'} = $workername;
+	$ENV{'PGAPPNAME'} = $workername . " [$$]" unless $ENV{'PGAPPNAME'};
 	my $pg = Mojo::Pg->new(
 		'postgresql://'
 		. $cfg->{client}->{user}
@@ -47,15 +65,32 @@ sub new {
 	);
 
 	$self->{cfg} = $cfg;
-	$self->{pg} = $pg;
-	$self->{workername} = $workername;
+	$self->{daemon} = $args{daemon} // 1;
 	$self->{debug} = $args{debug} // 1;
+	$self->{json} = $args{json} // 0;
+	$self->{log} = Mojo::Log->new;
+	$self->{pg} = $pg;
+	$self->{pid_file} = $pid_file;
 	$self->{ping} = $args{ping} || 60;
+	$self->{workername} = $workername . " [$$]";
+	#say Dumper(\%args);
+	#say Dumper($self);
+	if ($self->daemon) {
+		# fixme: get from config?
+		$self->log->path(realpath("$FindBin::Bin/../log/$workername.log"));
+		daemonize();
+	}
 	return $self;
 }
 
 sub announce {
 	my $self = shift;
+	return $self->announce_worker($self->workername, @_);
+}
+
+sub announce_worker {
+	my $self = shift;
+	my $workername = shift or die 'no workername?';
 	my $actionname = shift or die 'no actionname?';
 	my $cb = shift;
 	die 'no callback?' unless ref $cb eq 'CODE';
@@ -69,7 +104,7 @@ sub announce {
 		# - actionname does not exist
 		($worker_id, $listenstring) = @{$self->pg->db->dollar_only->query(
 			q[select * from announce($1, $2)],
-			$self->workername,
+			$workername,
 			$actionname
 		)->array};
 		die "no result" unless $worker_id;
@@ -78,11 +113,11 @@ sub announce {
 		warn $@;
 		return 0;
 	}
-	say "worker_id $worker_id listenstring $listenstring" if $self->debug;
+	$self->log->debug("worker_id $worker_id listenstring $listenstring");
 	$self->pg->pubsub->listen( $listenstring, sub {
-		# use a closure to pass on $cb, $workername and $actionname
+		# use a closure to pass on cb, upvals and actionname
 		my ($pubsub, $payload) = @_;
-		$self->_get_task($cb, \@upvals, $actionname, $payload);
+		$self->_get_task($cb, \@upvals, $workername, $actionname, $payload);
 	});
 	$self->{worker_id} = $worker_id;
 	# set up a ping timer after the first succesfull announce
@@ -94,15 +129,20 @@ sub announce {
 
 sub work {
 	my $self = shift;
+	ensure_pid_file($self->pid_file, $self->log);
+
+	# set up a pipe we can create a io event on when we get a signal
 	pipe my $reader, my $writer;
 	Mojo::IOLoop->singleton->reactor->io($reader => sub { });
 	local $SIG{INT} = local $SIG{TERM} = sub {
-		say STDERR 'trying to stop...';
+		$self->log->info('trying to stop...');
 		Mojo::IOLoop->stop;
 		say $writer 'STOOOP!'
 	};
-	say "working!";
+
+	$self->log->info($self->workername . ' working!');
 	Mojo::IOLoop->start;
+	$self->log->info($self->workername . ' stopping');
 }
 
 sub withdraw {
@@ -110,45 +150,68 @@ sub withdraw {
 	my $actionname = shift or die 'no actionname?';
 	my ($res) = $self->pg->db->query(
 			q[select withdraw($1, $2)],
-			$self->{workername},
+			$self->workername,
 			$actionname
-		);
+		)->array;
 	die "no result" unless $res and @$res;
 	return $res;
-	die 'aaargh';
 }
 
 sub _ping {
 	my $self = shift;
 	my $worker_id = shift;
-	say "ping($worker_id)!" if $self->debug;
+	$self->log->debug("ping($worker_id)!");
 	$self->pg->db->query(q[select ping($1)], $worker_id, sub {});
 }
 
 sub _get_task {
-	my ($self, $cb, $upvals, $actionname, $job_id) = @_;
-	say "get_task: workername $self->{workername}, actioname $actionname, job_id $job_id" if $self->debug;
+	my ($self, $cb, $upvals, $workername, $actionname, $job_id) = @_;
+	$self->log->debug("get_task: workername $workername, actioname $actionname, job_id $job_id");
 	local $SIG{__WARN__} = sub {
-		print STDERR @_ if $self->debug;
+		$self->log->debug($_[0]);
 	};
+	my $res = $self->pg->db->dollar_only->query(q[select * from get_task($1, $2, $3)], $workername, $actionname, $job_id)->array;
+	return unless $res and @$res;
+	my ($cookie, $inargs) = @$res;
+	undef $res; # clear statement handle
+	$self->log->debug("cookie $cookie inargs $inargs");
+	$inargs = decode_json( $inargs ) unless $self->json;
+	my $task = JobCenter::MojoWorker::Task->new(
+		workername => $workername,
+		actionname => $actionname,
+		cookie => $cookie,
+		job_id => $job_id,
+	);
+	my $outargs;
 	local $@;
 	eval {
-		my $res = $self->pg->db->dollar_only->query(q[select * from get_task($1, $2, $3)], $self->workername, $actionname, $job_id)->array;
-		die "no result" unless $res and @$res;
-		my ($cookie, $vars) = @$res;
-		undef $res; # clear statement handle
-		say "cookie $cookie invars $vars" if $self->debug;
-		$vars = decode_json( $vars );
-		eval {
-			&$cb($job_id, $vars);
-		};
-		$vars = {'error' => 'something bad happened'} if $@;
-		$vars = encode_json( $vars );
-		say "outvars $vars" if $self->debug;
-		$self->pg->db->dollar_only->query(q[select task_done($1, $2)], $cookie, $vars); #, sub { say 'yaaj!'} );
-		say "done with action $actionname for job $job_id\n" if $self->debug;
+		$outargs = &$cb(@$upvals, $job_id, $inargs, sub {
+			say 'gonna call task_done!', Dumper(\$_[0]);
+			# closure to pass on the task..
+			$self->_task_done($task, $_[0]);
+		});
 	};
-	say $@ if $@;
+	$outargs = {'error' => 'something bad happened: ' . $@} if $@;
+	return unless $outargs;
+	$self->_task_done($task, $outargs);
 }
+
+sub _task_done {
+	my ($self, $task, $outargs) = @_;
+	local $@;
+	unless ($self->json) {
+		eval {
+			$outargs = encode_json( $outargs );
+		};
+		$outargs = encode_json({'error' => 'cannot json encode outargs: ' . $@}) if $@;
+	}
+	#$self->log->debug("outargs $outargs");
+	eval {
+		$self->pg->db->dollar_only->query(q[select task_done($1, $2)], $task->cookie, $outargs, sub { 1; } );
+	};
+	$self->log->debug("_task_done got $@") if $@;
+	$self->log->debug("worker $task->{workername} done with action $task->{actionname} for job $task->{job_id}, outargs $outargs\n");
+}
+
 
 1;
