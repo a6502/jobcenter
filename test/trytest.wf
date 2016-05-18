@@ -17,8 +17,12 @@ workflow "trytest" [
 			eval [[ $v{thing} = $a{i1} / $a{i2} ]]
 		] catch [
 			eval [[
-				$v{thing} = 0.123456789;
-				$v{whut} = 'division by zero' if $a{i2} == 0;
+				$v{thing} = 0.123456789 unless $v{thing};
+				if ( $v{_error}{msg} =~ /sqlerrm Illegal division by zero/ ) {
+					$v{whut} = 'division by zero';
+				} else {
+					$v{whut} = 'dunno? ' . $v{_error}{msg};
+				}
 			]]
 		]
 	]
