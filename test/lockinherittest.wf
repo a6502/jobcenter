@@ -1,0 +1,28 @@
+# locks
+workflow "lockinherittest" [
+	in [
+		in string;
+	]
+	out [
+		out string;
+	]
+	wfomap [[
+		$o{out} = $v{thing};
+	]]
+	locks [
+		foo bar;
+		abc def inherit;
+		#schloss _ manual inherit;
+	]
+	do [
+		eval [[ $v{thing} = "got $a{in}"; ]]
+		#lock schloss [[ return 'schlüssel'; ]]
+		#eval [[ $v{thing} .= ' and got lock "schloss"' ]]
+		call lockinherittest2 [
+			imap [[ $i{in} = $a{in} x 2 ]]
+			omap [[ $v{thing} .= ' and got ' . $o{out} ]]
+		]
+		#unlock schloss [[ return 'schlüssel'; ]]
+		#eval [[ $v{thing} .= ' and unlocked lock "schloss"' ]]
+	]
+]

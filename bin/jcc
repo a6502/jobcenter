@@ -218,18 +218,19 @@ sub parse_locks {
 	while ($$src !~ /\G\]/cgms) {
 		my $locktype = $self->parse_ident;
 		my $lockvalue = $self->parse_ident;
-		my @lockopts = ();
+		my %lockopts = ( manual => 0, inherit => 0 );
 		$self->find_next_token;
 		while ($$src !~ /\G;/cgms) {
 			my $lockopt = $self->parse_ident;
 			die "JCP: unrecognized lockopt $lockopt, must be manual or inherit"
 				if $lockopt ne 'manual' and $lockopt ne 'inherit';
-			push @lockopts, $lockopt;
+			$lockopts{$lockopt} = 1;
 		} 
 		$self->find_keyword(';');
-		say 'locktype ', $locktype, ' lockvalue ', $lockvalue, ' lockopts ', join(', ', @lockopts);
-		push @locks, [$locktype, $lockvalue, \@lockopts];
-		$self->{locktypes}->{$locktype} = 1;
+		say 'locktype ', $locktype, ' lockvalue ', $lockvalue,
+			'inherit ', $lockopts{inherit}, ' manual ', $lockopts{manual};
+		push @locks, [$locktype, $lockvalue, \%lockopts];
+		$self->{locktypes}->{$locktype} = \%lockopts;
 		$self->find_next_token;
 	}
 
@@ -350,7 +351,9 @@ sub parse_lock {
 	my $lock = bless {}, 'lock';
 	my $type = $self->parse_ident;
 	die "JCP: undeclared locktype $type" unless $self->{locktypes}->{$type};
+	die "JCP: locktype $type not declared manual" unless $self->{locktypes}->{$type}->{manual};
 	$lock->{type} = $type;
+	$lock->{inherit} = $self->{locktypes}->{$type}->{inherit};
 	$self->find_next_token;
 	# we need to peek ahead..
 	if ( $$src =~ /\G\[\[/ms ) {
@@ -785,16 +788,16 @@ sub gen_locks {
 	my ($first, $cur); # first tid of this block, last tid of this block
 	for my $lock (@$locks) {
 		my ($locktype, $lockvalue, $lockopts) = @$lock;
+		# check all locktypes first
 		unless ($self->qs(q|select exists (select 1 from locktypes where locktype=$1)|, $locktype)) {
 			die "no locktype $locktype?";
 		}
-		next if grep { $_ eq 'manual' } @$lockopts;
-		my $lockinherit = grep { $_ eq 'inherit' } @$lockopts;
+		next if $lockopts->{manual};
 		my $tid = $self->instask(T_LOCK, attributes =>
 			to_json({
 				locktype => $locktype,
 				lockvalue => $lockvalue,
-				lockinherit => $lockinherit,
+				lockinherit => $lockopts->{inherit},
 			}));
 		$first = $tid unless $first;
                 $self->set_next($cur, $tid) if $cur;

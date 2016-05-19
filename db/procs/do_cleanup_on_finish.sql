@@ -7,10 +7,7 @@ AS $function$DECLARE
 	v_locktype text;
 	v_lockvalue text;
 	v_contended integer;
-	v_tmpjob_id bigint;
-	v_tmptask_id int;
-	v_tmpworkflow_id int;
-	v_tmpinherit boolean;
+	v_top_level_job_id bigint;
 BEGIN
 	RAISE NOTICE 'do_cleanup_on_finish %', a_jobtask;
 	-- paranoia
@@ -61,11 +58,11 @@ BEGIN
 		AND state NOT IN ('finished', 'error', 'zombie');
 
 	-- unlock all remaining locks
-	-- FIXME: call unlock somehow?
 	--LOCK TABLE locks IN SHARE ROW EXCLUSIVE MODE;
-	FOR v_locktype, v_lockvalue, v_contended IN
-			SELECT locktype, lockvalue, contended FROM locks WHERE job_id=a_jobtask.job_id FOR UPDATE LOOP
-		PERFORM do_unlock(v_locktype, v_lockvalue, v_contended, a_jobtask.job_id, v_parentjob_id);
+	FOR v_locktype, v_lockvalue, v_contended, v_top_level_job_id IN
+			SELECT locktype, lockvalue, contended, top_level_job_id
+				FROM locks WHERE job_id=a_jobtask.job_id FOR UPDATE LOOP
+		PERFORM do_unlock(v_locktype, v_lockvalue, v_contended, a_jobtask.job_id, v_parentjob_id, v_top_level_job_id);
 	END LOOP;
 
 	-- done cleaning up?

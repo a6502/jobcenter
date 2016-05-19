@@ -12,11 +12,7 @@ AS $function$DECLARE
 	v_lockvalue text;
 	v_stringcode text;
 	v_contended integer;
-	v_waitjob_id bigint;
-	v_waittask_id int;
-	v_waitworkflow_id int;
-	v_waitinherit boolean;
-	v_waitjobtask jobtask;
+	v_top_level_job_id bigint;
 BEGIN
 	-- paranoia check with side effects
 	SELECT
@@ -52,7 +48,8 @@ BEGIN
 	RAISE NOTICE 'do_unlock_task locktype "%" lockvalue "%:', v_locktype, v_lockvalue;
 
 	SELECT
-		contended INTO v_contended
+		contended, top_level_job_id
+		INTO v_contended, v_top_level_job_id
 	FROM
 		locks
 	WHERE
@@ -66,7 +63,7 @@ BEGIN
 		RETURN do_raise_error(a_jobtask, format('tried to unlock not held lock locktype %s lockvalue %s', v_locktype, v_lockvalue));
 	END IF;
 
-	PERFORM do_unlock(v_locktype, v_lockvalue, v_contended, a_jobtask.job_id, v_parentjob_id);
+	PERFORM do_unlock(v_locktype, v_lockvalue, v_contended, a_jobtask.job_id, v_parentjob_id, v_top_level_job_id);
 
 	RETURN do_task_epilogue(a_jobtask, false, null, jsonb_build_object('locktype', v_locktype, 'lockvalue', v_lockvalue), null);
 END;$function$

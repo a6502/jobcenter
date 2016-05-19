@@ -11,8 +11,10 @@ AS $function$DECLARE
 	v_lockvalue text;
 	v_lockinherit boolean;
 	v_stringcode text;
-	v_gotlock boolean DEFAULT false;
+	v_contended integer;
 	v_parentjob_id bigint;
+	v_top_level_job_id bigint;
+	v_inheritable boolean;
 	v_lockjob_id bigint;
 	v_deadlockpath bigint[];
 BEGIN
@@ -52,20 +54,45 @@ BEGIN
 	RAISE NOTICE 'do_lock_task locktype "%" lockvalue "%"', v_locktype, v_lockvalue;
 
 	INSERT INTO 
-		locks (job_id, locktype, lockvalue, inheritable)
+		locks (job_id, locktype, lockvalue, inheritable,
+			top_level_job_id)
 	VALUES
-		(a_jobtask.job_id, v_locktype, v_lockvalue, v_lockinherit)
+		(a_jobtask.job_id, v_locktype, v_lockvalue, v_lockinherit,
+		 CASE WHEN v_lockinherit THEN a_jobtask.job_id ELSE NULL END)
 	ON CONFLICT (locktype, lockvalue) DO UPDATE
 	SET contended = locks.contended + 1 WHERE locks.locktype=v_locktype AND locks.lockvalue = v_lockvalue
-	RETURNING job_id INTO v_lockjob_id;
+	RETURNING job_id, contended, inheritable INTO v_lockjob_id, v_contended, v_inheritable;
 
-	IF v_lockjob_id = a_jobtask.job_id THEN
+	IF v_contended = 0 AND v_lockjob_id = a_jobtask.job_id THEN
 		-- now that was easy
 		RETURN do_task_epilogue(a_jobtask, false, null, jsonb_build_object('locktype', v_locktype, 'lockvalue', v_lockvalue), null);
 	END IF;
+
+	IF v_lockjob_id = a_jobtask.job_id THEN
+		RETURN do_raise_error(a_jobtask, format('reacquired locktype %s lockvalue %s', v_locktype, v_lockvalue));
+	END IF;
+
+	IF v_contended = 0 THEN
+		RETURN do_raise_error(a_jobtask, format('uncontended locktype %s lockvalue %s not owned by us but by %s', v_locktype, v_lockvalue, v_lockjob_id));
+	END IF;
 	
 	-- see if we can inherit the lock
-	--IF v_lockjob_id = v_parentjob_id
+	IF v_lockjob_id = v_parentjob_id AND v_inheritable THEN
+		PERFORM true FROM jobs WHERE job_id = v_parentjob_id AND state = 'blocked';
+		IF FOUND THEN
+			-- we can actually inherit the lock
+			UPDATE locks SET
+				job_id = a_jobtask.job_id,
+				contended = contended - 1,
+				inheritable = v_lockinherit
+			WHERE
+				locktype= v_locktype
+				AND lockvalue = v_lockvalue
+				AND job_id = v_lockjob_id;
+			-- fixme: check found?
+			RETURN do_task_epilogue(a_jobtask, false, null, jsonb_build_object('locktype', v_locktype, 'lockvalue', v_lockvalue), null);
+		END IF;
+	END IF;
 
 	-- mark ourselves as waiting for this lock
 	-- fixme: log inargs?
