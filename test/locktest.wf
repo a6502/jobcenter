@@ -23,7 +23,7 @@ workflow "locktest" [
 		lock schloss [[ return 'schlüssel'; ]]
 		eval [[ $v{thing} .= ' and got lock "schloss"' ]]
 		wait_for_event [
-			imap [[ $i{timeout} = 15 ]]
+			imap [[ $i{timeout} = 1.5 ]]
 		]
 		eval [[ $v{thing} .= ' and did a nap' ]]
 		unlock slot [[ return 'sleutel'; ]]

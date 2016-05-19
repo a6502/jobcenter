@@ -88,18 +88,31 @@ sub main {
 	$test='childjobtest';
 	# we assume that we have 'calltest' available here
 	compile($test);
-	call($test, { input => 1 }, { output => 4 });	
+	call($test, { input => 1 }, { output => 4 });
 
 	$test='childjoberrortest';
 	# we assume that we have 'raise_errortest2' available here
 	compile($test);
-	call($test, { input => 1 }, { output => 'got childerror' });	
+	call($test, { input => 1 }, { output => 'got childerror' });
 
-	#frop:
 	$test='splittest';
 	# we assume that we have 'calltest' available here
 	compile($test);
-	call($test, { input => 1 }, { output => '13 23 33' });	
+	call($test, { input => 1 }, { output => '13 23 33' });
+
+	$test='locktest';
+	compile($test);
+	call($test, { in => 'foo' }, { out => 'got foo and got lock "slot" and got lock "schloss" and did a nap and unlocked lock "slot"'});
+
+	$test='lockinherittest2';
+	compile($test);
+	call($test, { in => 'foo' }, { out => 'lockinherittest2 got foo and did a nap'});
+
+	frop:
+	$test='lockinherittest';
+	# we assume that we have 'lockinherittest2' available here
+	compile($test);
+	call($test, { in => 'foo' }, { out => 'got foo and got lockinherittest2 got foofoo and did a nap'});
 
 	done_testing();
 	return 0;

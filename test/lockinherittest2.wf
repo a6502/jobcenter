@@ -16,7 +16,7 @@ workflow lockinherittest2 [
 	do [
 		eval [[ $v{thing} = "lockinherittest2 got $a{in}"; ]]
 		wait_for_event [
-			imap [[ $i{timeout} = 5 ]]
+			imap [[ $i{timeout} = 2 ]]
 		]
 		eval [[ $v{thing} .= ' and did a nap' ]]
 	]
