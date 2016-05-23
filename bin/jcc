@@ -74,6 +74,7 @@ package JobCenter::Parser;
 use Mojo::Base -base;
 use Data::Dumper;
 use List::Util qw( first );
+use Scalar::Util qw( looks_like_number );
 use Text::Balanced qw( extract_delimited );
 
 sub new {
@@ -121,7 +122,7 @@ sub parse_workflow {
 	$self->find_keyword('\[');
 	say 'found [';
 
-	while ( my $found = $self->find_keyword(qw(in out wfomap locks do \])) ) {
+	while ( my $found = $self->find_keyword(qw(in out wfomap locks limits do \])) ) {
 		say 'found keyword ', $found;
 		last if $found eq '\]';
 		#{
@@ -237,6 +238,33 @@ sub parse_locks {
 	$self->{pos} = pos $$src;
 	return bless \@locks, 'locks';
 }
+
+sub parse_limits {
+	my $self = shift;
+	my $src = $self->{src};
+	my %limits;
+
+	$self->find_keyword('\[');
+	say 'found [';
+
+	while ( my $limtyp = $self->find_keyword(qw(
+			max_depth max_steps \]
+		)) ) {
+		say 'found keyword ', $limtyp;
+		last if $limtyp eq '\]';
+
+		my $limval = $self->parse_ident;
+		$self->find_keyword(';');
+		die "JCP: duplicate limit $limtyp" if exists $limits{$limtyp};
+		die "JCP: limit value $limval for $limtyp is not a number?" unless looks_like_number($limval);
+		say 'limit ', $limtyp, ' value ', $limval;
+		$limits{$limtyp} = $limval;
+	}
+
+	$self->{pos} = pos $$src;
+	return \%limits;
+}
+
 
 #################################################
 #
@@ -704,9 +732,12 @@ sub generate {
 		}
 	}
 
+	my $wfenv = to_json($wf->{limits});
+	$wfenv = undef if $wfenv and $wfenv eq 'null';
+
 	my $wfid = $self->qs(
-		q|insert into actions (name, type, version, wfmapcode) values ($1, 'workflow', $2, $3) returning action_id|, 
-		$wf->{name}, $version, $wf->{wfomap}
+		q|insert into actions (name, type, version, wfmapcode, wfenv) values ($1, 'workflow', $2, $3, $4) returning action_id|, 
+		$wf->{name}, $version, $wf->{wfomap}, $wfenv
 	);
 	$self->{wfid} = $wfid;
 	say "wfid: $wfid";

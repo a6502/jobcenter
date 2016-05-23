@@ -11,12 +11,14 @@ AS $function$DECLARE
 	v_env JSONB;
 	v_vars JSONB;
 	v_in_args JSONB;
+	v_curdepth integer;
+	v_maxdepth integer;
 BEGIN
 	-- find the sub worklow using the task in the parent
 	-- get the arguments and variables as well
 	SELECT
-		action_id, wait, arguments, environment, variables
-		INTO v_workflow_id, v_wait, v_args, v_env, v_vars
+		action_id, wait, arguments, environment, variables, current_depth
+		INTO v_workflow_id, v_wait, v_args, v_env, v_vars, v_curdepth
 	FROM 
 		actions
 		JOIN tasks USING (action_id)
@@ -30,6 +32,12 @@ BEGIN
 	IF NOT FOUND THEN
 		-- FIXME: or is this a do_raiserror kind of error?
 		RAISE EXCEPTION 'no workflow found for workflow % task %.', a_parentjobtask.workflow_id, a_parentjobtask.task_id;
+	END IF;
+
+	v_maxdepth := COALESCE((v_env->>'max_depth')::integer, 9);
+
+	IF v_curdepth >= v_maxdepth THEN
+		RETURN do_raise_error(a_parentjobtask, format('maximum call depth exceeded: %s >= %s', v_curdepth, v_maxdepth), 'fatal');
 	END IF;
 
 	BEGIN
@@ -55,11 +63,15 @@ BEGIN
 
 	-- now create the new job and mark the start task 'done'
 	INSERT INTO jobcenter.jobs
-		(workflow_id, task_id, parentjob_id, parenttask_id, parentwait,
-		 state, arguments, environment, task_entered, task_started, task_completed)
+		(workflow_id, task_id, parentjob_id, parenttask_id,
+		 parentwait, state, arguments, environment,
+		 max_steps, current_depth, task_entered, task_started,
+		 task_completed)
 	VALUES
-		(v_workflow_id, v_task_id, a_parentjobtask.job_id, a_parentjobtask.task_id, v_wait,
-		 'done', v_in_args, v_env, now(), now(), now())
+		(v_workflow_id, v_task_id, a_parentjobtask.job_id, a_parentjobtask.task_id,
+		 v_wait, 'done', v_in_args, v_env,
+		 COALESCE((v_env->>'max_steps')::integer, 99), v_curdepth + 1, now(), now(),
+		 now())
 	RETURNING
 		job_id INTO v_job_id;
 

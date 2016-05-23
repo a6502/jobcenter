@@ -28,7 +28,8 @@ WITH jobrecords AS (
 		stepcounter,
 		out_args,
 		environment,
-		max_steps
+		max_steps,
+		current_depth
 )
 INSERT INTO jobs_archive SELECT * FROM jobrecords;
 $function$

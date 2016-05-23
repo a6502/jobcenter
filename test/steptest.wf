@@ -1,0 +1,23 @@
+# repeat
+workflow "steptest" [
+	in [
+		"input" number;
+	]
+	out [
+		"output" number;
+	]
+	limits [
+		max_steps 20;
+	]
+	wfomap [[
+		$o{output} = $v{thing};
+	]]
+	do [
+		repeat [
+			call add [
+				imap [[	$i{counter} = $v{thing} // $a{input}; ]]
+				omap [[ $v{thing} = $o{counter}; ]]
+			]
+		] until [[ $v{thing} > 100 ]]
+	]
+]

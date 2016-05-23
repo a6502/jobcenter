@@ -1,0 +1,22 @@
+# childjob
+workflow "depthtest" [
+	in [
+		"input" number;
+	]
+	out [
+		"output" number;
+	]
+	limits [
+		max_depth 5;
+		max_steps 7;
+	]
+	wfomap [[
+		$o{output} = $v{output};
+	]]
+	do [
+		call depthtest [
+			imap [[	$i{input} = $a{input} ]]
+			omap [[ $v{output} = $o{output}; ]]
+		]
+	]
+]

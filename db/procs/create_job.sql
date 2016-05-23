@@ -118,9 +118,13 @@ BEGIN
 
 	-- now create the new job and mark the start task 'done'
 	INSERT INTO jobcenter.jobs
-		(workflow_id, task_id, state, arguments, environment, task_entered, task_started, task_completed)
+		(workflow_id, task_id, state, arguments,
+		 environment, max_steps, current_depth, task_entered,
+		 task_started, task_completed)
 	VALUES
-		(v_workflow_id, v_task_id, 'done', a_args, v_env, now(), now(), now())
+		(v_workflow_id, v_task_id, 'done', a_args,
+		 v_env, COALESCE((v_env->>'max_steps')::integer, 99), 1, now(),
+		 now(), now())
 	RETURNING
 		job_id INTO o_job_id;
 
