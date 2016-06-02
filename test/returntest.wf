@@ -1,0 +1,23 @@
+# return
+workflow "returntest" [
+	in [
+		"input" number;
+	]
+	out [
+		"output" string;
+	]
+	wfomap [[
+		$o{output} = $v{thing};
+	]]
+	do [
+		call add [
+			imap [[	$i{counter} = $a{input}; ]]
+			omap [[ $v{thing} .= $o{counter} . ' baz'; ]]
+		]
+		return
+		call add [
+			imap [[	$i{counter} = $a{input}; ]]
+			omap [[ $v{thing} .= $o{counter} . ' bar'; ]]
+		]
+	]
+]

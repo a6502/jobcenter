@@ -190,8 +190,9 @@ sub parse_do {
 	say 'found [';
 
 	while ( my $found = $self->find_keyword(qw(
-			call case eval goto if label lock raise_error raise_event repeat split
-			subscribe try unlock unsubscribe wait_for_child wait_for_event while \]
+			call case eval goto if label lock raise_error raise_event
+			repeat return split subscribe try unlock unsubscribe
+			wait_for_child wait_for_event while \]
 		)) ) {
 		say 'found keyword ', $found;
 		last if $found eq '\]';
@@ -420,6 +421,15 @@ sub parse_repeat {
 
 	print 'repeat: ', Dumper($repeat);
 	return $repeat;
+}
+
+sub parse_return {
+	my $self = shift;
+	# just turn a return into a 'goto end'
+	my $goto = bless {}, 'goto';
+	$goto->{label} = '!!the end!!'; # something magic
+	print 'goto: ', Dumper($goto);
+	return $goto;
 }
 
 sub parse_split {
@@ -713,6 +723,8 @@ sub generate {
 	
 	$self->{oetid} = undef;
 	$self->{labels} = $wf->{labels};
+	# add the magic end label
+	$self->{labels}->{'!!the end!!'} = undef;
 	$self->{fixup} = [];
 
 	say "\nbegin";
@@ -775,6 +787,9 @@ sub generate {
 	my $end = $self->instask(T_END); # magic end task
 	$self->set_next($last, $end); # block to end task
 	$self->set_next($end, $end); # next_task_id may not be null
+
+	# fixup the magic end label so that return works
+	$self->{labels}->{'!!the end!!'} = $end;
 
 	# fixup labels (of gotos)
 	foreach my $fixup (@{$self->{fixup}}) {
