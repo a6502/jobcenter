@@ -83,9 +83,7 @@ BEGIN
 
 	-- now run the mapping code
 	--SELECT omapcode INTO v_code FROM tasks WHERE task_id = a_jobtask.task_id;
-	RAISE NOTICE 'foo!';
 	newvars := do_omap(v_code, v_oldvars, a_outargs);
-	RAISE NOTICE 'bar!';
 
 	vars_changed := v_oldvars IS DISTINCT FROM newvars;
 
