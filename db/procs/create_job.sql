@@ -21,6 +21,7 @@ AS $function$DECLARE
 	v_tags text[] DEFAULT ARRAY['default'];
 	v_have_role text;
 	v_should_role text;
+	v_via_role text;
 BEGIN
 	IF a_tag IS NOT NULL AND a_tag <> 'default' THEN
 		v_tags = string_to_array(a_tag, ':') || v_tags;
@@ -59,6 +60,7 @@ BEGIN
 		END IF;
 
 		v_have_role := a_impersonate;
+		v_via_role := session_user;
 	ELSE
 		v_have_role := session_user;
 	END IF;
@@ -114,7 +116,11 @@ BEGIN
 
 	SELECT jcenv FROM jc_env INTO STRICT v_val; -- hack, reuse v-val
 	v_env := COALESCE(v_env, '{}'::jsonb) || v_val; -- jcenv overwrites wfenv
-	v_env := jsonb_set(v_env, '{client}', to_jsonb(session_user));
+	v_env := jsonb_set(v_env, '{client}', to_jsonb(v_have_role));
+	v_env := jsonb_set(v_env, '{workflow_id}', to_jsonb(v_workflow_id));
+	IF v_via_role IS NOT NULL THEN
+		v_env := jsonb_set(v_env, '{via}', to_jsonb(v_via_role));
+	END IF;
 
 	-- now create the new job and mark the start task 'done'
 	INSERT INTO jobcenter.jobs
