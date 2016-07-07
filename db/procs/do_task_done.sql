@@ -9,7 +9,7 @@ AS $function$DECLARE
 BEGIN
 	-- check error status
 	IF a_outargs ? 'error' THEN
-		PERFORM do_task_error(a_jobtask, a_outargs->'error');
+		PERFORM do_task_error(a_jobtask, a_outargs);
 		RETURN;
 	END IF;
 
