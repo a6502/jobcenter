@@ -5,6 +5,8 @@ CREATE OR REPLACE FUNCTION jobcenter.do_outargsmap(a_jobtask jobtask, a_outargs 
 AS $function$DECLARE
 	v_action_id integer;
 	v_oldvars jsonb;
+	v_args jsonb;
+	v_env jsonb;
 	v_key text;
 	v_type text;
 	v_opt boolean;
@@ -18,7 +20,8 @@ BEGIN
 	-- so we need 2 queries:
 	-- first get the vars using our job_id
 	SELECT
-		variables INTO v_oldvars
+		arguments, environment variables
+		INTO v_args, v_env, v_oldvars
 	FROM
 		jobs
 	WHERE
@@ -83,7 +86,7 @@ BEGIN
 
 	-- now run the mapping code
 	--SELECT omapcode INTO v_code FROM tasks WHERE task_id = a_jobtask.task_id;
-	newvars := do_omap(v_code, v_oldvars, a_outargs);
+	newvars := do_omap(v_code, v_args, v_env, v_oldvars, a_outargs);
 
 	vars_changed := v_oldvars IS DISTINCT FROM newvars;
 
