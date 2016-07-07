@@ -25,8 +25,6 @@ sub main {
 
 	my ($wfname, $inargs) = @_;
 
-	say "frup";
-
 	# hopefully this checks for valid json..
 	my $inargsp = decode_json($inargs);
 
@@ -39,19 +37,18 @@ sub main {
 	);
 
 	die 'no client?' unless $client;
-	say "frop";
 
-	my $outargs;
+	my ($job_id, $outargs);
 	local $@;
-	eval { $outargs = $client->call(
+	eval { ($job_id, $outargs) = $client->call(
 		wfname => $wfname,
 		inargs => $inargs,
 	); };
-	say "got $@" if $@;
+	say "error: $@" if $@;
 
-	say "outargs: $outargs";
+	say "job_id: $job_id, outargs: $outargs";
 
-	say "the end is nigh!";
+	#say "the end is nigh!";
 }
 
 1;

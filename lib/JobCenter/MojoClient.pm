@@ -16,7 +16,7 @@ BEGIN {
 # mojo
 use Mojo::Base 'Mojo::EventEmitter';
 use Mojo::IOLoop;
-use Mojo::JSON qw(decode_json encode_json);
+#use Mojo::JSON qw(decode_json encode_json);
 use Mojo::Log;
 use Mojo::Pg;
 
@@ -29,6 +29,7 @@ use IO::Pipe;
 
 # other
 use Config::Tiny;
+use JSON::MaybeXS qw(decode_json encode_json);
 
 # JobCenter
 use JobCenter::MojoClient::Job;
@@ -49,10 +50,10 @@ sub new {
 		die 'no cfg or cfgpath?';
 	}
 
-	my $clientname = $args{clientname} || fileparse($0);
+	my $clientname = ($args{clientname} || fileparse($0)) . " [$$]";
 
 	# make our clientname the application_name visible in postgresql
-	$ENV{'PGAPPNAME'} = $clientname . " [$$]";
+	$ENV{'PGAPPNAME'} = $clientname;
 	my $pg = Mojo::Pg->new(
 		'postgresql://'
 		. $cfg->{client}->{user}
@@ -62,9 +63,11 @@ sub new {
 		. '/' . $cfg->{pg}->{db}
 	);
 
+	$pg->pubsub->listen($clientname, sub { say 'ohnoes!'; exit(1) });
+
 	$self->{cfg} = $cfg;
 	$self->{pg} = $pg;
-	$self->{clientname} = $clientname . " [$$]";
+	$self->{clientname} = $clientname;
 	$self->{debug} = $args{debug} // 1;
 	$self->{json} = $args{json} // 1;
 	$self->{log} = $args{log} // Mojo::Log->new;
@@ -80,22 +83,39 @@ sub _poll_done {
 	my $outargs = @$res[0];
 	$self->pg->pubsub->unlisten($job->listenstring);
 	Mojo::IOLoop->remove($job->tmr) if $job->tmr;
+	unless ($self->{json}) {
+		$outargs = decode_json($outargs);
+	}
 	if ($job->cb) {
 		$self->log->debug("calling cb $job->{cb} for job_id $job->{job_id} outargs $outargs");
 		local $@;
-		eval { &{$job->cb}($outargs); };
-		self->log->debug("got $@") if $@;
+		eval { $job->cb->($job->{job_id}, $outargs); };
+		$self->log->debug("got $@ calling callback") if $@;
 	}
 	return $outargs; # at least true
 }
 
 sub call {
 	my ($self, %args) = @_;
+	my ($done, $job_id, $outargs);
+	$args{cb} = sub {
+		($job_id, $outargs) = @_;
+		$done++;
+	};
+	$self->call_nb(%args);
+
+	Mojo::IOLoop->one_tick while !$done;
+
+	return $job_id, $outargs;
+}
+
+sub call_nb {
+	my ($self, %args) = @_;
 	my $wfname = $args{wfname} or die 'no workflowname?';
 	my $vtag = $args{vtag};
 	my $inargs = $args{inargs} // '{}';
-	my $cb = $args{cb};
-	say 'foo!';
+	my $cb = $args{cb} or die 'no callback?';
+	my $timeout = $args{timeout} // 60;
 
 	if ($self->{json}) {
 		# sanity check json string
@@ -104,9 +124,10 @@ sub call {
 	} else {
 		die  'inargs should be a hashref' unless ref $inargs eq 'HASH';
 		$inargs = encode_json($inargs);
-		$self->log->debug("inargs as json: $inargs");
+		#$self->log->debug("inargs as json: $inargs");
 	}
 
+	$self->log->debug("calling $wfname with '$inargs'" . (($vtag) ? " (vtag $vtag)" : ''));
 	#say "inargs: $inargs";
 	my ($job_id, $listenstring);
 	# create_job throws an error when:
@@ -135,32 +156,28 @@ sub call {
 		#my ($pubsub, $payload) = @_;
 		local $@;
 		eval { $self->_poll_done($job); };
-		say "pubsub cb $@" if $@;
+		$self->log->debug("pubsub cb $@") if $@;
 	});
 
 	# do one poll first..
-	my ($out);
-	if ($out = $self->_poll_done($job)) {
-		return $out;
+	my $out = $self->_poll_done($job);
+
+	if ($out) {
+		# schedule the callback to run soonish
+		Mojo::IOLoop->next_tick(sub {
+			&$cb($job_id, $out);
+		})
 	} else {
-		# set up timeout of 60 seconds
-		my $tmr = Mojo::IOLoop->timer( 300 => sub {
+		# set up timeout
+		my $tmr = Mojo::IOLoop->timer($timeout => sub {
 			# request failed, cleanup
 			$self->pg->pubsub->unlisten($listenstring);
 			&$cb($job_id, {'error' => 'timeout'});
 		});
 		$job->update(cb => $cb, tmr => $tmr);
-	};
-
-	say "bar!";
-	return if $cb;
-
-	# how do we wait?
-	while (not $out = $self->_poll_done($job)) {
-		Mojo::IOLoop->one_tick;
 	}
 
-	return $out;
+	return $job_id;
 }
 
 
