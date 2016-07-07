@@ -20,7 +20,7 @@ our %e = %{from_json($jenv // '{}')};
 our %v = %{from_json($jvars // '{}')};
 our %i = ();
 
-$safe->share(qw(%a %e %v %i &dfrom_json &to_json));
+$safe->share(qw(%a %e %v %i &from_json &to_json));
 
 $safe->reval($code, 1);
 
