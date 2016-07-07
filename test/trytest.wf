@@ -18,10 +18,10 @@ workflow "trytest" [
 		] catch [
 			eval [[
 				$v{thing} = 0.123456789 unless $v{thing};
-				if ( $v{_error}{msg} =~ /sqlerrm Illegal division by zero/ ) {
+				if ( $e{_error}{msg} =~ /sqlerrm Illegal division by zero/ ) {
 					$v{whut} = 'division by zero';
 				} else {
-					$v{whut} = 'dunno? ' . $v{_error}{msg};
+					$v{whut} = 'dunno? ' . $e{_error}{msg};
 				}
 			]]
 		]

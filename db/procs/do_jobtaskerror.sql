@@ -9,15 +9,14 @@ AS $function$DECLARE
 	v_parenttask_id int;
 	v_parentworkflow_id int;
 	v_parentwait boolean;	
-	v_vars jsonb;
+	v_env jsonb;
 	v_outargs jsonb;
-	v_aborted boolean;
 	v_errargs jsonb;
 BEGIN
 	-- paranoia check with side effects
 	SELECT 
-		on_error_task_id, parentjob_id, parenttask_id, parentwait, variables, out_args, aborted
-		INTO v_errortask_id, v_parentjob_id, v_parenttask_id, v_parentwait, v_vars, v_outargs, v_aborted
+		on_error_task_id, parentjob_id, parenttask_id, parentwait, environment, out_args
+		INTO v_errortask_id, v_parentjob_id, v_parenttask_id, v_parentwait, v_env, v_outargs
 	FROM
 		jobs
 		JOIN tasks USING (workflow_id, task_id)
@@ -41,16 +40,17 @@ BEGIN
 		RAISE NOTICE 'calling errortask %', v_errortask_id;
 		-- insert the error object into the variables so that it becomes visible in the 
 		-- catch block as $v{_error}
-		IF v_vars IS NULL THEN
-			v_vars := jsonb_build_object('_error', v_outargs -> 'error');
+		IF v_env IS NULL THEN -- should not happen?
+			v_env := jsonb_build_object('_error', v_outargs -> 'error');
 		ELSE
-			v_vars := jsonb_set(v_vars, ARRAY['_error'], v_outargs -> 'error');
+			v_env := jsonb_set(v_env, ARRAY['_error'], v_outargs -> 'error');
 		END IF;
 		UPDATE jobs SET
-			variables = v_vars,
+			environment = v_env,
 			aborted = false	-- need to clear abort flag to prevent a loop
 		WHERE
 			job_id = a_jobtask.job_id;
+		-- FIXME: logging?
 		RETURN (false, (a_jobtask.workflow_id, v_errortask_id, a_jobtask.job_id)::jobtask)::nextjobtask;
 	END IF;
 
