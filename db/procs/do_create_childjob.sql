@@ -8,6 +8,8 @@ AS $function$DECLARE
 	v_task_id INT;
 	v_wait boolean;
 	v_args JSONB;
+	v_parent_env JSONB;
+	v_jcenv JSONB;
 	v_env JSONB;
 	v_vars JSONB;
 	v_in_args JSONB;
@@ -18,7 +20,7 @@ BEGIN
 	-- get the arguments and variables as well
 	SELECT
 		action_id, wait, arguments, environment, variables, current_depth
-		INTO v_workflow_id, v_wait, v_args, v_env, v_vars, v_curdepth
+		INTO v_workflow_id, v_wait, v_args, v_parent_env, v_vars, v_curdepth
 	FROM 
 		actions
 		JOIN tasks USING (action_id)
@@ -34,21 +36,22 @@ BEGIN
 		RAISE EXCEPTION 'no workflow found for workflow % task %.', a_parentjobtask.workflow_id, a_parentjobtask.task_id;
 	END IF;
 
-	v_maxdepth := COALESCE((v_env->>'max_depth')::integer, 9);
+	v_maxdepth := COALESCE((v_parent_env->>'max_depth')::integer, 9);
 
 	IF v_curdepth >= v_maxdepth THEN
-		RETURN do_raise_error(a_parentjobtask, format('maximum call depth exceeded: %s >= %s', v_curdepth, v_maxdepth), 'fatal');
+		RETURN do_raise_error(a_parentjobtask, format('maximum call depth would be exceeded: %s >= %s', v_curdepth, v_maxdepth), 'fatal');
 	END IF;
 
 	BEGIN
-		v_in_args := do_inargsmap(v_workflow_id, a_parentjobtask.task_id, v_args, v_env, v_vars);
+		v_in_args := do_inargsmap(v_workflow_id, a_parentjobtask.task_id, v_args, v_parent_env, v_vars);
 	EXCEPTION WHEN OTHERS THEN
 		RETURN do_raise_error(a_parentjobtask, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;
 	
 	-- ok, now find the start task of the workflow
 	SELECT 
-		t.task_id INTO v_task_id
+		t.task_id, a.wfenv
+		INTO v_task_id, v_env
 	FROM
 		tasks AS t
 		JOIN actions AS a ON t.action_id = a.action_id
@@ -60,6 +63,14 @@ BEGIN
 	IF NOT FOUND THEN
 		RAISE EXCEPTION 'no start task in workflow % .', a_wfname;
 	END IF;
+
+	-- setup childjob env
+	SELECT jcenv FROM jc_env INTO STRICT v_jcenv;
+	v_env := COALESCE(v_env, '{}'::jsonb) || v_jcenv; -- jcenv overwrites wfenv
+	v_env := jsonb_set(v_env, '{workflow_id}', to_jsonb(v_workflow_id));
+	v_env := jsonb_set(v_env, '{max_depth}', to_jsonb(v_maxdepth));
+	-- copy some values from parent env
+	v_env := jsonb_set(v_env, '{client}', v_parent_env->'client');
 
 	-- now create the new job and mark the start task 'done'
 	INSERT INTO jobcenter.jobs
