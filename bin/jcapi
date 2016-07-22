@@ -1,0 +1,37 @@
+#!/usr/bin/perl -CSDAL
+
+use strict;
+use warnings;
+use 5.10.0;
+
+# standard perl
+use Cwd qw(realpath);
+use Data::Dumper;
+use FindBin;
+use Getopt::Long;
+
+# JobCenter
+use lib realpath("$FindBin::Bin/../lib");
+use JobCenter::Api::JsonRpc2;
+
+exit main();
+
+sub main {
+	my $config = realpath("$FindBin::Bin/../etc/jobcenter.conf");
+	my $daemonize = 0;
+	my $debug = 1;
+
+	GetOptions(
+		'config=s' => \$config,
+		'daemon!' => \$daemonize,
+		'debug' => \&debug,
+	) or die "Error in command line arguments\n";
+
+	my $jcapi = JobCenter::Api::JsonRpc2->new(
+		cfgpath => $config,
+		debug => $debug,
+	);
+	die 'no jccapi?' unless $jcapi;
+
+	return $jcapi->work();
+}
