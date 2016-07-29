@@ -20,7 +20,7 @@ BEGIN
 	-- so we need 2 queries:
 	-- first get the vars using our job_id
 	SELECT
-		arguments, environment variables
+		arguments, environment, variables
 		INTO v_args, v_env, v_oldvars
 	FROM
 		jobs
