@@ -76,7 +76,7 @@ sub main {
 	);
 
 	say '';
-	say "job $job_id workflow \"$wfname\"";
+	say "job $job_id workflow \"$wfname\" ($job->{workflow_id})";
 	say "    arguments   $job->{arguments}";
 	say "    environment $job->{environment}" if $job->{environment};
 	say "    started at  $job->{job_created}";
@@ -93,13 +93,13 @@ sub main {
 	my $steps = ' 1';
 
 	while ( my $jt = $sth->fetchrow_hashref ) {
-		my ($type, $name) = get_action($jt->{task_id});
+		my ($action_id, $type, $name) = get_action($jt->{task_id});
 		#print Dumper($jt);
 		say '---------------------------------------------------------';
 		if ($type eq 'system') {
 			say "step $steps $name";
 		} else {
-			say "step $steps call $type $name delay $jt->{delay} duration $jt->{duration}";
+			say "step $steps call $type $name ($action_id) delay $jt->{delay} duration $jt->{duration}";
 		}	
 		say "        inargs  $jt->{task_inargs}" if $jt->{task_inargs};
 		say "        outargs $jt->{task_outargs}" if $jt->{task_outargs};
@@ -123,13 +123,13 @@ sub main {
 sub get_action {
 	my $task_id = shift;
 	unless ($actions{$task_id}) {
-		my ($type, $name) = $pgh->selectrow_array(
-			q[select type, name from tasks join actions using (action_id) where task_id = $1],
+		my ($action_id, $type, $name) = $pgh->selectrow_array(
+			q[select action_id, type, name from tasks join actions using (action_id) where task_id = $1],
 			{},
 			$task_id
 		);
 		die "no task $task_id?" unless $type and $name;		
-		$actions{$task_id} = [$type, $name];
+		$actions{$task_id} = [$action_id, $type, $name];
 	}
 	return @{$actions{$task_id}};
 }
