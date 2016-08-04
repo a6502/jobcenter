@@ -34,7 +34,7 @@ BEGIN
 	BEGIN
 		v_branch := do_boolcode(v_boolcode, v_args, v_env, v_vars);
 	EXCEPTION WHEN OTHERS THEN
-		RETURN do_raise_error(a_jobtask.workflow_id, a_jobtask.task_id, a_jobtask.job_id, format('caught exception in do_boolcode sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
+		RETURN do_raise_error(a_jobtask, format('caught exception in do_boolcode sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;
 
 	-- the else branch task_id, if any, is stored in de next_task_id field
