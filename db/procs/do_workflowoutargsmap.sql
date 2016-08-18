@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.do_workflowoutargsmap(a_workflow_id integer, a_vars jsonb)
+CREATE OR REPLACE FUNCTION jobcenter.do_workflowoutargsmap(a_workflow_id integer, a_args jsonb, a_env jsonb, a_vars jsonb)
  RETURNS jsonb
  LANGUAGE plpgsql
  SET search_path TO jobcenter, pg_catalog, pg_temp
@@ -13,7 +13,7 @@ AS $function$DECLARE
 	v_fields text[];
 BEGIN
 	SELECT wfmapcode INTO v_code FROM actions WHERE action_id = a_workflow_id;
-	v_outargs := do_wfomap(v_code, a_vars);
+	v_outargs := do_wfomap(v_code, a_args, a_env, a_vars);
 	
 	FOR v_key, v_type, v_opt IN SELECT "name", "type", optional
 			FROM action_outputs WHERE action_id = a_workflow_id LOOP

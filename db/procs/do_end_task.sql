@@ -8,7 +8,9 @@ AS $function$DECLARE
 	v_parenttask_id int;
 	v_parentjobtask jobtask;
 	v_parentwait boolean;
-	v_variables jsonb;
+	v_args jsonb;
+	v_env jsonb;
+	v_vars jsonb;
 	v_inargs jsonb;
 	v_outargs jsonb;
 	v_changed boolean;
@@ -16,8 +18,8 @@ AS $function$DECLARE
 BEGIN
 	-- paranoia check with side effects
 	SELECT
-		variables, parentjob_id, parenttask_id, parentwait INTO
-		v_variables, v_parentjob_id, v_parenttask_id, v_parentwait
+		arguments, environment, variables, parentjob_id, parenttask_id, parentwait INTO
+		v_args, v_env, v_vars, v_parentjob_id, v_parenttask_id, v_parentwait
 	FROM
 		jobs
 		JOIN tasks USING (workflow_id, task_id)
@@ -35,12 +37,12 @@ BEGIN
 	END IF;
 
 	BEGIN
-		v_outargs := do_workflowoutargsmap(a_jobtask.workflow_id, v_variables);
+		v_outargs := do_workflowoutargsmap(a_jobtask.workflow_id, v_args, v_env, v_vars);
 	EXCEPTION WHEN OTHERS THEN
 		RETURN do_raise_error(a_jobtask, format('caught exception in do_workflowoutargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;
 			
-	RAISE NOTICE 'do_end_task wf % task % job % vars % => outargs %', a_jobtask.workflow_id, a_jobtask.task_id, a_jobtask.job_id, v_variables, v_outargs;
+	RAISE NOTICE 'do_end_task wf % task % job % vars % => outargs %', a_jobtask.workflow_id, a_jobtask.task_id, a_jobtask.job_id, v_vars, v_outargs;
 
 	IF v_parentjob_id IS NOT NULL AND NOT v_parentwait THEN
 		-- special handling for asynchonous child jobs in split/join
