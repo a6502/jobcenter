@@ -19,8 +19,9 @@ our %a = %{from_json($jargs // '{}')};
 our %e = %{from_json($jenv // '{}')};
 our %v = %{from_json($jvars // '{}')};
 our %o = %{from_json($joargs // '{}')};
+our %t = ();
 
-$safe->share(qw(%a %e %v %o &from_json &to_json));
+$safe->share(qw(%a %e %v %o %t &from_json &to_json));
 
 $safe->reval($code, 1);
 
