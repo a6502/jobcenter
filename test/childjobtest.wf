@@ -1,18 +1,13 @@
 # childjob
-workflow "childjobtest" [
-	in [
-		"input" number;
-	]
-	out [
-		"output" number;
-	]
-	wfomap [[
-		$o{output} = $v{output};
-	]]
-	do [
-		call calltest [
-			imap [[	$i{input} = $a{input} ]]
-			omap [[ $v{output} = $o{output}; ]]
-		]
-	]
-]
+workflow childjobtest:
+in:
+	input number
+out:
+	output number
+wfomap:
+	<output>
+do:
+	call calltest:
+		input = a.input
+	into:
+		<output>

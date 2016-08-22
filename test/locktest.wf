@@ -1,32 +1,32 @@
 # locks
-workflow "locktest" [
-	in [
-		in string;
-	]
-	out [
-		out string;
-	]
-	wfomap [[
-		$o{out} = $v{thing};
-	]]
-	locks [
-		foo bar;
-		abc def inherit;
-		slot _ manual;
-		schloss _ manual inherit;
-	]
-	do [
-		eval [[ $v{thing} = "got $a{in}"; ]]
-		#lock [[ $i{locktype} = 'foo'; $i{lockvalue} = 'bar'; ]]
-		lock slot [[ return 'sleutel'; ]]
-		eval [[ $v{thing} .= ' and got lock "slot"' ]]
-		lock schloss [[ return 'schlüssel'; ]]
-		eval [[ $v{thing} .= ' and got lock "schloss"' ]]
-		wait_for_event [
-			imap [[ $i{timeout} = 1.5 ]]
-		]
-		eval [[ $v{thing} .= ' and did a nap' ]]
-		unlock slot [[ return 'sleutel'; ]]
-		eval [[ $v{thing} .= ' and unlocked lock "slot"' ]]
-	]
-]
+workflow "locktest":
+in:
+	in string
+out:
+	out string;
+wfomap:
+	out = v.thing;
+locks:
+	foo bar
+	abc def inherit
+	slot _ manual
+	schloss _ manual inherit
+do:
+	eval:
+		thing = 'got ' . a.in
+	lock slot 'sleutel'
+	eval:
+		thing .= ' and got lock "slot"'
+	lock schloss 'schlüssel'
+	eval:
+		thing .= ' and got lock "schloss"'
+	wait_for_event:
+		timeout = 1.5
+	into:
+		<event>
+	eval:
+		thing .= ' and did a nap'
+	#unlock slot 'sleutel'
+	unlock slot [[ 'sleutel' ]]
+	eval:
+		thing .= ' and unlocked lock "slot"'

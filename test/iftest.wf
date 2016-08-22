@@ -1,38 +1,35 @@
 # if
-workflow iftest [
-	in [
-		input number;
-	]
-	out [
-		output number;
-		whut string optional;
-	]
-	wfomap [[
-		$o{output} = $v{counter};
-		$o{whut} = $v{thing} if $v{thing};
-	]]
-	do [
-		if [[ $a{input} < 10 ]] then [
-			call add [
-				imap [[	$i{counter} = $a{input}; ]]
-				omap [[
-					$v{thing} = 'less than 10';
-					$v{counter} = $o{counter};
-				]]
-			]
-		] elsif [[ $a{input} > 100 ]] then [
-			call add [
-				imap [[	$i{counter} = $a{input}; ]]
-				omap [[
-					$v{thing} = 'greater than 100';
-					$v{counter} = $o{counter};
-				]]
-			]
-		] else [
-			call add [
-				imap [[	$i{counter} = $a{input}; ]]
-				omap [[ $v{counter} = $o{counter}; ]]
-			]
-		]
-	]
-]
+workflow iftest:
+in:
+	input number
+out:
+	output number
+	whut string optional
+wfomap:
+	output = v.counter
+	whut = ifdef(v.thing)
+do:
+	if a.input < 10:
+		call add:
+			counter = a.input
+		into:
+			thing = 'less than 10'
+			<counter>
+	elsif a.input > 100 and a.input < 200:
+		call add:
+			counter = a.input
+		into:
+			thing = 'greater than 100 but less than 200'
+			<counter>
+	elsif a.input >= 200:
+		call add:
+			counter = a.input
+		into:
+			#thing = 'greater than 200'
+			<counter>
+	else:
+		call add:
+			counter = a.input
+		into:
+			thing = 'between 10 and 100 inclusive'
+			<counter>

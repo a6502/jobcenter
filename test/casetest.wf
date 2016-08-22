@@ -1,34 +1,30 @@
 # case
-workflow "casetest" [
-	in [
-		"input" string;
-	]
-	out [
-		"output" string;
-	]
-	wfomap [[
-		$o{output} = $v{thing};
-	]]
-	do [
-		case [[ $a{input} ]] [
-			when "foo" [
-				call add [
-					imap [[	$i{counter} = 10; ]]
-					omap [[ $v{thing} = 'got foo'; ]]
-				]
-			]
-			when bar, baz [
-				call add [
-					imap [[	$i{counter} = 20; ]]
-					omap [[ $v{thing} = 'got bar or baz'; ]]
-				]
-			]
-			else [
-				call add [
-					imap [[	$i{counter} = 30; ]]
-					omap [[ $v{thing} = 'dunno what i got'; ]]
-				]
-			]
-		]
-	]
-]
+workflow casetest:
+in:
+	input string
+out:
+	counter number
+	thing string
+wfomap:
+	<counter>
+	<thing>
+do:
+	case a.input:
+	when "foo":
+		call add:
+			counter = 10
+		into:
+			<counter>
+			thing = 'got foo'
+	when bar, baz:
+		call add:
+			counter = 20
+		into:
+			<counter>
+			thing = 'got bar or baz'
+	else:
+		call add:
+			counter = 30
+		into:
+			<counter>
+			thing = 'dunno what i got: ' .  a.input

@@ -1,20 +1,14 @@
 # while
-workflow "whiletest" [
-	in [
-		"input" number;
-	]
-	out [
-		"output" number;
-	]
-	wfomap [[
-		$o{output} = $v{thing};
-	]]
-	do [
-		while [[ !$v{thing} or $v{thing} < 10 ]] do [
-			call add [
-				imap [[	$i{counter} = $v{thing} // $a{input}; ]]
-				omap [[ $v{thing} = $o{counter}; ]]
-			]
-		] 
-	]
-]
+workflow whiletest:
+in:
+	input number
+out:
+	output number
+do:
+	while !v.thing or v.thing < 10:
+		call add:
+			counter = v.thing // a.input
+		into:
+			thing = o.counter
+wfomap:
+	output = v.thing

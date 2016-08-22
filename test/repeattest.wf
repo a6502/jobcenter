@@ -1,20 +1,15 @@
 # repeat
-workflow "repeattest" [
-	in [
-		"input" number;
-	]
-	out [
-		"output" number;
-	]
-	wfomap [[
-		$o{output} = $v{thing};
-	]]
-	do [
-		repeat [
-			call add [
-				imap [[	$i{counter} = $v{thing} // $a{input}; ]]
-				omap [[ $v{thing} = $o{counter}; ]]
-			]
-		] until [[ $v{thing} > 10 ]]
-	]
-]
+workflow repeattest:
+in:
+	input number
+out:
+	output number
+do:
+	repeat:
+		call add:
+			counter = v.thing // a.input
+		into:
+			thing = o.counter
+	until v.thing > 10
+wfomap:
+	output = v.thing

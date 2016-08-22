@@ -1,29 +1,24 @@
 # try
-workflow "trytest" [
-	in [
-		i1 number;
-		i2 number;
-	]
-	out [
-		out number;
-		whut string optional;
-	]
-	wfomap [[
-		$o{out} = $v{thing};
-		$o{whut} = $v{whut} if $v{whut};
-	]]
-	do [
-		try [
-			eval [[ $v{thing} = $a{i1} / $a{i2} ]]
-		] catch [
-			eval [[
-				$v{thing} = 0.123456789 unless $v{thing};
-				if ( $e{_error}{msg} =~ /sqlerrm Illegal division by zero/ ) {
-					$v{whut} = 'division by zero';
-				} else {
-					$v{whut} = 'dunno? ' . $e{_error}{msg};
-				}
-			]]
-		]
-	]
-]
+workflow "trytest":
+in:
+	i1 number
+	i2 number
+out:
+	out  number optional
+	whut string optional
+wfomap:
+	out  = ifdef(v.thing)
+	whut = ifdef(v.whut)
+do:
+	try:
+		eval:
+			thing = a.i1 / a.i2
+	catch:
+		eval:
+		[[
+			if ( $e{_error}{msg} =~ /sqlerrm Illegal division by zero/ ) {
+				$v{whut} = 'division by zero';
+			} else {
+				$v{whut} = 'dunno? ' . $e{_error}{msg};
+			}
+		]]

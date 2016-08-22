@@ -1,28 +1,21 @@
 # childjob
-workflow "childjoberrortest" [
-	in [
-		"input" number;
-	]
-	out [
-		"output" string;
-	]
-	wfomap [[
-		$o{output} = $v{output};
-	]]
-	do [
-		try [
-			call raise_errortest2 [
-				imap [[	$i{in} = "$a{input}" ]]
-				omap [[ $v{output} = $o{out} * 2; ]]
-			]
-		] catch [
-			eval [[
-				if ($v{error}->{class} == 'childerror') {
-					$v{output} = 'got childerror';
-				} else {
-					$v{output} = 'got other error';
-				}
-			]]
-		]
-	]
-]
+workflow childjoberrortest:
+in:
+	input number
+out:
+	output string
+wfomap:
+	<output>
+do:
+	try:
+		call raise_errortest2:
+			in = tostring(a.input)
+		into:
+			output = tostring(o.out * 2)
+	catch:
+		if e.'_error'.class == 'childerror':
+			eval:
+				output = 'got childerror'
+		else:
+			eval:
+				output = 'got other error'

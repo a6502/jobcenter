@@ -1,30 +1,35 @@
 # event
-workflow "eventtest" [
-	in [
-		in string;
-	]
-	out [
-		out string;
-		event json optional;
-	]
-	wfomap [[
-		$o{out} = $v{thing};
-	]]
-	do [
-		subscribe [[
-			$i{name} = "my1stevent";
-			$i{mask} = { "foo" => "bar"};
-		]]
-		raise_event [[ $i{event} = { $a{in} => "bar", "blah" => "blargh" }; ]]
-		wait_for_event [
-			imap [[ $i{events} = ["my1stevent"] ]]
-			omap [[ $v{event} = $o{event} ]]
-		]
-		if [[ $v{event}->{name} eq "my1stevent" ]] then [
-			eval [[ $v{thing} = 'got my1stevent' ]]
-		] else [
-			eval [[ $v{thing} = 'got something else' ]]
-		]
-		unsubscribe [[ $i{name} = "my1stevent"; ]]
-	]
-]
+workflow "eventtest":
+in:
+	in string;
+out:
+	out string;
+	event json optional;
+wfomap:
+	out = v.thing;
+	#event = ifdef(v.event)
+do:
+	subscribe:
+		name = "my1stevent";
+		mask = object("foo": "bar");
+	raise_event:
+		event = object(a.in: "bar", "blah": "blargh")
+	wait_for_event:
+		events = array("my1stevent","my2ndevent")
+	into:
+		<event>
+		#<foo>
+	if v.event.name eq "my1stevent":
+		eval:
+			thing = 'got my1stevent'
+	else:
+		eval:
+			thing = 'got something else'
+		call add:
+			counter = 1;
+			step = 2;
+		into:
+			<counter>
+	unsubscribe:
+		name = "my1stevent"
+

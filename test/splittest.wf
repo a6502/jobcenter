@@ -1,28 +1,24 @@
 # split
-workflow "splittest" [
-	in [
-		"input" number;
-	]
-	out [
-		"output" string;
-	]
-	wfomap [[
-		$o{output} = $v{output};
-	]]
-	do [
-		split [
-			callflow calltest [
-				imap [[	$i{input} = 10 ]]
-				omap [[ $v{output} = $o{output}; ]]
-			]
-			callflow calltest  [
-				imap [[	$i{input} = 20 ]]
-				omap [[ $v{output} .= ' ' . $o{output}; ]]
-			]
-			callflow calltest  [
-				imap [[	$i{input} = 30 ]]
-				omap [[ $v{output} .= ' ' . $o{output}; ]]
-			]
-		]
-	]
-]
+workflow "splittest":
+in:
+	input number
+out:
+	output string
+wfomap:
+	<output>
+do:
+	split:
+		callflow calltest:
+			input = 10
+		into:
+			output = o.output
+
+		callflow calltest:
+			input = 20
+		into:
+			output .= ' ' . o.output
+
+		callflow calltest:
+			input = 30
+		into:
+			output .= ' ' . o.output

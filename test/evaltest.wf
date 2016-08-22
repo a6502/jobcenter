@@ -1,17 +1,13 @@
 # eval
-workflow "evaltest" [
-	in [
-		i1 number;
-		i2 number;
-		op string '"+"';
-	]
-	out [
-		out string;
-	]
-	wfomap [[
-		$o{out} = $v{thing};
-	]]
-	do [
-		eval [[ $v{thing} = "$a{i1} $a{op} $a{i2}" ]]
-	]
-]
+workflow evaltest:
+in:
+	i1 number
+	i2 number
+	op string '"+"'
+out:
+	out string;
+wfomap:
+	out = v.thing
+do:
+	eval:
+		thing = a.i1 . ' ' . a.op . ' ' . a.i2

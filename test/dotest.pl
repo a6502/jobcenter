@@ -29,6 +29,8 @@ sub main {
 
 	ok(-x $jcc, 'found jcc and it is executable');
 
+	# meh.. fk constraint on version_tags
+	#$vtag .= localtime->ymd;
 	my $test;
 	#goto frop;
 
@@ -42,9 +44,10 @@ sub main {
 
 	$test='iftest';
 	compile($test);
-	call($test, { input => 1   }, { output => 2  , whut => 'less than 10' });
-	call($test, { input => 11  }, { output => 12 });
-	call($test, { input => 111 }, { output => 112, whut => 'greater than 100' });
+	call($test, { input => 1    }, { output => 2   , whut => 'less than 10' });
+	call($test, { input => 11   }, { output => 12  , whut => 'between 10 and 100 inclusive' });
+	call($test, { input => 111  }, { output => 112 , whut => 'greater than 100 but less than 200' });
+	call($test, { input => 1111 }, { output => 1112 });
 
 	$test='whiletest';
 	compile($test);
@@ -60,14 +63,14 @@ sub main {
 
 	$test='casetest';
 	compile($test);
-	call($test, { input => 'foo' }, { output => 'got foo' });
-	call($test, { input => 'bar' }, { output => 'got bar or baz' });
-	call($test, { input => 'tla' }, { output => 'dunno what i got' });
+	call($test, { input => 'foo' }, { counter => 11, thing => 'got foo' });
+	call($test, { input => 'bar' }, { counter => 21, thing => 'got bar or baz' });
+	call($test, { input => 'tla' }, { counter => 31, thing => 'dunno what i got: tla' });
 
 	$test='trytest';
 	compile($test);
 	call($test, { i1 => 1, i2 => 2 }, { out => 0.5 });
-	call($test, { i1 => 1, i2 => 0 }, { out => 0.123456789, whut => 'division by zero' });
+	call($test, { i1 => 1, i2 => 0 }, { whut => 'division by zero' });
 
 	$test='raise_errortest2';
 	compile($test);
@@ -77,9 +80,11 @@ sub main {
 	compile($test);
 	call($test, { in => 'foo' }, { out => 'caught error!' });
 
+	#frop:
 	$test='sleeptest';
 	compile($test);
 	call($test, { in => 'foo' }, { out => 'got timeout' });
+	#goto end;
 
 	$test='eventtest';
 	compile($test);
@@ -108,12 +113,12 @@ sub main {
 	compile($test);
 	call($test, { in => 'foo' }, { out => 'lockinherittest2 got foo and did a nap'});
 
-	frop:
 	$test='lockinherittest';
 	# we assume that we have 'lockinherittest2' available here
 	compile($test);
 	call($test, { in => 'foo' }, { out => 'got foo and got lockinherittest2 got foofoo and did a nap'});
 
+	end:
 	done_testing();
 	return 0;
 }

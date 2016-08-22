@@ -1,23 +1,20 @@
 # locks
-workflow lockinherittest2 [
-	in [
-		in string;
-	]
-	out [
-		out string;
-	]
-	wfomap [[
-		$o{out} = $v{thing};
-	]]
-	locks [
-		abc def;
-		schloss schlüssel;
-	]
-	do [
-		eval [[ $v{thing} = "lockinherittest2 got $a{in}"; ]]
-		wait_for_event [
-			imap [[ $i{timeout} = 2 ]]
-		]
-		eval [[ $v{thing} .= ' and did a nap' ]]
-	]
-]
+workflow lockinherittest2:
+in:
+	in string
+out:
+	out string
+wfomap:
+	out = v.thing
+locks:
+	abc def
+	schloss schlüssel
+do:
+	eval:
+		thing = "lockinherittest2 got " . a.in
+	wait_for_event:
+		timeout = 2
+	into:
+		<event>
+	eval:
+		thing .= ' and did a nap'

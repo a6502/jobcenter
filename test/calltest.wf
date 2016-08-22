@@ -1,18 +1,17 @@
 # call
-workflow "calltest" [
-	in [
-		"input" number;
-	]
-	out [
-		"output" number;
-	]
-	wfomap [[
-		$o{output} = $v{thing};
-	]]
-	do [
-		call add [
-			imap [[	$i{counter} = $a{input}; $i{step} = 3; ]]
-			omap [[ $v{thing} = $o{counter}; ]]
-		]
-	]
-]
+workflow calltest:
+in:
+	input number
+out:
+	output number
+wfomap:
+	output = v.thing
+	t.foo = 'foo'
+do:
+	call add:
+		counter = a.input
+		step = 3
+		t.foo = 'bar'
+	into:
+		thing = o.counter
+		t.foo = 'baz'
