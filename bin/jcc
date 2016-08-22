@@ -1,0 +1,108 @@
+#!/usr/bin/perl -CSDAL
+
+no lib '.';
+
+# mojo
+use Mojo::Base -base;
+use Mojo::Util qw(decode slurp);
+#use Mojo::IOLoop;
+use Mojo::Pg;
+
+# stdperl
+use Cwd qw(realpath);
+use Data::Dumper;
+use FindBin;
+use Getopt::Long qw();
+use Time::HiRes qw(time);
+
+# cpan
+use Config::Tiny;
+use Pegex::Input;
+use Pegex::Parser;
+
+# JobCenter
+use lib realpath("$FindBin::Bin/../lib");
+use JobCenter::JCC::CodeGenerator;
+use JobCenter::JCC::Grammar;
+use JobCenter::JCC::Receiver;
+
+exit main(@ARGV);
+
+sub main {
+	my $config = realpath("$FindBin::Bin/../etc/jobcenter.conf");
+	my $debug = 0;
+	my $parseonly = 0;
+	my $tags;
+
+	Getopt::Long::Configure(qw( bundling posix_default ));
+	Getopt::Long::GetOptionsFromArray(
+		\@_,
+		'config=s' => \$config,
+		'debug' => \$debug,
+		'parseonly|p' => \$parseonly,
+		'tags=s' => \$tags
+	) or die "Error in command line arguments\n";
+
+	my $wff = shift;
+
+	unless ($wff) {
+		die "usage: $0 [--tags <tag1[:tagN]>] <filename>";
+	}
+	
+	my $wfsrc = decode('UTF-8', slurp($wff));
+	
+	my $grammar = JobCenter::JCC::Grammar->new;
+
+	print Dumper($grammar->tree);
+
+	my $receiver = JobCenter::JCC::Receiver->new;
+
+	my $parser = Pegex::Parser->new(
+		grammar => $grammar,
+		receiver => $receiver,
+		debug => $debug,
+	);
+
+	my $start = time();
+	my $wfast = $parser->parse(Pegex::Input->new(stringref => \$wfsrc));
+	my $took = time() - $start;
+
+	print Dumper($wfast);
+	print Dumper($receiver->{labels});
+	printf("took %0.3f\n", $took);
+	return 0 if $parseonly;
+
+	# what do we call ourselves
+	my $clientname = "$0 [$$]";
+
+	# make our application_name in postgresql our clientname
+	$ENV{'PGAPPNAME'} = $clientname;
+
+	my $cfg = Config::Tiny->read("$FindBin::Bin/../etc/jobcenter.conf");
+	die 'Config Errror: ' . Config::Tiny->errstr() unless $cfg;
+	#print Dumper($cfg);
+
+	my $pg = Mojo::Pg->new(
+		'postgresql://'
+		. $cfg->{admin}->{user}
+		. ':' . $cfg->{admin}->{pass}
+		. '@' . $cfg->{pg}->{host}
+		. ':' . $cfg->{pg}->{port}
+		. '/' . $cfg->{pg}->{db}
+	);
+
+	my $jcg = JobCenter::JCC::CodeGenerator->new(
+		db => $pg->db,
+		debug => $debug,
+	);
+
+	$jcg->generate(
+		wfast => $wfast,
+		labels => $receiver->labels,
+		tags => $tags,
+	);
+
+	say "the end is nigh!";
+	return 0;
+}
+
