@@ -1,0 +1,290 @@
+#!/usr/bin/perl -CSDL
+
+use strict;
+use warnings;
+use 5.10.0;
+
+# standard modules
+use Data::Dumper;
+use FindBin;
+use List::Util qw(none);
+
+# CPAN
+use Config::Tiny;
+use DBI;
+use DBD::Pg qw(:async);
+use JSON::MaybeXS qw(from_json to_json);
+
+# globals
+my $pgh;
+my %actions;
+my %done;
+my $tasks;
+my $split;
+my @on_error = (-1); # magic value
+my $try;
+
+exit main(@ARGV);
+
+sub main {
+	if (scalar @_ != 1) {
+		die "usage: $0 <action_id>";
+	}
+
+	my ($action_id) = @_;
+
+	my $cfgpath = "$FindBin::Bin/../etc/jobcenter.conf";
+
+	my $cfg = Config::Tiny->read($cfgpath);
+	die 'failed to read config ' . $cfgpath . ': ' . Config::Tiny->errstr unless $cfg;
+	my $pgdsn = 'dbi:Pg:dbname=' . $cfg->{pg}->{db}
+		. ';host=' . $cfg->{pg}->{host}
+		. ';port=' . $cfg->{pg}->{port};
+	my $pguser = $cfg->{admin}->{user};
+	my $pgpass = $cfg->{admin}->{pass};
+
+	# make our clientname the application_name visible in postgresql
+	$ENV{'PGAPPNAME'} = "$0 [$$]";
+
+	$pgh = DBI->connect(
+		$pgdsn, $pguser, $pgpass,
+		{
+			AutoCommit => 1,
+			RaiseError => 1,
+			PrintError => 0,
+		}
+	) or die "cannot connect to db: $DBI::errstr";
+	$pgh->{pg_placeholder_dollaronly} = 1;
+
+	my $action = $pgh->selectrow_hashref(q[
+		select *from actions where action_id=$1],
+		{},
+		$action_id
+	);
+
+	die "no action $action_id?" unless $action;
+
+	my $inputs = $pgh->selectall_hashref(
+		q[select * from action_inputs where action_id = $1],
+		'name',
+		{},
+		$action_id
+	);
+
+	my $outputs = $pgh->selectall_hashref(
+		q[select * from action_outputs where action_id = $1],
+		'name',
+		{},
+		$action_id
+	);
+
+	#print Dumper($action);
+	#print Dumper($inputs);
+	#print Dumper($outputs);
+	
+	say "$action->{type} $action_id: $action->{name} version $action->{version}";
+	say "workflow environment: $action->{wfenv}" if $action->{wfenv};
+	say "$action->{type} role: $action->{rolename}" if $action->{rolename};
+	if ($action->{wfmapcode}) {
+		$action->{wfmapcode} =~ s/\n/\\n/g;
+		say "wfomap: $action->{wfmapcode}";
+	}
+
+	say "in:";
+	for my $i (values %$inputs) {
+		say "\t$i->{name} $i->{type}", ($i->{optional}) ? " $i->{default}" : '';
+	}
+
+	say "out:";
+	for my $o (values %$outputs) {
+		say "\t$o->{name} $o->{type}", ($o->{optional}) ? ' optional' : '';
+	}
+
+	return 0 unless $action->{type} eq 'workflow';
+
+	# find the magic start task
+	my ($start) = $pgh->selectrow_array(q[
+		select task_id from tasks where workflow_id=$1 and action_id=0],
+		{},
+		$action_id
+	);
+
+	die "huh? no start task for workflow $action_id?" unless $start;
+
+	$tasks = $pgh->selectall_hashref(
+		q[select * from tasks where workflow_id = $1],
+		'task_id',
+		{},
+		$action_id
+	);
+
+	# hack! task_id -1 does not exist, so dumpert will return after finding the end task
+	dumpert($start, -1);
+
+	return 0;
+}
+
+sub dumpert {
+	my ($task_id, $end, $indent) = @_;
+	return if $done{$task_id};
+	$indent //= 0;
+	my $i = "\t" x $indent;
+	while ($task_id != $end) {
+		$done{$task_id} = 1;
+		my $task = $tasks->{$task_id};
+		my $attr = from_json($task->{attributes}) if $task->{attributes};
+		my $action_id = $task->{action_id};
+		my $action = get_action($action_id);
+		my $oetid = $task->{on_error_task_id};
+		if ($oetid and none {$oetid eq $_} @on_error) {
+			# start of a new try block
+			say $i, "$task_id try:";
+			$i .= "\t";
+			$indent++;
+			$try++;
+			push @on_error, $oetid;
+		} elsif ($oetid and $on_error[-1] == $oetid) {
+			# just continue
+		} elsif ($try) {
+			die "huh? expected a no-op here $task_id $action_id" unless $action_id == -2;
+			$indent--;
+			$i = "\t" x $indent;
+			$try--;
+			pop @on_error;
+			# the catch block should be the current task_id + 1
+			say $i, "$task_id catch:";
+			dumpert($task_id+1 , $task_id, $indent + 1);
+		}
+		if (not $task->{wait}) {
+			if (not $split) {
+				say $i, "$task_id split:";
+				$i .= "\t";
+				$indent++;
+			}
+			$split++;
+		}
+		if ($action_id == -4) { # branch
+			#print Dumper($task);
+			#say $i, "$task_id $action->{name} $attr->{boolcode}";
+			# find the branch target
+			my ($true) = $pgh->selectrow_array(q[
+				select to_task_id from next_tasks where from_task_id=$1 and "when"='true'],
+				{},
+				$task_id
+			);
+			die "huh? no branch target for task $task_id?" unless $true;
+			# hack alert! 
+			# the compiler inserts a tie-thing-together no-op next, so we can guess the task_id of that
+			my $branchend = $task_id + 1;
+			my $next = $task->{next_task_id};
+			# another hack: we can guess which statement created this branch
+			if ($true == $branchend and $done{$next}) {
+				say $i, "$task_id until '$attr->{boolcode}': goto $next";
+				#say $i, "$task_id on true: goto $true";
+				#say $i, "$task_id on false: goto $next";
+			} elsif (not $done{$true} and $next == $branchend) {
+				say $i, "$task_id while '$attr->{boolcode}':";
+				dumpert($true, $task_id, $indent + 1);
+			} else {
+				say $i, "$task_id if '$attr->{boolcode}':";
+				#say $i, "$task_id on true:";
+				dumpert($true, $branchend, $indent + 1);
+				if ($next != $branchend) {
+					say $i, "$task_id else:";
+					dumpert($task->{next_task_id}, $branchend, $indent + 1);
+				}
+			}
+			
+			#say $i, "$task_id branchend";
+			$task_id = $branchend;
+		} elsif ($action_id == -5) { #switch
+			say $i, "$task_id $action->{name} '$attr->{stringcode}':";
+			my $whens = $pgh->selectall_hashref(q[
+				select string_agg("when",', ') as "when", to_task_id from next_tasks where from_task_id=$1 group by to_task_id],
+				'when',
+				{},
+				$task_id
+			);
+			die "huh? no branch target for task $task_id?" unless $whens;
+			# hack alert! 
+			# the compiler inserts a tie-thing-together no-op next, so we can guess the task_id of that
+			my $switchend = $task_id + 1;
+			for my $when (values %$whens) {
+				say $i, "$task_id on '$when->{when}':";
+				dumpert($when->{to_task_id}, $switchend, $indent + 1);
+			}
+			if ($task->{next_task_id} != $switchend) {
+				say $i, "$task_id else:";
+				dumpert($task->{next_task_id}, $switchend, $indent + 1);
+			}
+			#say $i, "$task_id switchend";
+			$task_id = $switchend;
+		} elsif ($action_id == -3) { # eval
+			$attr->{evalcode} =~ s/\n/\\n/g;
+			say $i, "$task_id eval:";
+			say $i, "$task_id         '$attr->{evalcode}'";
+			$task_id = $task->{next_task_id};
+		} elsif ($action_id == -6) { # reap_child
+			say $i, "$task_id reap_child from task $task->{reapfromtask_id}";
+			if (not --$split) { # should be the last reap_child
+				$indent--;
+				$i = "\t" x $indent;
+			}
+			$task_id = $task->{next_task_id};
+		} elsif ($action_id == -7 or $action_id == -8 or $action_id == -10 or $action_id == -11) {
+			 # (un)subscribe and raise_{error,event}
+			$attr->{imapcode} =~ s/\n/\\n/g;
+			say $i, "$task_id $action->{name}:";
+			say $i, "$task_id         '$attr->{imapcode}'";
+			$task_id = $task->{next_task_id};
+		} elsif ($action_id == -9) { # wait_for_event
+			# 'normal' tasks
+			$attr->{imapcode} =~ s/\n/\\n/g;
+			$attr->{omapcode} =~ s/\n/\\n/g;
+			say $i, "$task_id $action->{name}:";
+			say $i, "$task_id         '$attr->{imapcode}'";
+			say $i, "$task_id into:";
+			say $i, "$task_id         '$attr->{omapcode}'";
+			$task_id = $task->{next_task_id};
+		} elsif ($action_id == -13 or $action_id == -14) {
+			 # (un)lock
+			$attr->{stringcode} =~ s/\n/\\n/g if $attr->{stringcode};
+			say $i, "$task_id $action->{name}: '$attr->{locktype}'",
+				($attr->{lockvalue}) ? " '$attr->{lockvalue}'" : " '$attr->{stringcode}'",
+				($attr->{lockinherit}) ? ' inherit' : '';
+			$task_id = $task->{next_task_id};
+		} elsif ($action_id > 0) {
+			# 'normal' tasks
+			#print Dumper($task);
+			#print Dumper($action);
+			$attr->{imapcode} =~ s/\n/\\n/g;
+			$attr->{omapcode} =~ s/\n/\\n/g;
+			say $i, "$task_id call $action->{type} $action->{name} ($action_id):";
+			say $i, "$task_id         '$attr->{imapcode}'";
+			say $i, "$task_id into:";
+			say $i, "$task_id         '$attr->{omapcode}'";
+			$task_id = $task->{next_task_id};
+		} else {
+			# other system tasks
+			say $i, "$task_id $action->{name}";
+			$task_id = $task->{next_task_id};
+		}
+		last if $action_id == -1; # magic end task
+	}
+}
+
+sub get_action {
+	my $action_id = shift;
+	unless ($actions{$action_id}) {
+		my $action = $pgh->selectrow_hashref(
+			q[select * from actions where action_id = $1],
+			{},
+			$action_id
+		);
+		die "no action $action_id?" unless $action;
+		$actions{$action_id} = $action
+	}
+	return $actions{$action_id};
+}
+
+
