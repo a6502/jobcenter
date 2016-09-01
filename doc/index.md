@@ -1,4 +1,3 @@
-JobCenter Documentation Index
+*JobCenter Documentation Index*
 
 * [JobCenter Language](jcl.md)
-
