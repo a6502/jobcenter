@@ -1,6 +1,7 @@
 CREATE OR REPLACE FUNCTION jobcenter.do_stringcode(code text, args jsonb, env jsonb, vars jsonb)
  RETURNS text
- LANGUAGE plperlu
+ LANGUAGE plperl
+ SECURITY DEFINER
  SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$
 

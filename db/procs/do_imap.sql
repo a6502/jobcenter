@@ -1,11 +1,13 @@
 CREATE OR REPLACE FUNCTION jobcenter.do_imap(code text, args jsonb, env jsonb, vars jsonb)
  RETURNS jsonb
- LANGUAGE plperlu
+ LANGUAGE plperl
+ SECURITY DEFINER
  SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$
 
 use strict;
 use warnings;
+
 #use plperl.on_init instead
 #use lib '/home/wieger/src/jobcenter/lib';
 use JSON::MaybeXS qw(from_json to_json);
