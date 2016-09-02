@@ -17,10 +17,16 @@ pass=password
 [maestro]
 user=jc_maestro
 pass=password
-
-[super]
-host=/var/run/postgresql
-port=5433
+listenport=6502
 
 [system]
 role=jc_system
+
+[perl]
+role=jc_perl
+
+[api]
+user=api
+pass=password
+listenport=6522
+
