@@ -14,7 +14,7 @@ use Config::Tiny;
 exit main(@ARGV);
 
 # ugly but handy globals
-our ($cfg, $pg, $allprocsq, $procsrcq, $reposchema, $dbschema);
+our ($cfg, $pg, $allprocsq, $procsrcq, $reposchema, $dbschema, %maestro);
 
 sub main {
 	my %actions = (
@@ -26,6 +26,8 @@ sub main {
 		'help' => \&help,
 		'load' => \&loadproc,
 		'save' => \&saveproc,
+		'seccheck' => \&seccheck,
+		'secfix' => \&secfix,
 		'update' => \&updateprocs,
 		'upgrade' => \&upgradeschema,
 		'verify' => \&verifyschema,
@@ -103,14 +105,12 @@ sub checkdbschema {
 }
 
 sub checkreposchema {
-	my $tag = `git describe`;
-	die "no git tag found" unless $tag;
-	unless ($tag =~ /^schema_v([0-9.]+)/) {
-		die "weird tag $tag";
-	}
-	$tag = $1;
-	say "found repo schema version $tag";
-	$reposchema = $tag;
+	open my $vf, '<', 'schema/.version' or die "no schema/.version file";
+	my $v = <$vf>;
+	close $vf;
+	die "weird version $v" unless $v =~ /^\d+$/;
+	say "found repo schema version $v";
+	$reposchema = $v;
 }
 
 
@@ -128,17 +128,17 @@ sub checkschema {
 		die "need to create the schema from scratch\n" .
 		    "call $0 create to do that";
 	}
-	if ($reposchema lt $dbschema) {
+	if ($reposchema < $dbschema) {
 		die "fileschema is lower than dbschema ($reposchema < $dbschema)\n" .
 		    "downgrade dbschema before reverting repo";
 	}
-	if ($reposchema gt $dbschema) {
+	if ($reposchema > $dbschema) {
 		my @scripts = findschemaupgrades;
 		die 'upgrade scripts not found?' unless @scripts;
 		say 'need to do scripts ', join(', ', @scripts), ' for upgrade';
 		return 1;
 	}		
-	if ($reposchema eq $dbschema) {
+	if ($reposchema == $dbschema) {
 		say "schema is up to date";
 		return 0;
 	}
@@ -293,12 +293,13 @@ EOF
 
 	#say "sql now: ", $sql;
 	
+	$ENV{'PGPASSWORD'} = $cfg->{admin}->{pass};
 	open my $fh, '|-', 'psql', '-w', '-e', '-1',
 			'-v', 'ON_ERROR_STOP=1',
-			'-h', ($cfg->{super}->{host} or die 'foo'),
-			'-p', ($cfg->{super}->{port} or die 'fooo'),
-			'-d', $cfg->{pg}->{db}
-			#'-U', $cfg->{admin}->{user}
+			'-h', ($cfg->{pg}->{host} or die 'foo'),
+			'-p', ($cfg->{pg}->{port} or die 'fooo'),
+			'-d', $cfg->{pg}->{db},
+			'-U', $cfg->{admin}->{user}
 		or die "cannot start psql: $!";
 	print $fh $$_ for @$sqls;
 	close $fh;
@@ -317,7 +318,8 @@ sub sqlfile {
 		'$JCADMIN' => ($cfg->{admin}->{user} or die "foo"),
 		'$JCCLIENT' => ($cfg->{client}->{user} or die "fooo"),
 		'$JCMAESTRO' => ($cfg->{maestro}->{user} or die "foooo"),
-		'$JCSYSTEM' => ($cfg->{system}->{role} or die "fooooo")
+		'$JCSYSTEM' => ($cfg->{system}->{role} or die "fooooo"),
+		'$JCPERL' => ($cfg->{perl}->{role} or die "fooooop")
 	);
 
 	while ( my($k,$v) = each(%subs) ) {
@@ -497,6 +499,17 @@ sub loadproc {
 	# ugh.. we need to filter out default arguments here
 	# let's try a quick hack:
 	$func =~ s/ DEFAULT .*?(,|\))/$1/g;
+	# and another hack to get just the types:
+	pos $func = 0 while $func =~ s/(\(|, )\w+ (\w+(?:,|\)))/$1$2/g;
+	#say "func now: $func";
+
+	# get language
+	$procsrc =~ /^ LANGUAGE (\w+)$/ms or die 'cannot find function language';
+	my $lang = $1;
+	#say "lang now: $lang";
+
+	# get security definer
+	my $secdef = ($procsrc =~ /^ SECURITY DEFINER$/ms) ? 1 : 0;
 
 	if ($dbprocsrc) {
 		# see if the function signature changed
@@ -510,16 +523,47 @@ sub loadproc {
 
 		if ($funcsig ne $dbfuncsig) {
 			$procsrc = "DROP FUNCTION $dbfunc;\n" . $procsrc;
+
+			# now figure out the owner and grants
+			my $JCSYSTEM = $cfg->{system}->{role} or die 'no system role?';
+			my $JCPERL = $cfg->{perl}->{role} or die 'no perl role?';
+			my $JCCLIENT = $cfg->{client}->{user} or die 'no client role?';
+			my $JCMAESTRO = $cfg->{maestro}->{user} or die 'no maestro role?';
+
+			if ($lang eq 'plperl' and $secdef) {
+				$procsrc .= <<"EOT";
+;
+ALTER FUNCTION $func OWNER TO $JCPERL;
+REVOKE ALL ON FUNCTION $func FROM PUBLIC;
+GRANT ALL ON FUNCTION $func TO $JCPERL;
+EOT
+			} elsif ($secdef and $maestro{$func}) {
+				$procsrc .= <<"EOT";
+;
+ALTER FUNCTION $func OWNER TO $JCSYSTEM;
+REVOKE ALL ON FUNCTION $func FROM PUBLIC;
+GRANT ALL ON FUNCTION $func TO $JCSYSTEM;
+GRANT ALL ON FUNCTION $func TO $JCMAESTRO;
+EOT
+			} elsif ($secdef) {
+				$procsrc .= <<"EOT";
+;
+ALTER FUNCTION $func OWNER TO $JCSYSTEM;
+REVOKE ALL ON FUNCTION $func FROM PUBLIC;
+GRANT ALL ON FUNCTION $func TO $JCSYSTEM;
+GRANT ALL ON FUNCTION $func TO $JCCLIENT;
+EOT
+			} else {
+				$procsrc .= <<"EOT";
+;
+ALTER FUNCTION $func OWNER TO $JCSYSTEM;
+REVOKE ALL ON FUNCTION $func FROM PUBLIC;
+GRANT ALL ON FUNCTION $func TO $JCSYSTEM;
+EOT
+
+			}
 		}
 	}
-
-	# always set owner, not actually necessary when replacing a function..
-	my $jcsystem = ($cfg->{system}->{role} or die 'no system role configured?');
-	$procsrc .= <<"EOT";
-;
-ALTER FUNCTION $func OWNER TO $jcsystem;
-
-EOT
 
 	#$pg->db->dollar_only->query($procsrc);
 	my $res = execsql( [ \$procsrc ], 1 ); # check function bodies
@@ -585,6 +629,105 @@ sub md5sum {
 	return $md5sum;
 }
 
+sub _seccheck {
+	my $q = <<'EOT';
+select
+	p.oid,
+	p.proname || coalesce((select '(' || string_agg(format_type(t, null), ', ') || ')' from unnest(p.proargtypes) as t), '()') as proc,
+	pg_get_userbyid(proowner) as procowner,
+	p.prosecdef,
+	p.proacl,
+	l.lanname
+from
+	pg_proc as p
+	join pg_language as l on p.prolang = l.oid
+where
+	pronamespace = to_regnamespace('jobcenter')
+EOT
+
+	my $funcs = $pg->db->dollar_only->query($q);
+
+	my $JCSYSTEM = $cfg->{system}->{role};
+	my $JCPERL = $cfg->{perl}->{role};
+	my $JCCLIENT = $cfg->{client}->{user};
+	my $JCMAESTRO = $cfg->{maestro}->{user};
+	my $sql = '';
+
+	#print 'maestro: ', Dumper(\%maestro);
+
+	while (my $f = $funcs->hash) {
+		my $acl = $f->{proacl} ? join(',', @{$f->{proacl}}) : '';
+		#print STDERR Dumper($f);
+		if ($f->{lanname} eq 'plpgsql' or $f->{lanname} eq 'sql') {
+			if ($f->{prosecdef}) {
+				if ($maestro{$f->{proc}}) {
+					if ($acl ne "$JCSYSTEM=X/$JCSYSTEM,$JCMAESTRO=X/$JCSYSTEM") {
+						$sql .= <<"EOT";
+REVOKE ALL ON FUNCTION $f->{proc} FROM PUBLIC;
+REVOKE ALL ON FUNCTION $f->{proc} FROM $JCCLIENT;
+GRANT ALL ON FUNCTION $f->{proc} TO $JCSYSTEM;
+GRANT ALL ON FUNCTION $f->{proc} TO $JCMAESTRO;
+EOT
+					}
+				} elsif ($acl ne "$JCSYSTEM=X/$JCSYSTEM,$JCCLIENT=X/$JCSYSTEM") {
+					$sql .= <<"EOT";
+REVOKE ALL ON FUNCTION $f->{proc} FROM PUBLIC;
+GRANT ALL ON FUNCTION $f->{proc} TO $JCSYSTEM;
+GRANT ALL ON FUNCTION $f->{proc} TO $JCCLIENT;
+EOT
+				}
+			} else {
+				if ($acl ne "$JCSYSTEM=X/$JCSYSTEM") {
+					$sql .= <<"EOT";
+REVOKE ALL ON FUNCTION $f->{proc} FROM PUBLIC;
+GRANT ALL ON FUNCTION $f->{proc} TO $JCSYSTEM;
+EOT
+				}
+			}
+		} elsif ($f->{lanname} eq 'plperl') {
+			if ($acl ne "$JCPERL=X/$JCPERL") {
+				$sql .= <<"EOT";
+REVOKE ALL ON FUNCTION $f->{proc} FROM PUBLIC;
+REVOKE ALL ON FUNCTION $f->{proc} FROM $JCSYSTEM;
+ALTER FUNCTION $f->{proc} OWNER TO $JCPERL;
+GRANT ALL ON FUNCTION $f->{proc} TO $JCPERL;
+EOT
+			}
+		} elsif ($f->{lanname} eq 'plperlu') {
+				die '-> plperlu should not be!';
+		} else {
+			die "uh? how did we get here?"
+		}
+	}
+	return \$sql;
+}
+
+sub seccheck {
+	my $sql = _seccheck();
+
+	if ($$sql) {
+		say "found security mismatch!";
+		say "run $0 secfix to apply the following fixes:";
+		say $$sql;
+		return 1;
+	}
+
+	say "everything ok?";
+	return 0;
+}
+
+sub secfix {
+	my $sql = _seccheck();
+
+	unless ($$sql) {
+		say "nothing to fix!";
+		return;
+	}
+
+	my $res = execsql( [ $sql ], 0 );
+	die "secfix failed!" if $res;
+}
+
 # some queries
 BEGIN {
 $allprocsq = <<'EOT';
@@ -607,4 +750,17 @@ WHERE pg_catalog.pg_function_is_visible(p.oid)
   AND n.nspname = 'jobcenter'
   AND p.proname = $1
 EOT
-}
+
+# stored procedures called by the maestro (for seccheck/secfix)
+%maestro = map { $_ => 1 } qw[
+	do_archival_and_cleanup(text)
+	do_check_workers()
+	do_jobtask(jobtask)
+	do_jobtaskdone(jobtask)
+	do_jobtaskerror(jobtask)
+	do_ping(bigint)
+	do_timeout()
+];
+
+} #BEGIN
+
