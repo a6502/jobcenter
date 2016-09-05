@@ -16,7 +16,7 @@ JC='jc2'
 JCADMIN="${JC}_admin"
 JCCLIENT="${JC}_client"
 JCMAESTRO="${JC}_maestro"
-JCSPERL="${JC}_perl"
+JCPERL="${JC}_perl"
 JCSYSTEM="${JC}_system"
 DEFPW='geheimnis'
 
