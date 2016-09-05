@@ -187,19 +187,19 @@ DROP TYPE IF EXISTS jobcenter.action_type;
 DROP SCHEMA IF EXISTS jobcenter;
 --
 -- TOC entry 8 (class 2615 OID 36103)
--- Name: jobcenter; Type: SCHEMA; Schema: -; Owner: jc_admin
+-- Name: jobcenter; Type: SCHEMA; Schema: -; Owner: $JCADMIN
 --
 
 CREATE SCHEMA jobcenter;
 
 
-ALTER SCHEMA jobcenter OWNER TO jc_admin;
+ALTER SCHEMA jobcenter OWNER TO $JCADMIN;
 
 SET search_path = jobcenter, pg_catalog;
 
 --
 -- TOC entry 646 (class 1247 OID 36105)
--- Name: action_type; Type: TYPE; Schema: jobcenter; Owner: jc_admin
+-- Name: action_type; Type: TYPE; Schema: jobcenter; Owner: $JCADMIN
 --
 
 CREATE TYPE action_type AS ENUM (
@@ -210,11 +210,11 @@ CREATE TYPE action_type AS ENUM (
 );
 
 
-ALTER TYPE action_type OWNER TO jc_admin;
+ALTER TYPE action_type OWNER TO $JCADMIN;
 
 --
 -- TOC entry 649 (class 1247 OID 36112)
--- Name: job_state; Type: TYPE; Schema: jobcenter; Owner: jc_admin
+-- Name: job_state; Type: TYPE; Schema: jobcenter; Owner: $JCADMIN
 --
 
 CREATE TYPE job_state AS ENUM (
@@ -231,12 +231,12 @@ CREATE TYPE job_state AS ENUM (
 );
 
 
-ALTER TYPE job_state OWNER TO jc_admin;
+ALTER TYPE job_state OWNER TO $JCADMIN;
 
 --
 -- TOC entry 2476 (class 0 OID 0)
 -- Dependencies: 649
--- Name: TYPE job_state; Type: COMMENT; Schema: jobcenter; Owner: jc_admin
+-- Name: TYPE job_state; Type: COMMENT; Schema: jobcenter; Owner: $JCADMIN
 --
 
 COMMENT ON TYPE job_state IS 'ready: waiting for a worker to pick this jobtask
@@ -252,7 +252,7 @@ error: ?';
 
 --
 -- TOC entry 732 (class 1247 OID 36544)
--- Name: jobtask; Type: TYPE; Schema: jobcenter; Owner: jc_admin
+-- Name: jobtask; Type: TYPE; Schema: jobcenter; Owner: $JCADMIN
 --
 
 CREATE TYPE jobtask AS (
@@ -262,11 +262,11 @@ CREATE TYPE jobtask AS (
 );
 
 
-ALTER TYPE jobtask OWNER TO jc_admin;
+ALTER TYPE jobtask OWNER TO $JCADMIN;
 
 --
 -- TOC entry 735 (class 1247 OID 36547)
--- Name: nextjobtask; Type: TYPE; Schema: jobcenter; Owner: jc_admin
+-- Name: nextjobtask; Type: TYPE; Schema: jobcenter; Owner: $JCADMIN
 --
 
 CREATE TYPE nextjobtask AS (
@@ -275,5 +275,5 @@ CREATE TYPE nextjobtask AS (
 );
 
 
-ALTER TYPE nextjobtask OWNER TO jc_admin;
+ALTER TYPE nextjobtask OWNER TO $JCADMIN;
 
