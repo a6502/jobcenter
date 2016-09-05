@@ -6,6 +6,8 @@ GRANT $JCCLIENT to $JCADMIN;
 
 GRANT ALL ON SCHEMA jobcenter TO $JCPERL;
 
+CREATE EXTENSION IF NOT EXISTS plperl;
+
 drop extension plperlu;
 
 DROP FUNCTION IF EXISTS jobcenter.nexttask(error boolean, workflow_id integer, task_id integer, job_id bigint);
