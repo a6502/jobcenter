@@ -11,14 +11,14 @@ CLUSTER=''
 
 # what to create
 
-DBNAME='jobcenter'
-JC='jc'
+DBNAME='jc2'
+JC='jc2'
 JCADMIN="${JC}_admin"
 JCCLIENT="${JC}_client"
 JCMAESTRO="${JC}_maestro"
 JCSPERL="${JC}_perl"
 JCSYSTEM="${JC}_system"
-DEFPW='password'
+DEFPW='geheimnis'
 
 # create
 
