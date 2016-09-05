@@ -182,7 +182,7 @@ sub createschema {
 		if (ref) {
 			push @sqls, sqlfile(@$_[0]); # create1
 			push @sqls, procs("schema/v$dbschema/procs");
-			push @sqls, sqlfile(@$_[1]); # create1
+			push @sqls, sqlfile(@$_[1]); # create2
 			push @sqls, sqlfile(@$_[2]); # verify
 		} else {
 			push @sqls, sqlfile($_);
