@@ -773,6 +773,11 @@ COPY actions (action_id, name, type, version, wfmapcode, wfenv, rolename) FROM s
 -14	unlock	system	0	\N	\N	\N
 \.
 
+--
+-- Name: actions_actionid_seq; Type: SEQUENCE SET; Schema: jobcenter; Owner: $JCADMINn
+--
+
+SELECT pg_catalog.setval('actions_actionid_seq', 4, true);
 
 --
 -- TOC entry 2464 (class 0 OID 36497)
@@ -1455,7 +1460,7 @@ REVOKE ALL ON SCHEMA jobcenter FROM PUBLIC;
 REVOKE ALL ON SCHEMA jobcenter FROM $JCADMIN;
 GRANT ALL ON SCHEMA jobcenter TO $JCADMIN;
 GRANT USAGE ON SCHEMA jobcenter TO $JCCLIENT;
-GRANT USAGE ON SCHEMA jobcenter TO jc_maestro;
+GRANT USAGE ON SCHEMA jobcenter TO $JCMAESTRO;
 GRANT ALL ON SCHEMA jobcenter TO $JCSYSTEM;
 GRANT ALL ON SCHEMA jobcenter TO $JCPERL;
 
@@ -1493,7 +1498,7 @@ GRANT ALL ON FUNCTION create_job(wfname text, args jsonb, tag text, impersonate 
 REVOKE ALL ON FUNCTION do_archival_and_cleanup(dummy text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION do_archival_and_cleanup(dummy text) FROM $JCSYSTEM;
 GRANT ALL ON FUNCTION do_archival_and_cleanup(dummy text) TO $JCSYSTEM;
-GRANT ALL ON FUNCTION do_archival_and_cleanup(dummy text) TO jc_maestro;
+GRANT ALL ON FUNCTION do_archival_and_cleanup(dummy text) TO $JCMAESTRO;
 
 
 --
@@ -1593,17 +1598,6 @@ GRANT ALL ON FUNCTION do_check_wait_for_task(a_action_id integer, a_wait_for_tas
 REVOKE ALL ON FUNCTION do_cleanup_on_finish(a_jobtask jobtask) FROM PUBLIC;
 REVOKE ALL ON FUNCTION do_cleanup_on_finish(a_jobtask jobtask) FROM $JCSYSTEM;
 GRANT ALL ON FUNCTION do_cleanup_on_finish(a_jobtask jobtask) TO $JCSYSTEM;
-
-
---
--- TOC entry 2490 (class 0 OID 0)
--- Dependencies: 281
--- Name: do_cleanup_on_finish_trigger(); Type: ACL; Schema: jobcenter; Owner: $JCSYSTEM
---
-
-REVOKE ALL ON FUNCTION do_cleanup_on_finish_trigger() FROM PUBLIC;
-REVOKE ALL ON FUNCTION do_cleanup_on_finish_trigger() FROM $JCSYSTEM;
-GRANT ALL ON FUNCTION do_cleanup_on_finish_trigger() TO $JCSYSTEM;
 
 
 --
@@ -1725,7 +1719,7 @@ GRANT ALL ON FUNCTION do_is_workflow(integer) TO $JCSYSTEM;
 REVOKE ALL ON FUNCTION do_jobtask(a_jobtask jobtask) FROM PUBLIC;
 REVOKE ALL ON FUNCTION do_jobtask(a_jobtask jobtask) FROM $JCSYSTEM;
 GRANT ALL ON FUNCTION do_jobtask(a_jobtask jobtask) TO $JCSYSTEM;
-GRANT ALL ON FUNCTION do_jobtask(a_jobtask jobtask) TO jc_maestro;
+GRANT ALL ON FUNCTION do_jobtask(a_jobtask jobtask) TO $JCMAESTRO;
 
 
 --
@@ -1737,7 +1731,7 @@ GRANT ALL ON FUNCTION do_jobtask(a_jobtask jobtask) TO jc_maestro;
 REVOKE ALL ON FUNCTION do_jobtaskdone(a_jobtask jobtask) FROM PUBLIC;
 REVOKE ALL ON FUNCTION do_jobtaskdone(a_jobtask jobtask) FROM $JCSYSTEM;
 GRANT ALL ON FUNCTION do_jobtaskdone(a_jobtask jobtask) TO $JCSYSTEM;
-GRANT ALL ON FUNCTION do_jobtaskdone(a_jobtask jobtask) TO jc_maestro;
+GRANT ALL ON FUNCTION do_jobtaskdone(a_jobtask jobtask) TO $JCMAESTRO;
 
 
 --
@@ -1749,7 +1743,7 @@ GRANT ALL ON FUNCTION do_jobtaskdone(a_jobtask jobtask) TO jc_maestro;
 REVOKE ALL ON FUNCTION do_jobtaskerror(a_jobtask jobtask) FROM PUBLIC;
 REVOKE ALL ON FUNCTION do_jobtaskerror(a_jobtask jobtask) FROM $JCSYSTEM;
 GRANT ALL ON FUNCTION do_jobtaskerror(a_jobtask jobtask) TO $JCSYSTEM;
-GRANT ALL ON FUNCTION do_jobtaskerror(a_jobtask jobtask) TO jc_maestro;
+GRANT ALL ON FUNCTION do_jobtaskerror(a_jobtask jobtask) TO $JCMAESTRO;
 
 
 --
@@ -1816,7 +1810,7 @@ GRANT ALL ON FUNCTION do_outargsmap(a_jobtask jobtask, a_outargs jsonb) TO $JCSY
 REVOKE ALL ON FUNCTION do_ping(a_worker_id bigint) FROM PUBLIC;
 REVOKE ALL ON FUNCTION do_ping(a_worker_id bigint) FROM $JCSYSTEM;
 GRANT ALL ON FUNCTION do_ping(a_worker_id bigint) TO $JCSYSTEM;
-GRANT ALL ON FUNCTION do_ping(a_worker_id bigint) TO jc_maestro;
+GRANT ALL ON FUNCTION do_ping(a_worker_id bigint) TO $JCMAESTRO;
 
 
 --
@@ -1960,7 +1954,7 @@ GRANT ALL ON FUNCTION do_task_error(a_jobtask jobtask, a_errargs jsonb) TO $JCSY
 REVOKE ALL ON FUNCTION do_timeout() FROM PUBLIC;
 REVOKE ALL ON FUNCTION do_timeout() FROM $JCSYSTEM;
 GRANT ALL ON FUNCTION do_timeout() TO $JCSYSTEM;
-GRANT ALL ON FUNCTION do_timeout() TO jc_maestro;
+GRANT ALL ON FUNCTION do_timeout() TO $JCMAESTRO;
 
 
 --
