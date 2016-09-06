@@ -81,6 +81,9 @@ Stored procedure management commands:
 	load <proc>:     load <proc> from repo into db
 	save <proc>:     save <proc> from db to repo
 	update:          update procs in db from repo
+Security commands:
+	seccheck:        check security of stored procedures
+	secfix:          fix security of stored procedures
 
 EOF
 }
@@ -339,6 +342,9 @@ sub procs {
 		my $func .= slurp $p;
 		my ($funcname) = $func  =~ /FUNCTION\s+(.*)\s+RETURNS/ms;
 		die "cannot find funcname in $p" unless $funcname;
+		# ugh.. we need to filter out default arguments here
+		# let's try a quick hack:
+		$funcname =~ s/ DEFAULT .*?(,|\))/$1/g;
 		
 		#$func .= ';'
 		$func .= <<EOF;
@@ -721,7 +727,7 @@ sub secfix {
 
 	unless ($$sql) {
 		say "nothing to fix!";
-		return;
+		return 0;
 	}
 
 	my $res = execsql( [ $sql ], 0 );
