@@ -1,0 +1,13 @@
+#
+# include all modules that our plperl function may use here
+#
+
+use Safe;
+use JSON::MaybeXS;
+
+use lib "<jobcenter>/lib";
+
+use JobCenter::Safe;
+
+1;
+
