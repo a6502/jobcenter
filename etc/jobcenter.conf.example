@@ -29,4 +29,11 @@ role=jc_perl
 user=api
 pass=password
 listenport=6522
+tls_cert=/some/path/jobcenter/etc/api.crt
+tls_key=/some/path/jobcenter/etc/api.pem
 
+[api|auth]
+password=JobCenter::Api::Auth::Passwd
+
+[api|auth|password]
+pwfile=/some/path/jobcenter/etc/api.passwd

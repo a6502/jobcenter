@@ -35,6 +35,7 @@ use JSON::MaybeXS;
 use JSON::RPC2::TwoWay;
 
 # JobCenter
+use JobCenter::Api::Auth;
 use JobCenter::Api::Client;
 use JobCenter::Api::Job;
 use JobCenter::Api::Task;
@@ -43,6 +44,7 @@ use JobCenter::Util;
 has [qw(
 	actionnames
 	apiname
+	auth
 	cfg
 	clients
 	daemon
@@ -57,7 +59,6 @@ has [qw(
 	tasks
 	timeout
 	tmr
-	users
 )];
 
 sub new {
@@ -98,22 +99,33 @@ sub new {
 	$rpc->register('create_job', sub { $self->rpc_create_job(@_) }, non_blocking => 0, state => 'auth');
 	$rpc->register('get_job_status', sub { $self->rpc_get_job_status(@_) }, state => 'auth');
 	$rpc->register('get_task', sub { $self->rpc_get_task(@_) }, state => 'auth');
-	$rpc->register('hello', sub { $self->rpc_hello(@_) });
+	$rpc->register('hello', sub { $self->rpc_hello(@_) }, non_blocking => 1);
 	$rpc->register('task_done', sub { $self->rpc_task_done(@_) }, notification => 1, state => 'auth');
 	$rpc->register('withdraw', sub { $self->rpc_withdraw(@_) }, state => 'auth');
 
+	my $serveropts = { port => $cfg->{api}->{listenport} };
+	if ($cfg->{api}->{tls_key}) {
+		$serveropts->{tls} = 1;
+		$serveropts->{tls_key} = $cfg->{api}->{tls_key};
+		$serveropts->{tls_cert} = $cfg->{api}->{tls_cert};
+	}
+
 	my $server = Mojo::IOLoop->server(
-		{port => ($cfg->{api}->{listenport})}
-		=> sub {
+		$serveropts => sub {
 			my ($loop, $stream, $id) = @_;
 			my $client = JobCenter::Api::Client->new($rpc, $stream, $id);
 			$client->on(close => sub { $self->_disconnect($client) });
 		}
 	) or die 'no server?';
 
+	my $auth = JobCenter::Api::Auth->new(
+		$cfg, 'api|auth',
+	) or die 'no auth?';
+
 	# keep sorted
 	#$self->cfg($cfg);
 	$self->{actionnames} = {};
+	$self->{auth} = $auth;
 	$self->{cfg} = $cfg;
 	$self->{apiname} = $apiname;
 	$self->{daemon} = $daemon;
@@ -125,14 +137,6 @@ sub new {
 	$self->{ping} = $args{ping} || 60;
 	$self->{server} = $server;
 	$self->{rpc} = $rpc;
-	$self->{users} = {
-		'deKlant' => 'wilDingen',
-		'derKunde' => 'willDinge',
-		'theCustomer' => 'wantsThings',
-		'deWerknemer' => 'doetDingen',
-		'derArbeitnehmer' => 'machtDinge',
-		'theEmployee' => 'doesThings',
-	};
 	$self->{tasks} = {};
 	$self->{timeout} = $args{timeout} // 60; # 0 is a valid timeout?
 
@@ -183,26 +187,29 @@ sub _disconnect {
 }
 
 sub rpc_hello {
-	my ($self, $con, $args) = @_;
+	my ($self, $con, $args, $rpccb) = @_;
 	my $client = $con->owner;
 	my $who = $args->{who} or die "no who?";
 	my $method = $args->{method} or die "no method?";
-	die "unknown authentication method $method" unless $method eq 'password';
 	my $token = $args->{token} or die "no token?";
-	if ($self->users->{$who} and $self->users->{$who} eq $token) {	
-		$self->log->debug("got hello from $who token $token");
-		$client->who($who);
-		$con->state('auth');
-		return JSON->true, "welcome to the clientapi $who!";
-	} else {
-		$self->log->debug("hello failed for $who");
-		$con->state(undef);
-		# close the connecion after sending the response
-		Mojo::IOLoop->next_tick(sub {
-			$client->close;
-		});
-		return JSON->false, 'you\'re not welcome!';
-	}
+
+	$self->auth->authenticate($who, $method, $token, sub {
+		my ($res, $msg) = @_;
+		if ($res) {
+			$self->log->debug("hello from $who succeeded: method $method msg $msg");
+			$client->who($who);
+			$con->state('auth');
+			$rpccb->(JSON->true, "welcome to the clientapi $who!");
+		} else {
+			$self->log->debug("hello failed for $who: method $method msg $msg");
+			$con->state(undef);
+			# close the connecion after sending the response
+			Mojo::IOLoop->next_tick(sub {
+				$client->close;
+			});
+			$rpccb->(JSON->false, 'you\'re not welcome!');
+		}
+	});
 }
 
 sub rpc_create_job {
