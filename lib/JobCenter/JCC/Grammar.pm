@@ -306,7 +306,7 @@ double_quoted_string:
 
 escape: / [0nt] /
 
-perl-block: / _ LSQUARE ( ANY *? ) LSQUARE ( (?: (?! RSQUARE RSQUARE ) ALL )*? ) RSQUARE \1 RSQUARE /
+perl-block: / _ LSQUARE ( ANY *? ) LSQUARE ( (?: (?! RSQUARE RSQUARE ) ALL )*? ) RSQUARE \1 RSQUARE EOL? /
 
 integer: / ( DASH? DIGIT+ ) /
 
