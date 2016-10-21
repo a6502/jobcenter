@@ -264,7 +264,9 @@ variable: / ( ALPHA ) DOT / varpart ( / DOT / varpart )*
 
 varpart: identifier ( / LSQUARE <integer> LSQUARE / )?
 
-literal: +number | +boolean | +single-quoted-string | +double-quoted-string
+literal: +number | +boolean | +single-quoted-string | +double-quoted-string | +null
+
+null: / ('NULL'|'null') /
 
 number: / ( (:'0'[xX] HEX+) | (:'-'? DIGIT* DOT DIGIT+) | (:'-'? DIGIT+) ) /
 

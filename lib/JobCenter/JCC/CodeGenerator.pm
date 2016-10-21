@@ -647,7 +647,10 @@ sub make_literal {
 	say "literal: ", Dumper(\$ast);
 	die 'expected a hashref with 1 key' unless ref $ast eq 'HASH' and keys %$ast == 1;
 	my ($key, $val) = each(%$ast);
-	if ($key eq 'number'  or $key eq 'single_quoted_string' or $key eq 'double_quoted_string'){
+	if ($key eq 'number'
+	    or $key eq 'single_quoted_string'
+	    or $key eq 'double_quoted_string'
+	    or $key eq 'null'){
 		return $val;
 	} else {
 		die "dunno how to make a literal from $key";
