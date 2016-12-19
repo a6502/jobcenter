@@ -73,7 +73,7 @@ dbdings usage: dbdings <command>
 Schema management commands:
 	check:           check schema version in db and repo
 	create:          create schema in db
-	downgrade <ver>: try to downgrade db schame version to <ver>
+	downgrade <ver>: try to downgrade db schema version to <ver>
 	upgrade:         try to upgrade db schema version to repo version
 	verify:          verify latest schema upgrade
 Stored procedure management commands:
