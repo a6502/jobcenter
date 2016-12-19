@@ -42,7 +42,7 @@ BEGIN
 		RAISE EXCEPTION 'do_lock_task called for non-lock-task %', a_jobtask.task_id;
 	END IF;
 
-	IF v_lockvalue IS NULL THEN
+	IF v_lockvalue IS NULL AND v_stringcode IS NOT NULL THEN
 		BEGIN
 			v_lockvalue := do_stringcode(v_stringcode, v_args, v_env, v_vars);
 		EXCEPTION WHEN OTHERS THEN
@@ -51,6 +51,11 @@ BEGIN
 		END;
 	END IF;
 		
+	IF v_lockvalue IS NULL THEN
+		RETURN do_raise_error(a_jobtask,
+			format('no lockvalue for locktype %s', v_locktype));
+	END IF;
+
 	RAISE NOTICE 'do_lock_task locktype "%" lockvalue "%"', v_locktype, v_lockvalue;
 
 	INSERT INTO 
