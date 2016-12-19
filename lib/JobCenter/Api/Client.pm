@@ -29,9 +29,9 @@ sub new {
 	});
 	$ns->on(close => sub { $self->_on_close(@_) });
 
-	$con->notify('greetings', {who =>'jcapi', version => '1.0'});
+	$con->notify('greetings', {who =>'jcapi', version => '1.1'});
 	
-	$self->{actions} = [];
+	$self->{actions} = {};
 	$self->{con} = $con;
 	$self->{id} = $id;
 	$self->{ns} = $ns;

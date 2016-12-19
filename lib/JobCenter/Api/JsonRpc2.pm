@@ -39,6 +39,7 @@ use JobCenter::Api::Auth;
 use JobCenter::Api::Client;
 use JobCenter::Api::Job;
 use JobCenter::Api::Task;
+use JobCenter::Api::WorkerAction;
 use JobCenter::Util;
 
 has [qw(
@@ -93,12 +94,14 @@ sub new {
 		. '/' . $cfg->{pg}->{db}
 	) or die 'no pg?';
 
+	$pg->on(connection => sub { my ($e, $dbh) = @_; $log->debug("pg: new connection: $dbh"); });
+
 	my $rpc = JSON::RPC2::TwoWay->new(debug => $debug) or die 'no rpc?';
 
 	$rpc->register('announce', sub { $self->rpc_announce(@_) }, non_blocking => 0, state => 'auth');
-	$rpc->register('create_job', sub { $self->rpc_create_job(@_) }, non_blocking => 0, state => 'auth');
-	$rpc->register('get_job_status', sub { $self->rpc_get_job_status(@_) }, state => 'auth');
-	$rpc->register('get_task', sub { $self->rpc_get_task(@_) }, state => 'auth');
+	$rpc->register('create_job', sub { $self->rpc_create_job(@_) }, non_blocking => 1, state => 'auth');
+	$rpc->register('get_job_status', sub { $self->rpc_get_job_status(@_) }, non_blocking => 1, state => 'auth');
+	$rpc->register('get_task', sub { $self->rpc_get_task(@_) }, non_blocking => 1, state => 'auth');
 	$rpc->register('hello', sub { $self->rpc_hello(@_) }, non_blocking => 1);
 	$rpc->register('task_done', sub { $self->rpc_task_done(@_) }, notification => 1, state => 'auth');
 	$rpc->register('withdraw', sub { $self->rpc_withdraw(@_) }, state => 'auth');
@@ -177,7 +180,7 @@ sub _disconnect {
 	$self->log->info('oh my.... ' . ($client->who // 'somebody') . ' disonnected..');
 	return unless $client->who;
 
-	my @actions = (@{$client->actions}); # make a copy to loop over
+	my @actions = keys %{$client->actions};
 	
 	for my $a (@actions) {
 		$self->log->debug("withdrawing $a");
@@ -216,125 +219,148 @@ sub rpc_create_job {
 	my ($self, $con, $i, $rpccb) = @_;
 	my $client = $con->owner;
 	#$self->log->debug('create_job: ' . Dumper(\@_));
-	my %a;
-	$a{$_} = $i->{$_} for (qw(wfname inargs vtag));
-	$a{impersonate} = $client->who;
-	$a{cb} = sub {
+	my $wfname = $i->{wfname} or die 'no workflowname?';
+	my $inargs = $i->{inargs} // '{}';
+	my $vtag = $i->{vtag};
+	my $timeout = $i->{timeout} // 60;
+	my $impersonate = $client->who;
+	my $cb = sub {
 		my ($job_id, $outargs) = @_;
 		$con->notify('job_done', {job_id => $job_id, outargs => $outargs});
 	};
-	my $job_id;
-	$job_id = $self->_call_nb(%a);
-	return $job_id;
-}
 
-sub rpc_get_job_status {
-	die 'aaargh, implement me!';
+	die  'inargs should be a hashref' unless ref $inargs eq 'HASH';
+	$inargs = encode_json($inargs);
+
+	$self->log->debug("calling $wfname with '$inargs'" . (($vtag) ? " (vtag $vtag)" : ''));
+
+	# create_job throws an error when:
+	# - wfname does not exist
+	# - inargs not valid
+	Mojo::IOLoop->delay->steps(
+		sub {
+			my $d = shift;
+			#($job_id, $listenstring) = @{
+			$self->pg->db->dollar_only->query(
+				q[select * from create_job(wfname := $1, args := $2, tag := $3, impersonate := $4)],
+				$wfname,
+				$inargs,
+				$vtag,
+				$impersonate,
+				$d->begin
+			);
+		},
+		sub {
+			my ($d, $err, $res) = @_;
+
+			if ($err) {
+				$rpccb->(undef, $err);
+				return;
+			}
+			my ($job_id, $listenstring) = @{$res->array};
+			unless ($job_id) {
+				$rpccb->(undef, "no result from call to create_job");
+				return;
+			}
+
+			# report back to our caller immediately
+			# this prevents the job_done notification overtaking the 
+			# 'job created' result...
+			$self->log->debug("created job_id $job_id listenstring $listenstring");
+			$rpccb->($job_id, undef);
+
+			my $job = JobCenter::Api::Job->new(
+				cb => $cb,
+				job_id => $job_id,
+				inargs => $inargs,
+				listenstring => $listenstring,
+				tmr => Mojo::IOLoop->timer($timeout => sub {
+						# request failed, cleanup
+						#$self->pg->pubsub->unlisten($listenstring);
+						$self->pg->pubsub->unlisten('job:finished');
+						&$cb($job_id, {'error' => 'timeout'});
+					}),
+				vtag => $vtag,
+				wfname => $wfname,
+			);
+
+			#$self->pg->pubsub->listen($listenstring, sub {
+			# fixme: 1 central listen?
+			$self->pg->pubsub->listen('job:finished', sub {
+				my ($pubsub, $payload) = @_;
+				return unless $job_id == $payload;
+				local $@;
+				eval { $self->_poll_done($job); };
+				$self->log->debug("pubsub cb $@") if $@;
+			});
+
+			# do one poll first..
+			$self->_poll_done($job);
+		}
+	)->catch(sub {
+		my ($delay, $err) = @_;
+		$rpccb->(undef, $err);
+	});
 }
 
 sub _poll_done {
 	my ($self, $job) = @_;
-	my $res = $self->pg->db->dollar_only->query(q[select * from get_job_status($1)], $job->job_id)->array;
-	return unless $res and @$res and @$res[0];
-	my $outargs = @$res[0];
-	$self->pg->pubsub->unlisten($job->listenstring);
-	Mojo::IOLoop->remove($job->tmr) if $job->tmr;
-	unless ($self->{json}) {
-		$outargs = decode_json($outargs);
-	}
-	if ($job->cb) {
-		$self->log->debug("calling cb $job->{cb} for job_id $job->{job_id} outargs $outargs");
-		local $@;
-		eval { $job->cb->($job->{job_id}, $outargs); };
-		$self->log->debug("got $@ calling callback") if $@;
-	}
-	return $outargs; # at least true
+	Mojo::IOLoop->delay->steps(
+		sub {
+			my $d = shift;
+			$self->pg->db->dollar_only->query(
+				q[select * from get_job_status($1)],
+				$job->job_id,
+				$d->begin
+			);
+		},
+		sub {
+			my ($d, $err, $res) = @_;
+			die $err if $err;
+			my ($outargs) = @{$res->array};
+			return unless $outargs;
+			#$self->pg->pubsub->unlisten($job->listenstring);
+			$self->pg->pubsub->unlisten('job:finished');
+			Mojo::IOLoop->remove($job->tmr) if $job->tmr;
+			$outargs = decode_json($outargs);
+			$self->log->debug("calling cb $job->{cb} for job_id $job->{job_id} outargs $outargs");
+			local $@;
+			eval { $job->cb->($job->{job_id}, $outargs); };
+			$self->log->debug("got $@ calling callback") if $@;
+		}
+	);
 }
 
-#sub call {
-#	my ($self, %args) = @_;
-#	my ($done, $job_id, $outargs);
-#	$args{cb} = sub {
-#		($job_id, $outargs) = @_;
-#		$done++;
-#	};
-#	$self->call_nb(%args);
-#
-#	Mojo::IOLoop->one_tick while !$done;
-#	
-#	return $job_id, $outargs;
-#}
 
-sub _call_nb {
-	my ($self, %args) = @_;
-	my $wfname = $args{wfname} or die 'no workflowname?';
-	my $inargs = $args{inargs} // '{}';
-	my $vtag = $args{vtag};
-	my $impersonate = $args{impersonate};
-	my $cb = $args{cb} or die 'no callback?';
-	my $timeout = $args{timeout} // 60;
-
-	#if ($self->{json}) {
-	#	# sanity check json string
-	#	my $inargsp = decode_json($inargs);
-	#	die 'inargs is not a json object' unless ref $inargsp eq 'HASH';
-	#} else {
-		die  'inargs should be a hashref' unless ref $inargs eq 'HASH';
-		$inargs = encode_json($inargs);
-		#$self->log->debug("inargs as json: $inargs");
-	#}
-
-	$self->log->debug("calling $wfname with '$inargs'" . (($vtag) ? " (vtag $vtag)" : ''));
-	#say "inargs: $inargs";
-	my ($job_id, $listenstring);
-	# create_job throws an error when:
-	# - wfname does not exist
-	# - inargs not valid
-	($job_id, $listenstring) = @{$self->pg->db->dollar_only->query(
-		q[select * from create_job(wfname := $1, args := $2, tag := $3, impersonate := $4)],
-		$wfname,
-		$inargs,
-		$vtag,
-		$impersonate
-	)->array};
-	die "no result from call to create_job" unless $job_id;
-	$self->log->debug("created job_id $job_id listenstring $listenstring");
-
-	my $job = JobCenter::Api::Job->new(
-		#cb => $cb,
-		job_id => $job_id,
-		inargs => $inargs,
-		listenstring => $listenstring,
-		vtag => $vtag,
-		wfname => $wfname,
-	);
-
-	$self->pg->pubsub->listen($listenstring, sub {
-		#my ($pubsub, $payload) = @_;
-		local $@;
-		eval { $self->_poll_done($job); };
-		$self->log->debug("pubsub cb $@") if $@;
-	});
-
-	# do one poll first..
-	my $out = $self->_poll_done($job);
-
-	if ($out) {
-		# schedule the callback to run soonish
-		Mojo::IOLoop->next_tick(sub {
-			&$cb($job_id, $out);
-		})
-	} else {
-		# set up timeout
-		my $tmr = Mojo::IOLoop->timer($timeout => sub {
-			# request failed, cleanup
-			$self->pg->pubsub->unlisten($listenstring);
-			&$cb($job_id, {'error' => 'timeout'});
-		});
-		$job->update(cb => $cb, tmr => $tmr);
-	}
-
-	return $job_id;
+# fixme: reuse _poll_done?
+sub rpc_get_job_status {
+	my ($self, $con, $i, $rpccb) = @_;
+	my $job_id = $i->{job_id} or die 'no job_id?';
+	Mojo::IOLoop->delay->steps(
+		sub {
+			my $d = shift;
+			$self->pg->db->dollar_only->query(
+				q[select * from get_job_status($1)],
+				$job_id,
+				$d->begin
+			);
+		},
+		sub {
+			my ($d, $err, $res) = @_;
+			if ($err) {
+				$rpccb->(undef, $err);
+				return;
+			}
+			my ($outargs) = @{$res->array};
+			unless ($outargs) {
+				$rpccb->(undef, undef);
+				return;
+			}
+			$outargs = decode_json($outargs);
+			$self->log->debug("got status for job_id $job_id outargs $outargs");
+			$rpccb->($job_id, $outargs);
+		}
+	); # fixme: catch?
 }
 
 sub rpc_announce {
@@ -342,7 +368,6 @@ sub rpc_announce {
 	my $client = $con->owner;
 	my $actionname = $i->{actionname} or die 'actionname required';
 	my $slots      = $i->{slots} // 1;
-
 
 	my ($worker_id, $listenstring);
 	local $@;
@@ -379,10 +404,18 @@ sub rpc_announce {
 		$self->listenstrings->{$listenstring} = [];
 	}		
 
+	my $wa = JobCenter::Api::WorkerAction->new(
+		actionname => $actionname,
+		client => $client,
+		listenstring => $listenstring,
+		slots => $slots,
+		used => 0,
+	);
+
 	$client->worker_id($worker_id);
-	push @{$client->actions}, $actionname;
+	$client->actions->{$actionname} = $wa;
 	# note that this client is interested in this listenstring
-	push @{$self->listenstrings->{$listenstring}}, [$client, $actionname, $slots];
+	push @{$self->listenstrings->{$listenstring}}, $wa;
 
 	# set up a ping timer to the client after the first succesfull announce
 	unless ($client->tmr) {
@@ -396,7 +429,12 @@ sub rpc_withdraw {
 	my $client = $con->owner;
 	my $actionname = $i->{actionname} or die 'actionname required';
 	# find listenstring by actionname
-	my $listenstring = $self->actionnames->{$actionname} or die "unknown actionname";
+
+	my $wa = $client->actions->{$actionname} or die "unknown actionname";
+	# remove this action from the clients action list
+	delete $client->actions->{$actionname};
+
+	my $listenstring = $wa->listenstring or die "unknown listenstring";
 
 	my ($res) = $self->pg->db->query(
 			q[select withdraw($1, $2)],
@@ -405,11 +443,11 @@ sub rpc_withdraw {
 		)->array;
 	die "no result" unless $res and @$res;
 	
-	# now remove this client from the listenstring client list
+	# now remove this workeraction from the listenstring workeraction list
 	my $l = $self->listenstrings->{$listenstring};
-	my @idx = grep { refaddr $$l[$_][0] == refaddr $client } 0..$#$l;
+	my @idx = grep { refaddr $$l[$_] == refaddr $wa } 0..$#$l;
 	splice @$l, $_, 1 for @idx;
-	
+
 	# delete if the listenstring client list is now empty
 	unless (@$l) {
 		delete $self->listenstrings->{$listenstring};
@@ -418,17 +456,10 @@ sub rpc_withdraw {
 		$self->log->debug("unlisten $listenstring");
 	}		
 
-	# remove this action from the cliens action list
-	my $a = $client->actions;
-	#@idx = grep { $$a[$_] eq $actionname } 0..$#$a;	
-	#splice @$a, $_, 1 for @idx;
-	my @a = grep { $_ ne $actionname } @$a;
-	$client->{actions} = \@a;
-
-	if (not @a and $client->{tmr}) {
+	if (not $client->actions and $client->tmr) {
 		# cleanup ping timer if client has no more actions
 		$self->log->debug("remove tmr $client->{tmr}");
-		Mojo::IOLoop->remove($client->{tmr});
+		Mojo::IOLoop->remove($client->tmr);
 		delete $client->{tmr};
 	}
 
@@ -462,27 +493,52 @@ sub _ping {
 	});
 }
 
+
+# not a method!
+sub _rot {
+	my ($l) = @_;
+	my $e = shift @$l;
+        push @$l, $e;
+        return $e;
+}
+
 sub _task_ready {
 	my ($self, $listenstring, $job_id) = @_;
 	
 	$self->log->debug("got notify $listenstring for $job_id");
 	my $l = $self->listenstrings->{$listenstring};
-	# rotate listenstrings list
-	my $c = shift @$l;
-	push @$l, $c;
+	return unless $l; # should not happen?
 
-	my ($client, $actionname, $slots) = @$c;
+	_rot($l); # rotate listenstrings list (list of workeractions)
+	my $wa;
+	for (@$l) { # now find a worker with a free slot
+		die "no wa?" unless $_;
+		$self->log->debug('worker ' . $_->client->worker_id . ' has ' . $_->used . ' of ' . $_->slots . ' used');
+		if ($_->used < $_->slots) {
+			$wa = $_;
+			last;
+		}
+	}
 
-	$client->con->notify('task_ready', {actionname => $actionname, job_id => $job_id});
+	unless ($wa) {
+		$self->log->debug("no free slots for $listenstring!?");
+		# the maestro will bother us again later
+		return;
+	}
+
+	$self->log->debug('sending task ready to worker ' . $wa->client->worker_id . ' for ' . $wa->actionname);
+
+	$wa->client->con->notify('task_ready', {actionname => $wa->actionname, job_id => $job_id});
 
 	my $tmr =  Mojo::IOLoop->timer(3 => sub { $self->_task_ready_next($job_id) } );
 
 	my $task = JobCenter::Api::Task->new(
-		actionname => $actionname,
-		client => $client,
+		actionname => $wa->actionname,
+		#client => $client,
 		job_id => $job_id,
 		listenstring => $listenstring,
 		tmr => $tmr,
+		workeraction => $wa,
 	);
 	$self->{tasks}->{$job_id} = $task;
 }
@@ -490,29 +546,43 @@ sub _task_ready {
 sub _task_ready_next {
 	my ($self, $job_id) = @_;
 	
-	my $task = $self->{tasks}->{$job_id} or die 'no task in _task_ready_next?';
+	my $task = $self->{tasks}->{$job_id} or return; # die 'no task in _task_ready_next?';
 	
 	$self->log->debug("try next client for $task->{listenstring} for $task->{job_id}");
 	my $l = $self->listenstrings->{$task->listenstring};
-	# rotate listenstrings list
-	my $c = shift @$l;
-	push @$l, $c;
 
-	my ($client, $actionname, $slots) = @$c;
+	return unless $l; # should not happen?
 
-	if (refaddr $client == refaddr $task->client) {
+	_rot($l); # rotate listenstrings list (list of workeractions)
+	my $wa;
+	for (@$l) { # now find a worker with a free slot
+		$self->log->debug('worker ' . $_->client->worker_id . ' has ' . $_->used . ' of ' . $_->slots . ' used');
+		if ($_->used < $_->slots) {
+			$wa = $_;
+			last;
+		}
+	}
+
+	unless ($wa) {
+		$self->log->debug("no free slots for $task->{listenstring}!?");
+		# the maestro will bother us again later
+		return;
+	}
+
+	if (refaddr $wa == refaddr $task->workeraction) {
 		# hmmm...
 		return;
 	}
 
-	$client->con->notify('task_ready', {actionname => $actionname, job_id => $job_id});
+	$wa->client->con->notify('task_ready', {actionname => $wa->actionname, job_id => $job_id});
 
 	my $tmr =  Mojo::IOLoop->timer(3 => sub { $self->_task_ready_next($job_id) } );
 
 	$task->update(
-		client => $client,
+		#client => $client,
 		tmr => $tmr,
-		job_id => $job_id,
+		workeraction => $wa,
+		#job_id => $job_id,
 	);
 }
 
@@ -525,30 +595,55 @@ sub rpc_get_task {
 	$self->log->debug("get_task: workername $workername, actioname $actionname, job_id $job_id");
 
 	my $task = delete $self->{tasks}->{$job_id};
-	return unless $task;
+	unless ($task) {
+		$rpccb->();
+		return;
+	}
 
 	Mojo::IOLoop->remove($task->tmr) if $task->tmr;
 	
-	local $SIG{__WARN__} = sub {
-		$self->log->debug($_[0]);
-	};
-	my $res = $self->pg->db->dollar_only->query(q[select * from get_task($1, $2, $3)], $workername, $actionname, $job_id)->array;
-	return unless $res and @$res;
-	my ($cookie, $inargs) = @$res;
-	undef $res; # clear statement handle
-	$self->log->debug("cookie $cookie inargs $inargs");
-	$inargs = decode_json( $inargs ); # unless $self->json;
+	#local $SIG{__WARN__} = sub {
+	#	$self->log->debug($_[0]);
+	#};
 
-	my $tmr =  Mojo::IOLoop->timer($self->timeout => sub { $self->_task_timeout($cookie) } );
+	Mojo::IOLoop->delay->steps(
+		sub {
+			my $d = shift;
+			$self->pg->db->dollar_only->query(
+				q[select * from get_task($1, $2, $3)],
+				$workername, $actionname, $job_id,
+				$d->begin
+			);
+		},
+		sub {
+			my ($d, $err, $res) = @_;
+			if ($err) {
+				$self->log->error("get_task threw $err");
+				$rpccb->();
+				return;
+			}
+			my ($cookie, $inargs) = @{$res->array};
+			unless ($cookie) {
+				$rpccb->();
+			}
 
-	$task->update(
-		cookie => $cookie,
-		inargs => $inargs,
-		tmr => $tmr,
-	);
-	$self->{tasks}->{$cookie} = $task;
+			$self->log->debug("cookie $cookie inargs $inargs");
+			$inargs = decode_json( $inargs ); # unless $self->json;
 
-	return ($cookie, $inargs);
+			my $tmr =  Mojo::IOLoop->timer($self->timeout => sub { $self->_task_timeout($cookie) } );
+
+			$task->update(
+				cookie => $cookie,
+				inargs => $inargs,
+				tmr => $tmr,
+			);
+			$task->workeraction->{used}++;
+			# ugh.. what a hack
+			$self->{tasks}->{$cookie} = $task;
+
+			$rpccb->($cookie, $inargs);
+		}
+	); # catch?
 }
 
 sub rpc_task_done {
@@ -561,6 +656,7 @@ sub rpc_task_done {
 	my $task = delete $self->{tasks}->{$cookie};
 	return unless $task; # really?	
 	Mojo::IOLoop->remove($task->tmr) if $task->tmr;
+	$task->workeraction->{used}--; # done..
 
 	local $@;
 	eval {
@@ -574,6 +670,20 @@ sub rpc_task_done {
 	$self->log->debug("task_done got $@") if $@;
 	$self->log->debug("worker $client->{who} done with action $task->{actionname} for job $task->{job_id} outargs $outargs\n");
 	return;
+}
+
+sub _task_timeout {
+	my ($self, $cookie) = @_;
+	my $task = delete $self->{tasks}->{$cookie};
+	return unless $task; # really?
+	$task->workeraction->{used}++; # done..
+
+	my $outargs = encode_json({'error' => 'timeout after ' . $self->timeout . ' seconds'});
+	eval {
+		$self->pg->db->dollar_only->query(q[select task_done($1, $2)], $cookie, $outargs, sub { 1; } );
+	};
+	$self->log->debug("task_done got $@") if $@;
+	$self->log->debug("timeout for action $task->{actionname} for job $task->{job_id}");
 }
 
 1;
