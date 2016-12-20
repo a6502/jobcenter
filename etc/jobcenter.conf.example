@@ -3,8 +3,9 @@ name=jobcenter
 
 [pg]
 db=jobcenter
-host=localhost
-port=5432
+; keep empty to use unix domain sockets
+;host=localhost
+;port=5432
 
 [admin]
 user=jc_admin
@@ -17,7 +18,8 @@ pass=password
 [maestro]
 user=jc_maestro
 pass=password
-listenport=6502
+; default:
+;listenport=6502
 
 [system]
 role=jc_system
