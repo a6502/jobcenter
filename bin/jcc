@@ -86,8 +86,8 @@ sub main {
 		'postgresql://'
 		. $cfg->{admin}->{user}
 		. ':' . $cfg->{admin}->{pass}
-		. '@' . $cfg->{pg}->{host}
-		. ':' . $cfg->{pg}->{port}
+		. '@' . ( $cfg->{pg}->{host} // '' )
+		. ( ($cfg->{pg}->{port}) ? ':' . $cfg->{pg}->{port} : '' )
 		. '/' . $cfg->{pg}->{db}
 	);
 

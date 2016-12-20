@@ -58,8 +58,8 @@ sub new {
 		'postgresql://'
 		. $cfg->{client}->{user}
 		. ':' . $cfg->{client}->{pass}
-		. '@' . $cfg->{pg}->{host}
-		. ':' . $cfg->{pg}->{port}
+		. '@' . ( $cfg->{pg}->{host} // '' )
+		. ( ($cfg->{pg}->{port}) ? ':' . $cfg->{pg}->{port} : '' )
 		. '/' . $cfg->{pg}->{db}
 	);
 

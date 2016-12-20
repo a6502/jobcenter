@@ -89,8 +89,8 @@ sub new {
 		'postgresql://'
 		. $cfg->{api}->{user}
 		. ':' . $cfg->{api}->{pass}
-		. '@' . $cfg->{pg}->{host}
-		. ':' . $cfg->{pg}->{port}
+		. '@' . ( $cfg->{pg}->{host} // '' )
+		. ( ($cfg->{pg}->{port}) ? ':' . $cfg->{pg}->{port} : '' )
 		. '/' . $cfg->{pg}->{db}
 	) or die 'no pg?';
 
@@ -106,7 +106,7 @@ sub new {
 	$rpc->register('task_done', sub { $self->rpc_task_done(@_) }, notification => 1, state => 'auth');
 	$rpc->register('withdraw', sub { $self->rpc_withdraw(@_) }, state => 'auth');
 
-	my $serveropts = { port => $cfg->{api}->{listenport} };
+	my $serveropts = { port => ( $cfg->{api}->{listenport} // 6522 ) };
 	if ($cfg->{api}->{tls_key}) {
 		$serveropts->{tls} = 1;
 		$serveropts->{tls_key} = $cfg->{api}->{tls_key};
