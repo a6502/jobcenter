@@ -1,8 +1,15 @@
 #!/usr/bin/perl -CSDAL
 
-use strict;
-use warnings;
-use 5.10.0;
+use Mojo::Base -base;
+
+#
+# Mojo's default reactor uses EV, and EV does not play nice with signals
+# without some handholding. We either can try to detect EV and do the
+# handholding, or try to prevent Mojo using EV.
+#
+BEGIN {
+	$ENV{'MOJO_REACTOR'} = 'Mojo::Reactor::Poll';
+}
 
 # standard perl
 use Data::Dumper;
@@ -13,7 +20,7 @@ use Time::HiRes qw( time );
 # from cpan
 use Config::Tiny;
 
-# mojo
+# more mojo
 use Mojolicious::Lite;
 use Mojo::IOLoop;
 use Mojo::Pg;
@@ -161,8 +168,8 @@ sub main {
 		'postgresql://'
 		. $cfg->{maestro}->{user}
 		. ':' . $cfg->{maestro}->{pass}
-		. '@' . $cfg->{pg}->{host}
-		. ':' . $cfg->{pg}->{port}
+		. '@' . ( $cfg->{pg}->{host} // '' )
+		. ( ($cfg->{pg}->{port}) ? ':' . $cfg->{pg}->{port} : '' )
 		. '/' . $cfg->{pg}->{db}
 	);
 
@@ -187,7 +194,7 @@ sub main {
 
 	get('/' => \&do_slash);
 
-	app->start('daemon');
+	app->start('daemon', '-l', 'http://*:' . ( $cfg->{maestro}->{listenport} // '6502' ) );
 
 	$log->info('the end is nigh!');
 	unlink $pid_file if -w $pid_file;
