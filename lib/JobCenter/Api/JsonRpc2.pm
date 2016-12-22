@@ -322,10 +322,12 @@ sub _poll_done {
 			#$self->pg->pubsub->unlisten($job->listenstring);
 			$self->pg->pubsub->unlisten('job:finished');
 			Mojo::IOLoop->remove($job->tmr) if $job->tmr;
-			$outargs = decode_json($outargs);
 			$self->log->debug("calling cb $job->{cb} for job_id $job->{job_id} outargs $outargs");
+			my $outargsp;
 			local $@;
-			eval { $job->cb->($job->{job_id}, $outargs); };
+			eval { $outargsp = decode_json($outargs); };
+			$outargsp = { error => 'error decoding json: ' . $outargs } if $@;
+			eval { $job->cb->($job->{job_id}, $outargsp); };
 			$self->log->debug("got $@ calling callback") if $@;
 		}
 	);
