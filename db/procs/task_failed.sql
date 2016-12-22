@@ -25,8 +25,10 @@ BEGIN
 	END IF;	
 
 	v_errargs = jsonb_build_object(
-		'class', 'trappable',
-		'msg', a_errmsg
+		'error', jsonb_build_object(
+			'class', 'trappable',
+			'msg', a_errmsg
+		)
 	);	
 	-- v_errargs = jsonb_build_object('error', v_errarrgs);
 

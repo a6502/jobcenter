@@ -33,8 +33,11 @@ BEGIN
 		WHEN 'working' THEN
 			RAISE NOTICE 'job % timed out in task %', v_job_id, v_task_id;
 			v_eventdata = jsonb_build_object(
-				'name', 'timeout',
-				'when', now()
+				'error', jsonb_build_object(
+					'msg', format('job %s timed out in task %s', v_job_id, v_task_id)
+					'class', 'timeout',
+					'when', now()
+				)
 			);			
 			PERFORM do_task_error(v_jobtask, v_eventdata);
 		END CASE;

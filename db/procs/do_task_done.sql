@@ -3,11 +3,12 @@ CREATE OR REPLACE FUNCTION jobcenter.do_task_done(a_jobtask jobtask, a_outargs j
  LANGUAGE plpgsql
  SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$DECLARE
+	v_error jsonb;
 	v_inargs jsonb;
 	v_changed boolean;
 	v_newvars jsonb;
 BEGIN
-	-- check error status
+	-- check for error status
 	IF a_outargs ? 'error' THEN
 		PERFORM do_task_error(a_jobtask, a_outargs);
 		RETURN;
@@ -16,11 +17,17 @@ BEGIN
 	BEGIN
 		SELECT vars_changed, newvars INTO v_changed, v_newvars FROM do_outargsmap(a_jobtask, a_outargs);
 	EXCEPTION WHEN OTHERS THEN
-		PERFORM do_task_error(a_jobtask, to_jsonb(format('caught exception in do_outargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM)));
+		v_error = jsonb_build_object(
+			'error', jsonb_build_object(
+				'msg',  format('caught exception in do_outargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM),
+				'class', 'normal'
+			)
+		);
+		PERFORM do_task_error(a_jobtask, v_error);
 		RETURN;
 	END;
 
-	-- bleh.. we want the 'old' value of out args..
+	-- bleh.. we want the 'old' value of outargs..
 	SELECT out_args INTO v_inargs FROM jobs WHERE job_id = a_jobtask.job_id; -- FOR UPDATE OF jobs;
 
 	UPDATE jobs SET
