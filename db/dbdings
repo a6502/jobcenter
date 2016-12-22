@@ -298,10 +298,12 @@ EOF
 	#say "sql now: ", $sql;
 	
 	$ENV{'PGPASSWORD'} = $cfg->{admin}->{pass};
+	my @hostport;
+	push @hostport, ('-h', $cfg->{pg}->{host}) if $cfg->{pg}->{host};
+	push @hostport, ('-p', $cfg->{pg}->{port}) if $cfg->{pg}->{port}; 
 	open my $fh, '|-', 'psql', '-w', '-e', '-1',
 			'-v', 'ON_ERROR_STOP=1',
-			'-h', ($cfg->{pg}->{host} or die 'foo'),
-			'-p', ($cfg->{pg}->{port} or die 'fooo'),
+			@hostport,
 			'-d', $cfg->{pg}->{db},
 			'-U', $cfg->{admin}->{user}
 		or die "cannot start psql: $!";
