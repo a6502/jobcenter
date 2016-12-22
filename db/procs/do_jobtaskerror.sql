@@ -122,7 +122,7 @@ BEGIN
 	--LOCK TABLE jobs IN SHARE ROW EXCLUSIVE MODE;
 	--LOCK TABLE jobs IN SHARE MODE;
 
-	-- and get parentworkflow_id for do_task_error
+	-- and get parentworkflow_id for do_wait_for_children_task
 	RAISE NOTICE 'look for parent job %', v_parentjob_id;
 	
 	SELECT
@@ -138,7 +138,6 @@ BEGIN
 		-- and call do_task error
 		-- FIXME: transform error object
 		RETURN do_wait_for_children_task((v_parentworkflow_id, v_parenttask_id, v_parentjob_id)::jobtask);
-		--PERFORM do_task_error(v_parentworkflow_id, v_parenttask_id, v_parentjob_id, v_outargs);
 	END IF;
 
 	RETURN null; -- no next task
