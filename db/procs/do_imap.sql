@@ -10,7 +10,7 @@ use warnings;
 
 #use plperl.on_init instead
 #use lib '/home/wieger/src/jobcenter/lib';
-use JSON::MaybeXS qw(from_json to_json);
+use JSON::MaybeXS qw(from_json to_json JSON);
 use JobCenter::Safe;
 
 my $safe = new JobCenter::Safe;
@@ -23,7 +23,11 @@ our %v = %{from_json($jvars // '{}')};
 our %i = ();
 our %t = ();
 
-$safe->share(qw(%a %e %v %i %t &from_json &to_json));
+our $TRUE = JSON->true;
+our $FALSE = JSON->false;
+our $JSON = JSON::MaybeXS->new(utf8 => 0);
+
+$safe->share(qw(%a %e %v %i %t $TRUE $FALSE $JSON));
 
 $safe->reval($code, 1);
 
