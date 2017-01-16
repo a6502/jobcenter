@@ -12,7 +12,7 @@ insert into json_schemas ("type", base) values ('object', true);
 
 insert into json_schemas ("type", schema) values ('integer', '{"type":"integer"}');
 
-update jsonb_object_fields set "type" = 'object' where "type" = 'json';
+update jsonb_object_fields set "typename" = 'object' where "typename" = 'json';
 
 insert into json_schemas ("type", schema) values ('foobar', '{"type":"object","required":["foo","bar"]}');
 insert into json_schemas ("type", schema) values ('event', '{"type":"object","required":["name","event_id","when","data"]}');
