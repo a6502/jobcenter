@@ -111,6 +111,7 @@ sub checkreposchema {
 	open my $vf, '<', 'schema/.version' or die "no schema/.version file";
 	my $v = <$vf>;
 	close $vf;
+	chomp $v;
 	die "weird version $v" unless $v =~ /^\d+$/;
 	say "found repo schema version $v";
 	$reposchema = $v;
@@ -426,7 +427,7 @@ sub compprocs {
 
 sub updateprocs {
 	checkschema();
-	die "dbschema $dbschema not equal to reposchema $reposchema" if $dbschema ne $reposchema;	
+	die "dbschema $dbschema not equal to reposchema $reposchema." if $dbschema ne $reposchema;	
 	
 	#hmm.. reuse comprocs somehow?
 	my @filefuncs = sort grep { -f $_ } <procs/*.sql>;

@@ -55,34 +55,7 @@ BEGIN
 
 	RAISE NOTICE 'do_outargsmap: v_oldvars % a_outargs %', v_oldvars, a_outargs;
 
-	-- first check if all the required outargs are there
-	FOR v_key, v_type, v_opt IN SELECT "name", "type", optional
-			FROM action_outputs WHERE action_id = v_action_id LOOP
-
-		IF NOT a_outargs ? v_key THEN
-			IF NOT v_opt THEN
-				RAISE EXCEPTION 'required output parameter % not found', v_key;
-			ELSE
-				CONTINUE;
-			END IF;
-		END IF;
-
-		v_val := a_outargs->v_key;
-		v_actual := jsonb_typeof(v_val);
-		RAISE NOTICE 'v_key % v_type % v_opt % v_val % v_actual %', v_key, v_type, v_opt, v_val, v_actual;
-
-		IF v_actual = 'object' THEN
-			SELECT fields INTO v_fields FROM jsonb_object_fields WHERE typename = v_type;
-			IF NOT v_val ?& v_fields THEN
-				RAISE EXCEPTION 'output parameter % with value % does have required fields %', v_key, v_val, v_fields;
-			END IF;
-		ELSIF v_actual = null OR v_actual = v_type THEN
-			-- ok?
-			NULL;
-		ELSE
-			RAISE EXCEPTION 'ouput parameter % has wrong type % (should be %)', v_key, v_actual, v_type;
-		END IF;
-	END LOOP;
+	PERFORM do_outargscheck(v_action_id, a_outargs);
 
 	-- now run the mapping code
 	--SELECT omapcode INTO v_code FROM tasks WHERE task_id = a_jobtask.task_id;

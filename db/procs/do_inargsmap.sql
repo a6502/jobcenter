@@ -18,6 +18,7 @@ BEGIN
 
 	--RAISE NOTICE 'v_inargs now %', v_inargs;
 	-- now check if everything is there and check types
+	/*
 	FOR v_key, v_type, v_opt, v_def IN SELECT "name", "type", optional, "default"
 			FROM action_inputs WHERE action_id = a_action_id LOOP
 
@@ -44,6 +45,8 @@ BEGIN
 		END IF;
 
 	END LOOP;
+	*/
+	v_inargs := do_inargscheck(a_action_id, v_inargs);
 
 	RETURN v_inargs;
 END$function$

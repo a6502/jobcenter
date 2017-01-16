@@ -10,13 +10,8 @@ AS $function$DECLARE
 	a_impersonate ALIAS FOR $4;
 	v_workflow_id int;
 	v_task_id int;
-	v_key text;
-	v_type text;
-	v_opt boolean;
-	v_def jsonb;
-	v_actual text;
-	v_fields text[];
 	v_val jsonb;
+	v_inargs jsonb;
 	v_env jsonb;
 	v_tags text[] DEFAULT ARRAY['default'];
 	v_have_role text;
@@ -69,35 +64,7 @@ BEGIN
 		RAISE EXCEPTION 'client % with role % has no permission for role %', session_user, v_have_role, v_should_role;
 	END IF;
 
-	-- check parameters
-	-- FIXME: code copied from inargsmap
-	FOR v_key, v_type, v_opt, v_def IN SELECT "name", "type", optional, "default"
-			FROM action_inputs WHERE action_id = v_workflow_id LOOP
-
-		IF a_args ? v_key THEN
-			v_val := a_args->v_key;
-			v_actual := jsonb_typeof(v_val);
-			IF v_actual = 'object' THEN
-				SELECT fields INTO v_fields FROM jsonb_object_fields WHERE typename = v_type;
-				IF NOT v_val ?& v_fields THEN
-					RAISE EXCEPTION 'input parameter "%" with value "%" does have required fields %', v_key, v_val, v_fields;
-				END IF;
-			ELSIF v_actual = null OR v_actual = v_type THEN
-				-- ok?
-				NULL;
-			ELSE
-				RAISE EXCEPTION 'input parameter "%" has wrong type % (should be %)', v_key, v_actual, v_type;
-			END IF;
-		ELSE
-			IF v_opt THEN
-				-- ugh.. copy a_args?
-				a_args := jsonb_set(a_args, ARRAY[v_key], v_def);
-			ELSE
-				RAISE EXCEPTION 'required input parameter "%" not found', v_key;
-			END IF;
-		END IF;
-
-	END LOOP;
+	v_inargs := do_inargscheck(v_workflow_id, a_args);
 	
 	-- ok, now find the start task of the workflow
 	SELECT 
