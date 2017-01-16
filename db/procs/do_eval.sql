@@ -17,6 +17,7 @@ my $safe = new JobCenter::Safe;
 
 my ($code, $jargs, $jenv, $jvars) = @_;
 
+# use from_json/to_json here to prevent utf-8 double decode/encode problems
 our %a = %{from_json($jargs // '{}')};
 our %e = %{from_json($jenv // '{}')};
 our %v = %{from_json($jvars // '{}')};
