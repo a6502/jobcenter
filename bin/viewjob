@@ -36,8 +36,8 @@ sub main {
 	my $cfg = Config::Tiny->read($cfgpath);
 	die 'failed to read config ' . $cfgpath . ': ' . Config::Tiny->errstr unless $cfg;
 	my $pgdsn = 'dbi:Pg:dbname=' . $cfg->{pg}->{db}
-		. ';host=' . $cfg->{pg}->{host}
-		. ';port=' . $cfg->{pg}->{port};
+		. (($cfg->{pg}->{host}) ? ';host=' . $cfg->{pg}->{host} : '')
+		. (($cfg->{pg}->{port}) ? ';port=' . $cfg->{pg}->{port} : '');
 	my $pguser = $cfg->{admin}->{user};
 	my $pgpass = $cfg->{admin}->{pass};
 
@@ -99,6 +99,8 @@ sub main {
 		if ($type eq 'system') {
 			say "step $steps $name";
 		} else {
+			$jt->{delay} = '<null>' unless defined $jt->{delay};
+			$jt->{duration} = '<null>' unless defined $jt->{duration};
 			say "step $steps call $type $name ($action_id) delay $jt->{delay} duration $jt->{duration}";
 		}	
 		say "        inargs  $jt->{task_inargs}" if $jt->{task_inargs};
