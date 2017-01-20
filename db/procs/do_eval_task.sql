@@ -32,6 +32,7 @@ BEGIN
 		RAISE EXCEPTION 'do_eval_task called for non eval task %', a_jobtask.task_id;
 	END IF;
 
+	v_env = do_populate_env(a_jobtask, v_env);
 	RAISE NOTICE 'do_eval code % args % env % vars % ', v_code, v_args, v_env, v_oldvars;
 	BEGIN
 		v_newvars := do_eval(v_code, v_args, v_env, v_oldvars);

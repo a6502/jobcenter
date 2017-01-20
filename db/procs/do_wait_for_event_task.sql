@@ -44,7 +44,7 @@ BEGIN
 	
 	--RAISE NOTICE 'do_inargsmap action_id % task_id % argstrue % vars % ', v_action_id, a_task_id, v_args, v_vars;
 	BEGIN
-		v_inargs := do_inargsmap(v_action_id, a_jobtask.task_id, v_args, v_env, v_vars);
+		v_inargs := do_inargsmap(v_action_id, a_jobtask, v_args, v_env, v_vars);
 	EXCEPTION WHEN OTHERS THEN
 		RETURN do_raiseerror(a_jobtask, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;	

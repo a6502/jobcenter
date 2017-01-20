@@ -57,8 +57,9 @@ BEGIN
 
 	PERFORM do_outargscheck(v_action_id, a_outargs);
 
+	v_env = do_populate_env(a_jobtask, v_env);
+
 	-- now run the mapping code
-	--SELECT omapcode INTO v_code FROM tasks WHERE task_id = a_jobtask.task_id;
 	newvars := do_omap(v_code, v_args, v_env, v_oldvars, a_outargs);
 
 	vars_changed := v_oldvars IS DISTINCT FROM newvars;

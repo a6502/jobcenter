@@ -32,7 +32,7 @@ BEGIN
 	END IF;
 
 	BEGIN
-		v_inargs := do_inargsmap(v_action_id, a_jobtask.task_id, v_args, v_env, v_vars);
+		v_inargs := do_inargsmap(v_action_id, a_jobtask, v_args, v_env, v_vars);
 	EXCEPTION WHEN OTHERS THEN
 		RETURN do_raise_error(a_jobtask, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;

@@ -84,7 +84,6 @@ BEGIN
 	SELECT jcenv FROM jc_env INTO STRICT v_val; -- hack, reuse v-val
 	v_env := COALESCE(v_env, '{}'::jsonb) || v_val; -- jcenv overwrites wfenv
 	v_env := jsonb_set(v_env, '{client}', to_jsonb(v_have_role));
-	v_env := jsonb_set(v_env, '{workflow_id}', to_jsonb(v_workflow_id));
 	IF v_via_role IS NOT NULL THEN
 		v_env := jsonb_set(v_env, '{via}', to_jsonb(v_via_role));
 	END IF;

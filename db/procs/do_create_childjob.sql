@@ -36,6 +36,7 @@ BEGIN
 		RAISE EXCEPTION 'no workflow found for workflow % task %.', a_parentjobtask.workflow_id, a_parentjobtask.task_id;
 	END IF;
 
+	-- fixme: harcoded default
 	v_maxdepth := COALESCE((v_parent_env->>'max_depth')::integer, 9);
 
 	IF v_curdepth >= v_maxdepth THEN
@@ -43,7 +44,7 @@ BEGIN
 	END IF;
 
 	BEGIN
-		v_in_args := do_inargsmap(v_workflow_id, a_parentjobtask.task_id, v_args, v_parent_env, v_vars);
+		v_in_args := do_inargsmap(v_workflow_id, a_parentjobtask, v_args, v_parent_env, v_vars);
 	EXCEPTION WHEN OTHERS THEN
 		RETURN do_raise_error(a_parentjobtask, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;
@@ -67,7 +68,6 @@ BEGIN
 	-- setup childjob env
 	SELECT jcenv FROM jc_env INTO STRICT v_jcenv;
 	v_env := COALESCE(v_env, '{}'::jsonb) || v_jcenv; -- jcenv overwrites wfenv
-	v_env := jsonb_set(v_env, '{workflow_id}', to_jsonb(v_workflow_id));
 	v_env := jsonb_set(v_env, '{max_depth}', to_jsonb(v_maxdepth));
 	-- copy some values from parent env
 	v_env := jsonb_set(v_env, '{client}', v_parent_env->'client');

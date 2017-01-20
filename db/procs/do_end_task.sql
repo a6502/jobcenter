@@ -37,7 +37,7 @@ BEGIN
 	END IF;
 
 	BEGIN
-		v_outargs := do_workflowoutargsmap(a_jobtask.workflow_id, v_args, v_env, v_vars);
+		v_outargs := do_workflowoutargsmap(a_jobtask, v_args, v_env, v_vars);
 	EXCEPTION WHEN OTHERS THEN
 		RETURN do_raise_error(a_jobtask, format('caught exception in do_workflowoutargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;
