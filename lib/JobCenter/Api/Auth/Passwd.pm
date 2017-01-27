@@ -21,9 +21,9 @@ sub new {
 
 
 sub authenticate {
-	my ($self, $who, $token) = @_;
+	my ($self, $client, $who, $token) = @_;
 
-	return (0, 'undef argument(s)') unless $who and $token;
+	return (0, 'undef argument(s)') unless $client and $who and $token;
 		
 	my $encrypted;
 	open my $fh, '<', $self->pwfile or return (0, 'cannot open pwfile');

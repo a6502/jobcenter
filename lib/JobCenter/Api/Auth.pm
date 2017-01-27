@@ -16,6 +16,7 @@ sub new {
 		my $mod = $methods->{$m};
 		load $mod;
 		my $a = $mod->new($cfg->{"$section|$m"});
+		die "could not create authentication module object $mod" unless $a;
 		$methods->{$m} = $a;
 	}
 
@@ -25,15 +26,19 @@ sub new {
 
 
 sub authenticate {
-	my ($self, $who, $method, $token, $cb) = @_;
+	my ($self, $method, $client, $who, $token, $cb) = @_;
 
 	$cb->(0, 'undef argument(s)') unless $who and $method and $token;
 	
-	my $adapter = $self->{methods}->{$method} or $cb->(0, 'no such method');
+	my $adapter = $self->{methods}->{$method};
+	unless ($adapter) {
+		$cb->(0, "no such authentication method $method");
+		return;
+	}
 
-	my ($res, $msg) = $adapter->authenticate($who, $token, $cb);
+	my ($res, $msg) = $adapter->authenticate($client, $who, $token, $cb);
 	
-	$cb->($res, $msg) if (defined $res);
+	$cb->($res, $msg) if defined $res;
 }
 
 1;

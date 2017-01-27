@@ -112,6 +112,10 @@ sub new {
 		$serveropts->{tls_key} = $cfg->{api}->{tls_key};
 		$serveropts->{tls_cert} = $cfg->{api}->{tls_cert};
 	}
+	if ($cfg->{api}->{tls_ca}) {
+		#$serveropts->{tls_verify} = 0; # cheating..
+		$serveropts->{tls_ca} = $cfg->{api}->{tls_ca};
+	}
 
 	my $server = Mojo::IOLoop->server(
 		$serveropts => sub {
@@ -196,7 +200,7 @@ sub rpc_hello {
 	my $method = $args->{method} or die "no method?";
 	my $token = $args->{token} or die "no token?";
 
-	$self->auth->authenticate($who, $method, $token, sub {
+	$self->auth->authenticate($method, $client, $who, $token, sub {
 		my ($res, $msg) = @_;
 		if ($res) {
 			$self->log->debug("hello from $who succeeded: method $method msg $msg");
