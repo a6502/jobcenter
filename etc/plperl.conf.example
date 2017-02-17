@@ -1,3 +1,3 @@
 # plperl config thingies
 plperl.use_strict = true 
-plperl.on_init = 'require "<jobcenter>/db/plperlinit.pl"'
+plperl.on_init = 'require "<jobcenter>/etc/plperlinit.pl"'
