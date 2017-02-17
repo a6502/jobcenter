@@ -172,11 +172,12 @@ sub createschema {
 		sort # in ascending order
 		grep {
 			my ($v) = $_ =~ m|^schema/v([0-9.]+)$|;
-			-d $_ and $v and $v le $reposchema
+			-d $_ and $v and $v <= $reposchema
 		}
 		<schema/v*>
 	)[-1]; # we only want the newest version create scripts
 	#print "scripts: ", Dumper(\@scripts);
+	#exit;
 
 	($dbschema) = ($scripts[0][0] =~ m|^schema/v([0-9.]+)/|) or die "cannot find script version";
 	
@@ -237,7 +238,7 @@ sub downgradeschema {
 	}
 
 	my @scripts = sort grep { -f $_ } <schema/v*/downgrade.sql>;
-	@scripts = grep { my ($v) = $_ =~ m|/v([0-9.]+)/|; $v gt $want and $v le $dbschema } @scripts;
+	@scripts = grep { my ($v) = $_ =~ m|/v([0-9.]+)/|; $v gt $want and $v <= $dbschema } @scripts;
 	die 'nothing to do?' unless @scripts;
 	say 'need to do ', join(', ', @scripts);
 
