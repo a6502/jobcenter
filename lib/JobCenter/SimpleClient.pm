@@ -30,8 +30,8 @@ sub new {
 		my $cfg = Config::Tiny->read($args{cfgpath});
 		die 'failed to read config ' . $args{cfgpath} . ': ' . Config::Tiny->errstr unless $cfg;
 		$self->{pgdsn} = 'dbi:Pg:dbname=' . $cfg->{pg}->{db}
-			. ';host=' . $cfg->{pg}->{host}
-			. ';port=' . $cfg->{pg}->{port};
+			. (($cfg->{pg}->{host}) ? ';host=' . $cfg->{pg}->{host} : '')
+			. (($cfg->{pg}->{port}) ? ';port=' . $cfg->{pg}->{port} : '');
 		$self->{pguser} = $cfg->{client}->{user};
 		$self->{pgpass} = $cfg->{client}->{pass};
 	} else {
