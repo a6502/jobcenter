@@ -23,6 +23,7 @@ use Mojo::Pg;
 # standard
 use Cwd qw(realpath);
 use Data::Dumper;
+use Encode qw(encode_utf8 decode_utf8);
 use File::Basename;
 use FindBin;
 use IO::Pipe;
@@ -234,7 +235,7 @@ sub rpc_create_job {
 	};
 
 	die  'inargs should be a hashref' unless ref $inargs eq 'HASH';
-	$inargs = encode_json($inargs);
+	$inargs = decode_utf8(encode_json($inargs));
 
 	$self->log->debug("calling $wfname with '$inargs'" . (($vtag) ? " (vtag $vtag)" : ''));
 
@@ -329,7 +330,7 @@ sub _poll_done {
 			$self->log->debug("calling cb $job->{cb} for job_id $job->{job_id} outargs $outargs");
 			my $outargsp;
 			local $@;
-			eval { $outargsp = decode_json($outargs); };
+			eval { $outargsp = decode_json(encode_utf8($outargs)); };
 			$outargsp = { error => 'error decoding json: ' . $outargs } if $@;
 			eval { $job->cb->($job->{job_id}, $outargsp); };
 			$self->log->debug("got $@ calling callback") if $@;
