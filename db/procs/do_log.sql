@@ -12,9 +12,9 @@ INSERT INTO
 		task_entered,
 		task_started,
 		task_completed,
-		worker_id,
 		task_inargs,
-		task_outargs
+		task_outargs,
+		task_state
 	)
 SELECT
 	job_id,
@@ -24,9 +24,9 @@ SELECT
 	task_entered,
 	task_started,
 	task_completed,
-	worker_id,
 	a_inargs as task_inargs,
-	a_outargs as task_outargs
+	a_outargs as task_outargs,
+	task_state
 FROM jobs
 WHERE job_id = a_job_id;
 $function$
