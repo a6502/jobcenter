@@ -12,10 +12,9 @@ AS $function$DECLARE
 	v_changed boolean;
 	v_newvars jsonb;
 BEGIN
-	-- what are we waiting for then?
 	-- paranoia check with side effects
 	SELECT
-		reapfromtask_id INTO v_reapfromtask_id
+		(tasks.attributes->>'reapfromtask_id')::int INTO v_reapfromtask_id
 	FROM
 		jobs
 		JOIN tasks USING (workflow_id, task_id)
@@ -46,7 +45,7 @@ BEGIN
 		job_finished = now(),
 		task_completed = now()
 	WHERE
-		parenttask_id = v_reapfromtask_id
+		(job_state->>'parenttask_id')::integer = v_reapfromtask_id
 		AND parentjob_id = a_jobtask.job_id
 		AND state = 'zombie'
 	RETURNING job_id, arguments, out_args INTO v_subjob_id, v_in_args, v_out_args;
