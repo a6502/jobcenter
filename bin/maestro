@@ -43,8 +43,10 @@ sub calljobtaskproc {
 	$retries //= 1;
 	local $@;
 	eval {
+		#$log->debug("select * from $proc($arg)");
 		$db->query("select * from $proc(\$1)", $arg, sub {
 			my ($db, $err, $res) = @_;
+			#$log->debug("calljobtaskproc callback");
 			my $sqlstate = $res->sth->state;
 			if ($sqlstate eq '40001' or $sqlstate eq '40P01') {
 				$log->debug("scheduling retry of calljobtaskproc $proc$arg: $sqlstate");
@@ -64,7 +66,7 @@ sub calljobtaskproc {
 			my $r = $res->array; # fixme: can wel call this in a error case?
 			$res->sth->finish;
 			#print 'r: ', Dumper($r);
-			return unless @$r and defined @$r[1];
+			return unless ref $r eq 'ARRAY' and defined @$r[1];
 			my ($error, $jobtask) = @$r;
 			if ($error) {
 				$log->debug("calljobtaskproc: error condition, calling errortask $jobtask");
@@ -76,35 +78,36 @@ sub calljobtaskproc {
 			return;
 		});
 	};
-	$log->debug('calljobtaskproc: ' . $@) if $@;
+	$log->debug('calljobtaskproc threw error: ' . $@) if $@;
 }
 
 sub do_timeout {
 	my ($loop) = @_;
-	#say "do_timeout called!";
+	local $@;
 	eval {
 		$tmr = undef;
 		$pg->db->query(q[select do_timeout()], sub {
 			my ($db, $err, $res) = @_;
 			my $sqlstate = $res->sth->state;
 			if ($sqlstate eq '40001' or $sqlstate eq '40P01') {
+				$log->debug("scheduling retry of do_timeout");
 				Mojo::IOLoop->timer($backoff => \&do_timeout);
 			}
 			my $r = $res->array;
 			$res->sth->finish;
-			if ($r and @$r and @$r[0]) {
-				my $foo = @$r[0];
-				$foo = 1 if $foo < 1; # fixme: minimum resolution?
+			if ($r and ref $r eq 'ARRAY' and defined @$r[0]) {
+				my $foo = my $bar = @$r[0] + 0;
+				$foo = .1 if $foo < .1; # fixme: minimum resolution?
 				my $now = time();
 				$next = $now + $foo;
-				$log->debug("now setting timer to $foo, now: $now, next: $next");
+				$log->debug("do_timeout: timer now $foo ($bar)");
 				Mojo::IOLoop->remove($tmr) if $tmr;
 				$tmr = Mojo::IOLoop->timer($foo => \&do_timeout);
 			}
 		});
 	};
 	if ($@) {
-		$log->error("do_timeout: $@");
+		$log->error("do_timeout threw error: $@");
 		$next = time()*2;
 	}
 	#say "do_timeout done\n";
@@ -112,15 +115,15 @@ sub do_timeout {
 
 sub do_settimer {
 	my ($pubsub, $payload) = @_;
-	#my $ts = clock_gettime(CLOCK_REALTIME);
 	my $now = time();
 
-	#say "timer: $payload now: $now next: $next";
+	# payload is an empty string when no payload was sent..
+	#$log->debug("settimer: " . ($payload || '<null>') . " now: $now next: $next");
 
 	if ($payload) {
 		if ($now + $payload < $next or $next <= $now) {
-			$payload = 1 if $payload < 1;
-			$log->debug("setting timer to $payload");
+			$payload = .1 if $payload < .1;
+			$log->debug("settimer: $payload");
 
 			Mojo::IOLoop->remove($tmr) if $tmr;
 			$tmr = Mojo::IOLoop->timer($payload => \&do_timeout);
