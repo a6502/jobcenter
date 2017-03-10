@@ -26,8 +26,8 @@ sub new {
 		$cfg = Config::Tiny->read($args{cfgpath});
 		die 'failed to read config ' . $args{cfgpath} . ': ' . Config::Tiny->errstr unless $cfg;
 		$pgdsn = 'dbi:Pg:dbname=' . $cfg->{pg}->{db}
-			. ';host=' . $cfg->{pg}->{host}
-			. ';port=' . $cfg->{pg}->{port};
+			. (($cfg->{pg}->{host}) ? ';host=' . $cfg->{pg}->{host} : '')
+			. (($cfg->{pg}->{port}) ? ';port=' . $cfg->{pg}->{port} : '');
 		$pguser = $cfg->{client}->{user};
 		$pgpass = $cfg->{client}->{pass};
 	} else {
@@ -159,7 +159,8 @@ sub get_task {
 	my $pgh = $self->{pgh};
 	say "get_task: workername $self->{workername}, actionname $action->{actionname}, job_id $job_id"
 		if $self->{debug};
-	my ($cookie, $inargs) = $pgh->selectrow_array(q[select * from get_task($1, $2, $3)], {},
+	my ($cookie, $inargs);
+	($job_id, $cookie, $inargs) = $pgh->selectrow_array(q[select * from get_task($1, $2, $3)], {},
 					$self->{workername}, $action->{actionname}, $job_id);
 	return unless $cookie;
 	say "cookie $cookie inargs $inargs" if $self->{debug};
