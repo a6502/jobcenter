@@ -6,6 +6,6 @@ AS $function$
 select exists (
 	select 1 from jobs where 
 	job_id = $1
-	and case when $2 THEN state='waiting' ELSE state<>'waiting' end
+	and case when $2 THEN state='eventwait' ELSE state<>'eventwait' end
 ); 
 $function$
