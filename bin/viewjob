@@ -103,9 +103,10 @@ sub main {
 			$jt->{duration} = '<null>' unless defined $jt->{duration};
 			say "step $steps call $type $name ($action_id) delay $jt->{delay} duration $jt->{duration}";
 		}	
-		say "        inargs  $jt->{task_inargs}" if $jt->{task_inargs};
-		say "        outargs $jt->{task_outargs}" if $jt->{task_outargs};
-		say "        newvars $jt->{variables}" if $jt->{variables};
+		say "        task_state $jt->{task_state}" if $jt->{task_state};
+		say "        inargs     $jt->{task_inargs}" if $jt->{task_inargs};
+		say "        outargs    $jt->{task_outargs}" if $jt->{task_outargs};
+		say "        newvars    $jt->{variables}" if $jt->{variables};
 		$steps = sprintf "%2d", $steps + 1;
 	}
 	$sth = undef;
