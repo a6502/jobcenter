@@ -22,9 +22,9 @@ BEGIN
 				jobs
 			WHERE
 				parentjob_id = a_parentjob_id
-				AND waitforlocktype = a_locktype
-				AND waitforlockvalue = a_lockvalue
-				AND state = 'sleeping'
+				AND task_state->>'waitforlocktype' = a_locktype
+				AND task_state->>'waitforlockvalue' = a_lockvalue
+				AND state = 'lockwait'
 			ORDER BY job_id LIMIT 1
 			FOR UPDATE OF jobs;
 
@@ -45,9 +45,6 @@ BEGIN
 				-- mark task done
 				UPDATE jobs SET
 					state = 'done',
-					waitforlocktype = null,
-					waitforlockvalue = null,
-					waitforlockinherit = null,
 					task_completed = now()
 				WHERE
 					job_id = v_waitjob_id;
@@ -80,14 +77,14 @@ BEGIN
 	-- the lock is really ours to unlock
 	IF a_contended > 0 THEN
 		SELECT 
-			job_id, task_id, workflow_id, waitforlockinherit
+			job_id, task_id, workflow_id, (task_state->>'waitforlockinherit')::boolean
 			INTO v_waitjob_id, v_waittask_id, v_waitworkflow_id, v_waitinherit
 		FROM
 			jobs
 		WHERE
-			waitforlocktype = a_locktype
-			AND waitforlockvalue = a_lockvalue
-			AND state = 'sleeping'
+			task_state->>'waitforlocktype' = a_locktype
+			AND task_state->>'waitforlockvalue' = a_lockvalue
+			AND state = 'lockwait'
 		ORDER BY job_id LIMIT 1 -- give to the oldest job first?
 		FOR UPDATE OF jobs;
 		
@@ -107,9 +104,9 @@ BEGIN
 			-- mark task done
 			UPDATE jobs SET
 				state = 'done',
-				waitforlocktype = null,
-				waitforlockvalue = null,
-				waitforlockinherit = null,
+				--waitforlocktype = null,
+				--waitforlockvalue = null,
+				--waitforlockinherit = null,
 				task_completed = now()
 			WHERE
 				job_id = v_waitjob_id;

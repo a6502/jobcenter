@@ -83,7 +83,7 @@ BEGIN
 	
 	-- see if we can inherit the lock
 	IF v_lockjob_id = v_parentjob_id AND v_inheritable THEN
-		PERFORM true FROM jobs WHERE job_id = v_parentjob_id AND state = 'blocked';
+		PERFORM true FROM jobs WHERE job_id = v_parentjob_id AND state = 'childwait';
 		IF FOUND THEN
 			-- we can actually inherit the lock
 			UPDATE locks SET
@@ -102,10 +102,11 @@ BEGIN
 	-- mark ourselves as waiting for this lock
 	-- fixme: log inargs?
 	UPDATE jobs SET
-		state = 'sleeping', -- FIXME: whut
-		waitforlocktype = v_locktype,
-		waitforlockvalue = v_lockvalue,
-		waitforlockinherit = v_lockinherit,
+		state = 'lockwait',
+		task_state = jsonb_build_object(
+			'waitforlocktype', v_locktype,
+			'waitforlockvalue', v_lockvalue,
+			'waitforlockinherit', v_lockinherit),
 		task_started = now()
 	WHERE
 		job_id = a_jobtask.job_id;
@@ -120,7 +121,7 @@ BEGIN
 				 jobs
 			WHERE
 				job_id = v_lockjob_id
-				AND state = 'sleeping'
+				AND state = 'lockwait'
 		UNION ALL
 			SELECT
 				l.job_id,
@@ -128,10 +129,10 @@ BEGIN
 				l.job_id = ANY(path)
 			FROM
 				jobs j
-				JOIN locks l on j.waitforlocktype=l.locktype AND j.waitforlockvalue=l.lockvalue
+				JOIN locks l on j.task_state->>'waitforlocktype'=l.locktype AND j.task_state->>'waitforlockvalue'=l.lockvalue
 				JOIN detect_deadlock dd ON j.job_id = dd.job_id
 			WHERE
-				j.state = 'sleeping' AND
+				j.state = 'lockwait' AND
 				NOT cycle
 	)
 	SELECT path INTO v_deadlockpath FROM detect_deadlock WHERE cycle=true;
