@@ -14,11 +14,14 @@ AS $function$DECLARE
 BEGIN
 	UPDATE jobs SET
 		task_id = a_jobtask.task_id,
+		cookie = null,
+		out_args = null,
 		state = 'ready',
 		task_entered = now(),
 		task_started = null,
 		task_completed = null,
-		worker_id = null
+		task_state = null,
+		timeout = null
 	WHERE
 		workflow_id = a_jobtask.workflow_id
 		AND job_id = a_jobtask.job_id
@@ -49,7 +52,8 @@ BEGIN
 		tasks
 		JOIN actions USING (action_id)
 	WHERE
-		task_id = a_jobtask.task_id;
+		task_id = a_jobtask.task_id
+		AND workflow_id = a_jobtask.workflow_id;
 
 	CASE
 		v_action_type
@@ -99,6 +103,8 @@ BEGIN
 			RETURN do_lock_task(a_jobtask);
 		WHEN 'unlock' THEN
 			RETURN do_unlock_task(a_jobtask);
+		WHEN 'sleep' THEN
+			RETURN do_sleep_task(a_jobtask);
 		ELSE
 			-- FIXME: call do_raise_error instead?
 			RAISE EXCEPTION 'unknown system task %', v_actionname;
