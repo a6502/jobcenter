@@ -12,14 +12,15 @@ AS $function$DECLARE
 	v_jcenv JSONB;
 	v_env JSONB;
 	v_vars JSONB;
-	v_in_args JSONB;
+	v_inargs JSONB;
 	v_curdepth integer;
 	v_maxdepth integer;
 BEGIN
-	-- find the sub worklow using the task in the parent
+	-- find the sub-worklow using the task in the parent
 	-- get the arguments and variables as well
 	SELECT
-		action_id, wait, arguments, environment, variables, current_depth
+		action_id, COALESCE( (attributes->>'wait')::boolean, true),
+		arguments, environment, variables, current_depth
 		INTO v_workflow_id, v_wait, v_args, v_parent_env, v_vars, v_curdepth
 	FROM 
 		actions
@@ -44,7 +45,7 @@ BEGIN
 	END IF;
 
 	BEGIN
-		v_in_args := do_inargsmap(v_workflow_id, a_parentjobtask, v_args, v_parent_env, v_vars);
+		v_inargs := do_inargsmap(v_workflow_id, a_parentjobtask, v_args, v_parent_env, v_vars);
 	EXCEPTION WHEN OTHERS THEN
 		RETURN do_raise_error(a_parentjobtask, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;
@@ -72,26 +73,27 @@ BEGIN
 	-- copy some values from parent env
 	v_env := jsonb_set(v_env, '{client}', v_parent_env->'client');
 
+
+	--RAISE NOTICE 'do_create_childjob: v_wait is %', v_wait;
+
 	-- now create the new job and mark the start task 'done'
 	INSERT INTO jobcenter.jobs
-		(workflow_id, task_id, parentjob_id, parenttask_id,
-		 parentwait, state, arguments, environment,
-		 max_steps, current_depth, task_entered, task_started,
-		 task_completed)
+		(workflow_id, task_id, parentjob_id, state, arguments, environment,
+		 max_steps, current_depth, task_entered, task_started, task_completed,
+		 job_state)
 	VALUES
-		(v_workflow_id, v_task_id, a_parentjobtask.job_id, a_parentjobtask.task_id,
-		 v_wait, 'done', v_in_args, v_env,
-		 COALESCE((v_env->>'max_steps')::integer, 99), v_curdepth + 1, now(), now(),
-		 now())
+		(v_workflow_id, v_task_id, a_parentjobtask.job_id, 'done', v_inargs, v_env,
+		 COALESCE((v_env->>'max_steps')::integer, 99), v_curdepth + 1, now(), now(), now(),
+		 jsonb_build_object('parenttask_id', a_parentjobtask.task_id, 'parentwait', v_wait))
 	RETURNING
 		job_id INTO v_job_id;
 
 	IF v_wait THEN
-		-- mark the parent job as blocked
+		-- mark the parent job as waiting for a child job
 		UPDATE jobs SET
-			state = 'blocked',
+			state = 'childwait',
 			task_started = now(),
-			out_args = to_jsonb(v_job_id) -- store child job_id somewhere
+			out_args = jsonb_build_object('childjob_id', v_job_id) -- store child job_id somewhere
 		WHERE job_id = a_parentjobtask.job_id;
 		-- and continue with the childjob
 		RETURN do_task_epilogue((v_workflow_id, v_task_id, v_job_id)::jobtask, false, null, null, null);
