@@ -39,6 +39,7 @@ use constant {
 	T_WAIT_FOR_CHILDREN => -12,
 	T_LOCK => -13,
 	T_UNLOCK => -14,
+	T_SLEEP => -15,
 };
 
 sub new {
@@ -109,8 +110,8 @@ sub generate_workflow {
 	$wfenv = undef if $wfenv and ($wfenv eq 'null' or $wfenv eq '{}');
 
 	my $wfid = $self->qs(
-		q|insert into actions (name, type, version, wfmapcode, wfenv) values ($1, 'workflow', $2, $3, $4) returning action_id|, 
-		$wf->{workflow_name}, $version, $self->make_perl($wf->{wfomap}, WFOMAP), $wfenv
+		q|insert into actions (name, type, version, wfenv) values ($1, 'workflow', $2, $3) returning action_id|, 
+		$wf->{workflow_name}, $version, $wfenv
 	);
 	$self->{wfid} = $wfid;
 	say "wfid: $wfid";
@@ -146,7 +147,11 @@ sub generate_workflow {
 
 	my $start = $self->instask(T_START, next_task_id => (($lockfirst) ? $lockfirst : $first)); # magic start task to first real task
 	$self->set_next($locklast, $first) if $lockfirst; # lock tasks to other tasks
-	my $end = $self->instask(T_END); # magic end task
+	#my $end = $self->instask(T_END); # magic end task
+	my $end = $self->instask(T_END, attributes => # magic end task
+		to_json({
+			wfmapcode => $self->make_perl($wf->{wfomap}, WFOMAP)
+		}));
 	$self->set_next($last, $end) if $last; # block to end task
 	# (if the last statement of a block is a goto, $last is undefined)
 	$self->set_next($end, $end); # next_task_id may not be null
@@ -324,8 +329,8 @@ EOF
 			to_json({
 				imapcode => $imap,
 				omapcode => $omap,
-			}),
-			wait => ($magic) ? 0 : 1); # bleh.. !magic is undef, not 0
+				wait => ($magic) ? 0 : 1, # bleh.. !magic is undef, not 0
+			}));
 	return ($tid, $tid);
 }
 
@@ -474,6 +479,15 @@ sub gen_return {
 	return shift->gen_goto('!!the end!!'); # just a goto to the magic end label
 }
 
+sub gen_sleep {
+	my ($self, $sleep) = @_;
+	my $tid = $self->instask(T_SLEEP, attributes =>
+		to_json({
+			imapcode => $self->make_perl($sleep, IMAP),
+		}));
+	return ($tid, $tid);
+}
+
 sub gen_split {
 	my ($self, $split) = @_;
 	my (@childtids, $firsttid, $lasttid);
@@ -492,7 +506,10 @@ sub gen_split {
 	$lasttid = $wfctid;
 	# now reap all childflows, in order
 	for my $ct (@childtids) {
-		my $tid = $self->instask(T_REAP_CHILD, reapfromtask_id => $ct);
+		my $tid = $self->instask(T_REAP_CHILD, attributes =>
+			to_json({
+				reapfromtask_id => $ct,
+			}));
 		$self->set_next($lasttid, $tid); # $lasttid should be set
 		$lasttid = $tid;
 	}

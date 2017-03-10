@@ -128,6 +128,7 @@ statement:
 	| +raise_event
 	| +repeat
 	| +return
+	| +sleep
 	| +split
 	| +subscribe
 	| +try
@@ -230,6 +231,8 @@ raise_event: / 'raise_event' <colon> / assignments
 repeat: / 'repeat' colon / +block / __ 'until' __ / +condition
 
 return: / ('return') /
+
+sleep: / 'sleep' <colon> / assignments
 
 split: / 'split' / colon block-indent callflow+ block-undent
 
