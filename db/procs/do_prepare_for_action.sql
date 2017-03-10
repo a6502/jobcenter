@@ -11,7 +11,8 @@ AS $function$DECLARE
 BEGIN
 	-- get the arguments and variables
 	SELECT
-		action_id, arguments, environment, variables INTO v_action_id, v_args, v_env, v_vars
+		action_id, arguments, environment, variables
+		INTO v_action_id, v_args, v_env, v_vars
 	FROM 
 		actions
 		JOIN tasks USING (action_id)
@@ -32,11 +33,10 @@ BEGIN
 	EXCEPTION WHEN OTHERS THEN
 		RETURN do_raise_error(a_jobtask, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;
-	
-	-- FIXME: add an extra field to jobs?
+
 	-- 'abuse' the out_args field to store the calulated in_args
-	UPDATE jobs
-		SET out_args = v_in_args
+	UPDATE jobs SET
+		out_args = v_in_args
 	WHERE
 		job_id = a_jobtask.job_id;
 
