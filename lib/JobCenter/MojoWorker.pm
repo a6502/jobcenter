@@ -171,8 +171,9 @@ sub _get_task {
 		$self->log->debug($_[0]);
 	};
 	my $res = $self->pg->db->dollar_only->query(q[select * from get_task($1, $2, $3)], $workername, $actionname, $job_id)->array;
-	return unless $res and @$res;
-	my ($cookie, $inargs) = @$res;
+	return unless $res and ref $res eq 'ARRAY';
+	my ($cookie, $inargs);
+	($job_id, $cookie, $inargs) = @$res;
 	undef $res; # clear statement handle
 	$self->log->debug("cookie $cookie inargs $inargs");
 	$inargs = decode_json( $inargs ) unless $self->json;
