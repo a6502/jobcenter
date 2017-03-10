@@ -10,13 +10,18 @@ AS $function$DECLARE
 	v_parentworkflow_id int;
 	v_parentwait boolean;	
 	v_env jsonb;
-	v_outargs jsonb;
+	v_eo jsonb; -- error object
 	v_errargs jsonb;
 BEGIN
 	-- paranoia check with side effects
 	SELECT 
-		on_error_task_id, parentjob_id, parenttask_id, parentwait, environment, out_args
-		INTO v_errortask_id, v_parentjob_id, v_parenttask_id, v_parentwait, v_env, v_outargs
+		on_error_task_id, parentjob_id,
+		(job_state->>'parenttask_id')::bigint, (job_state->>'parentwait')::boolean
+		environment, COALESCE(task_state->'error', '{}'::jsonb)
+		INTO
+		v_errortask_id, v_parentjob_id,
+		v_parenttask_id, v_parentwait,
+		v_env, v_eo
 	FROM
 		jobs
 		JOIN tasks USING (workflow_id, task_id)
@@ -30,21 +35,20 @@ BEGIN
 		RAISE EXCEPTION 'do_jobtaskerror called for job not in error state %', a_jobtask.job_id;
 	END IF;	
 
-	RAISE NOTICE 'v_erortask_id %, v_outargs %', v_errortask_id, v_outargs;
+	IF v_eo IS NULL THEN
+		v_eo = '{}'::jsonb;
+	END IF;
+
+	RAISE NOTICE 'v_erortask_id %, v_eo %', v_errortask_id, v_eo;
 	IF v_errortask_id IS NOT NULL -- we have an error task
-		AND v_outargs ? 'error' -- and some sort of error object
 		AND (
-			(v_outargs -> 'error' ? 'class' AND v_outargs #>> '{error,class}' <> 'fatal')
-			OR (NOT v_outargs -> 'error' ? 'class') -- and the error is not fatal
+			(v_eo ? 'class' AND v_eo ->> 'class' <> 'fatal')
+			OR (NOT v_eo ? 'class') -- and the error is not fatal
 		) THEN -- call errortask
 		RAISE NOTICE 'calling errortask %', v_errortask_id;
-		-- insert the error object into the variables so that it becomes visible in the 
-		-- catch block as $v{_error}
-		IF v_env IS NULL THEN -- should not happen?
-			v_env := jsonb_build_object('_error', v_outargs -> 'error');
-		ELSE
-			v_env := jsonb_set(v_env, ARRAY['_error'], v_outargs -> 'error');
-		END IF;
+		-- insert the error object into the environment so that it becomes visible in the 
+		-- catch block as $e{_error}
+		v_env := jsonb_set(COALESCE(v_env, '{}'::jsonb), ARRAY['_error'], v_eo);
 		UPDATE jobs SET
 			environment = v_env,
 			aborted = false	-- need to clear abort flag to prevent a loop
@@ -62,7 +66,8 @@ BEGIN
 		job_finished = now(),
 		task_started = now(),
 		task_completed = now(),
-		timeout = null
+		out_args = jsonb_build_object('error', v_eo),
+		timeout = NULL
 	WHERE
 		job_id = a_jobtask.job_id;
 
@@ -88,7 +93,7 @@ BEGIN
 		WHERE
 			job_id = v_parentjob_id
 			AND task_id = v_parenttask_id
-			AND state = 'blocked';
+			AND state = 'childwait';
 
 		IF NOT FOUND THEN
 			-- what?
@@ -99,7 +104,7 @@ BEGIN
 			'error', jsonb_build_object(
 				'msg', format('childjob %s raised error', a_jobtask.job_id),
 				'class', 'childerror',
-				'error', v_outargs -> 'error'
+				'error', v_eo
 			)
 		);
 
@@ -131,10 +136,10 @@ BEGIN
 		jobs
 	WHERE
 		job_id = v_parentjob_id
-		AND state = 'blocked';
+		AND state = 'childwait';
 
 	IF FOUND THEN
-		RAISE NOTICE 'unblock job %, error %', v_parentjob_id, v_outargs;
+		RAISE NOTICE 'unblock job %, error %', v_parentjob_id, v_errargs;
 		-- and call do_task error
 		-- FIXME: transform error object
 		RETURN do_wait_for_children_task((v_parentworkflow_id, v_parenttask_id, v_parentjob_id)::jobtask);
