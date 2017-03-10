@@ -27,7 +27,7 @@ BEGIN
 	WHERE
 		job_id = a_jobtask.job_id
 		AND workflow_id = a_jobtask.workflow_id
-		AND state in  ('ready','blocked')
+		AND state in  ('ready','childwait')
 		AND actions.type = 'system'
 		AND actions.name = 'wait_for_children'
 	FOR UPDATE OF jobs;
@@ -42,13 +42,13 @@ BEGIN
 	v_waitjobtask = (a_jobtask.workflow_id, v_task_id, a_jobtask.job_id)::jobtask;
 
 	IF v_state = 'ready' THEN
-		-- mark job as blocked
+		-- mark job as waiting for children
 		-- we need locking here to prevent a race condition with do_end_task
 		-- any deadlock error will be handled in do_jobtask		
 		--LOCK TABLE jobs IN SHARE ROW EXCLUSIVE MODE;
 
 		UPDATE jobs SET
-			state = 'blocked',
+			state = 'childwait',
 			task_started = now()
 		WHERE
 			job_id = a_jobtask.job_id;
