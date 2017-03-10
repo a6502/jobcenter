@@ -20,7 +20,7 @@ AS $function$DECLARE
 BEGIN
 	-- first mark job waiting
 	UPDATE jobs SET
-		state = 'waiting',
+		state = 'eventwait',
 		task_started = now()
 	WHERE
 		job_id = a_jobtask.job_id
@@ -46,7 +46,7 @@ BEGIN
 	BEGIN
 		v_inargs := do_inargsmap(v_action_id, a_jobtask, v_args, v_env, v_vars);
 	EXCEPTION WHEN OTHERS THEN
-		RETURN do_raiseerror(a_jobtask, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
+		RETURN do_raise_error(a_jobtask, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;	
 	--RAISE NOTICE 'v_inargs %', v_inargs;
 

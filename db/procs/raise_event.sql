@@ -22,7 +22,7 @@ BEGIN
 
 	-- see if the event matches any subscriptions
 	FOR v_sub_id, v_name, v_job_id, v_wait IN SELECT subscription_id, "name", job_id, waiting FROM event_subscriptions WHERE a_eventdata @> mask LOOP
-		SELECT workflow_id, task_id INTO v_workflow_id, v_task_id FROM jobs WHERE job_id = v_job_id AND state = 'waiting';
+		SELECT workflow_id, task_id INTO v_workflow_id, v_task_id FROM jobs WHERE job_id = v_job_id AND state = 'eventwait';
 		IF FOUND AND v_wait THEN
 			-- wake the task that is waiting
 			v_eventdata = jsonb_build_object(
