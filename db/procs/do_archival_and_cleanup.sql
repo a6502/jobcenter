@@ -9,7 +9,7 @@ UPDATE workers SET
 	stopped = now()
 WHERE
 	stopped IS NULL
-	AND last_ping + interval '12 minutes' < now();
+	AND last_ping + interval '3 minutes' < now();
 -- move finished jobs to the jobs_archive table
 WITH jobrecords AS (
 	DELETE FROM
