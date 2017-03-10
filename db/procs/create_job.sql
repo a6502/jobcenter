@@ -94,7 +94,7 @@ BEGIN
 		 environment, max_steps, current_depth, task_entered,
 		 task_started, task_completed)
 	VALUES
-		(v_workflow_id, v_task_id, 'done', a_args,
+		(v_workflow_id, v_task_id, 'done', v_inargs,
 		 v_env, COALESCE((v_env->>'max_steps')::integer, 99), 1, now(),
 		 now(), now())
 	RETURNING
