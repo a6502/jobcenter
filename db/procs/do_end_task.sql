@@ -8,9 +8,9 @@ AS $function$DECLARE
 	v_parenttask_id int;
 	v_parentjobtask jobtask;
 	v_parentwait boolean;
-	v_args jsonb;
-	v_env jsonb;
-	v_vars jsonb;
+	--v_args jsonb;
+	--v_env jsonb;
+	--v_vars jsonb;
 	v_inargs jsonb;
 	v_outargs jsonb;
 	v_changed boolean;
@@ -18,8 +18,8 @@ AS $function$DECLARE
 BEGIN
 	-- paranoia check with side effects
 	SELECT
-		arguments, environment, variables, parentjob_id, parenttask_id, parentwait INTO
-		v_args, v_env, v_vars, v_parentjob_id, v_parenttask_id, v_parentwait
+		parentjob_id, (job_state->>'parenttask_id')::bigint, (job_state->>'parentwait')::boolean
+		INTO v_parentjob_id, v_parenttask_id, v_parentwait
 	FROM
 		jobs
 		JOIN tasks USING (workflow_id, task_id)
@@ -37,12 +37,12 @@ BEGIN
 	END IF;
 
 	BEGIN
-		v_outargs := do_workflowoutargsmap(a_jobtask, v_args, v_env, v_vars);
+		v_outargs := do_workflowoutargsmap(a_jobtask);
 	EXCEPTION WHEN OTHERS THEN
 		RETURN do_raise_error(a_jobtask, format('caught exception in do_workflowoutargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;
 			
-	RAISE NOTICE 'do_end_task wf % task % job % vars % => outargs %', a_jobtask.workflow_id, a_jobtask.task_id, a_jobtask.job_id, v_vars, v_outargs;
+	--RAISE NOTICE 'do_end_task wf % task % job % vars % => outargs %', a_jobtask.workflow_id, a_jobtask.task_id, a_jobtask.job_id, v_vars, v_outargs;
 
 	IF v_parentjob_id IS NOT NULL AND NOT v_parentwait THEN
 		-- special handling for asynchonous child jobs in split/join
@@ -71,15 +71,15 @@ BEGIN
 			jobs
 		WHERE
 			job_id = v_parentjob_id
-			AND state = 'blocked'
-		FOR UPDATE OF jobs SKIP LOCKED;
+			AND state = 'childwait'
+		FOR UPDATE OF jobs; -- SKIP LOCKED;
 
 		IF FOUND THEN
 			-- poke parent
 			RETURN do_wait_for_children_task((v_parentworkflow_id, v_parenttask_id, v_parentjob_id)::jobtask);
 		ELSE
 			-- remain a zombie, the parent will look for us sometime
-			RAISE NOTICE 'parentjob % not blocked', v_parentjob_id;
+			RAISE NOTICE 'parentjob % not waiting for us', v_parentjob_id;
 			RETURN null; -- no next task
 		END IF;
 	END IF;
@@ -121,7 +121,7 @@ BEGIN
 	WHERE
 		job_id = v_parentjob_id
 		AND task_id = v_parenttask_id
-		AND state = 'blocked';
+		AND state = 'childwait';
 	
 	IF NOT FOUND THEN
 		-- what?
