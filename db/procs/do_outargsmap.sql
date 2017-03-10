@@ -33,7 +33,7 @@ BEGIN
 		RETURN;
 	END IF;
 
-	-- now get the rest using the task and job_id
+	-- now get the rest using the task_id and workflow_id
 	SELECT
 		action_id, attributes->>'omapcode'
 		INTO v_action_id, v_code
