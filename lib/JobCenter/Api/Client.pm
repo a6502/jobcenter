@@ -5,7 +5,9 @@ use Mojo::IOLoop;
 use JSON::RPC2::TwoWay;
 use MojoX::NetstringStream;
 
-has [qw(actions con id ns ping rpc stream tmr who worker_id)];
+use Data::Dumper;
+
+has [qw(actions con id ns ping rpc stream tmr who workername worker_id)];
 
 sub new {
 	my $self = shift->SUPER::new();
@@ -22,7 +24,7 @@ sub new {
 	$ns->on(chunk => sub {
 		my ($ns, $chunk) = @_;
 		# Process input chunk
-		#say '    got chunk: ', $chunk;
+		#print '    got chunk: ', Dumper(\$chunk);
 		my @err = $con->handle($chunk);
 		die join(' ', grep defined, @err) if @err;
 		$ns->close if $err[0];

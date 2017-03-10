@@ -53,6 +53,7 @@ has [qw(
 	debug
 	listenstrings
 	log
+	pending
 	pg
 	pid_file
 	ping
@@ -99,7 +100,7 @@ sub new {
 
 	my $rpc = JSON::RPC2::TwoWay->new(debug => $debug) or die 'no rpc?';
 
-	$rpc->register('announce', sub { $self->rpc_announce(@_) }, non_blocking => 0, state => 'auth');
+	$rpc->register('announce', sub { $self->rpc_announce(@_) }, non_blocking => 1, state => 'auth');
 	$rpc->register('create_job', sub { $self->rpc_create_job(@_) }, non_blocking => 1, state => 'auth');
 	$rpc->register('get_job_status', sub { $self->rpc_get_job_status(@_) }, non_blocking => 1, state => 'auth');
 	$rpc->register('get_task', sub { $self->rpc_get_task(@_) }, non_blocking => 1, state => 'auth');
@@ -123,6 +124,7 @@ sub new {
 			my ($loop, $stream, $id) = @_;
 			my $client = JobCenter::Api::Client->new($rpc, $stream, $id);
 			$client->on(close => sub { $self->_disconnect($client) });
+			#$self->clients->{refaddr($client)} = $client;
 		}
 	) or die 'no server?';
 
@@ -133,13 +135,15 @@ sub new {
 	# keep sorted
 	#$self->cfg($cfg);
 	$self->{actionnames} = {};
+	$self->{apiname} = $apiname;
 	$self->{auth} = $auth;
 	$self->{cfg} = $cfg;
-	$self->{apiname} = $apiname;
+	#$self->{clients} = {};
 	$self->{daemon} = $daemon;
 	$self->{debug} = $debug;
-	$self->{listenstrings} = {};
+	$self->{listenstrings} = {}; # connected workers, grouped by listenstring
 	$self->{log} = $log;
+	$self->{pending} = {}; # pending tasks flags for listenstrings
 	$self->{pg} = $pg;
 	$self->{pid_file} = $pid_file if $daemon;
 	$self->{ping} = $args{ping} || 60;
@@ -168,6 +172,10 @@ sub work {
 		exit(1);
 	});
 
+	local $SIG{TERM} = local $SIG{INT} = sub {
+		$self->_shutdown(@_);
+	};
+
 	$self->log->debug('JobCenter::Api::JsonRpc starting work');
 	Mojo::IOLoop->start unless Mojo::IOLoop->is_running;
 	#my $reactor = Mojo::IOLoop->singleton->reactor;
@@ -175,7 +183,7 @@ sub work {
 	#while($reactor->{running}) {
 	#	$reactor->one_tick();
 	#}
-	$self->log->debug('JobCenter::Api::JsonRpc done?');
+	$self->log->info('JobCenter::Api::JsonRpc done?');
 
 	return 0;
 }
@@ -183,6 +191,7 @@ sub work {
 sub _disconnect {
 	my ($self, $client) = @_;
 	$self->log->info('oh my.... ' . ($client->who // 'somebody') . ' disonnected..');
+
 	return unless $client->who;
 
 	my @actions = keys %{$client->actions};
@@ -192,6 +201,8 @@ sub _disconnect {
 		# hack.. make a _withdraw for this..?
 		$self->rpc_withdraw($client->con, {actionname => $a});
 	}
+
+	#delete $self->clients->{refaddr($client)};
 }
 
 sub rpc_hello {
@@ -291,13 +302,15 @@ sub rpc_create_job {
 
 			#$self->pg->pubsub->listen($listenstring, sub {
 			# fixme: 1 central listen?
-			$self->pg->pubsub->listen('job:finished', sub {
+			my $lcb = $self->pg->pubsub->listen('job:finished', sub {
 				my ($pubsub, $payload) = @_;
 				return unless $job_id == $payload;
 				local $@;
 				eval { $self->_poll_done($job); };
 				$self->log->debug("pubsub cb $@") if $@;
 			});
+
+			$job->update(lcb => $lcb);
 
 			# do one poll first..
 			$self->_poll_done($job);
@@ -325,7 +338,7 @@ sub _poll_done {
 			my ($outargs) = @{$res->array};
 			return unless $outargs;
 			#$self->pg->pubsub->unlisten($job->listenstring);
-			$self->pg->pubsub->unlisten('job:finished');
+			$self->pg->pubsub->unlisten('job:finished', $job->lcb);
 			Mojo::IOLoop->remove($job->tmr) if $job->tmr;
 			$self->log->debug("calling cb $job->{cb} for job_id $job->{job_id} outargs $outargs");
 			my $outargsp;
@@ -375,6 +388,7 @@ sub rpc_announce {
 	my $client = $con->owner;
 	my $actionname = $i->{actionname} or die 'actionname required';
 	my $slots      = $i->{slots} // 1;
+	my $workername = $i->{workername} // $client->workername // $client->who;
 
 	my ($worker_id, $listenstring);
 	local $@;
@@ -385,7 +399,7 @@ sub rpc_announce {
 		# - worker has already announced action
 		($worker_id, $listenstring) = @{$self->pg->db->dollar_only->query(
 			q[select * from announce($1, $2, $3)],
-			$client->who,
+			$workername,
 			$actionname,
 			$client->who
 		)->array};
@@ -393,7 +407,8 @@ sub rpc_announce {
 	};
 	if ($@) {
 		warn $@;
-		return JSON->false, $@;
+		$rpccb->(JSON->false, $@);
+		return;
 	}
 	$self->log->debug("worker_id $worker_id listenstring $listenstring");
 
@@ -409,6 +424,8 @@ sub rpc_announce {
 		# assumption 1:1 relation actionname:listenstring
 		$self->actionnames->{$actionname} = $listenstring;
 		$self->listenstrings->{$listenstring} = [];
+		# let's assume there are pending jobs, this will trigger a poll
+		$self->pending->{$listenstring} = 1;
 	}		
 
 	my $wa = JobCenter::Api::WorkerAction->new(
@@ -419,6 +436,7 @@ sub rpc_announce {
 		used => 0,
 	);
 
+	$client->workername($workername);
 	$client->worker_id($worker_id);
 	$client->actions->{$actionname} = $wa;
 	# note that this client is interested in this listenstring
@@ -428,11 +446,16 @@ sub rpc_announce {
 	unless ($client->tmr) {
 		$client->{tmr} = Mojo::IOLoop->recurring( $client->ping, sub { $self->_ping($client) } );
 	}
-	return JSON->true, 'success';
+	$rpccb->(JSON->true, 'success');
+
+	# if this is a new action we'll force a poll
+	$self->_task_ready($listenstring, 'pollfirst') if $self->pending->{$listenstring};
+
+	return
 }
 
 sub rpc_withdraw {
-	my ($self, $con, $i, $rpccb) = @_;
+	my ($self, $con, $i) = @_;
 	my $client = $con->owner;
 	my $actionname = $i->{actionname} or die 'actionname required';
 	# find listenstring by actionname
@@ -445,7 +468,7 @@ sub rpc_withdraw {
 
 	my ($res) = $self->pg->db->query(
 			q[select withdraw($1, $2)],
-			$client->who,
+			$client->workername,
 			$actionname
 		)->array;
 	die "no result" unless $res and @$res;
@@ -459,6 +482,8 @@ sub rpc_withdraw {
 	unless (@$l) {
 		delete $self->listenstrings->{$listenstring};
 		delete $self->actionnames->{$actionname};
+		# not much we can do about pending jobs now..
+		delete $self->pending->{$listenstring};
 		$self->pg->pubsub->unlisten($listenstring);
 		$self->log->debug("unlisten $listenstring");
 	}		
@@ -479,7 +504,7 @@ sub _ping {
 	Mojo::IOLoop->delay->steps(sub {
 		my $d = shift;
 		my $e = $d->begin;
-		$tmr = Mojo::IOLoop->timer(3 => sub { $e->(@_, 'timeout') } );
+		$tmr = Mojo::IOLoop->timer(10 => sub { $e->(@_, 'timeout') } );
 		$client->con->call('ping', {}, sub { $e->($client, @_) });
 	},
 	sub {
@@ -509,12 +534,13 @@ sub _rot {
         return $e;
 }
 
+# fixme: merge with _task_ready_next
 sub _task_ready {
 	my ($self, $listenstring, $job_id) = @_;
 	
-	$self->log->debug("got notify $listenstring for $job_id");
+	$self->log->debug("got notify $listenstring for '$job_id'");
 	my $l = $self->listenstrings->{$listenstring};
-	return unless $l; # should not happen?
+	return unless $l; # should not happen? maybe unlisten here?
 
 	_rot($l); # rotate listenstrings list (list of workeractions)
 	my $wa;
@@ -529,7 +555,9 @@ sub _task_ready {
 
 	unless ($wa) {
 		$self->log->debug("no free slots for $listenstring!?");
-		# the maestro will bother us again later
+		$self->pending->{$listenstring} = 1;
+		# we'll do a poll when a worker becomes available
+		# and the maestro will bother us again later anyways
 		return;
 	}
 
@@ -550,6 +578,7 @@ sub _task_ready {
 	$self->{tasks}->{$job_id} = $task;
 }
 
+# fixme: merge with _task_ready
 sub _task_ready_next {
 	my ($self, $job_id) = @_;
 	
@@ -572,7 +601,9 @@ sub _task_ready_next {
 
 	unless ($wa) {
 		$self->log->debug("no free slots for $task->{listenstring}!?");
-		# the maestro will bother us again later
+		$self->pending->{$task->listenstring} = 1;
+		# we'll do a poll when a worker becomes available
+		# and the maestro will bother us again later anyways
 		return;
 	}
 
@@ -596,18 +627,24 @@ sub _task_ready_next {
 sub rpc_get_task {
 	my ($self, $con, $i, $rpccb) = @_;
 	my $client = $con->owner;
-	my $workername = $client->who;
+	my $workername = $client->workername;
 	my $actionname = $i->{actionname};
 	my $job_id = $i->{job_id};
-	$self->log->debug("get_task: workername $workername, actioname $actionname, job_id $job_id");
 
+	# need to think about this relating to the poll scenario..
 	my $task = delete $self->{tasks}->{$job_id};
 	unless ($task) {
 		$rpccb->();
 		return;
 	}
 
+	# should not happen?
 	Mojo::IOLoop->remove($task->tmr) if $task->tmr;
+
+	$self->log->debug("get_task: workername '$workername', actioname '$actionname', job_id $job_id");
+
+	# in the stored-procedure low-level api a null value means poll
+	$job_id = undef if $job_id !~ /^\d+/;
 	
 	#local $SIG{__WARN__} = sub {
 	#	$self->log->debug($_[0]);
@@ -629,26 +666,39 @@ sub rpc_get_task {
 				$rpccb->();
 				return;
 			}
-			my ($cookie, $inargs) = @{$res->array};
+			$res = $res->array;
+			my ($job_id2, $cookie, $inargsj);
+			($job_id2, $cookie, $inargsj) = @{$res} if ref $res;
 			unless ($cookie) {
+				$self->log->debug("no cookie?");
 				$rpccb->();
+				if (not defined $job_id	and $self->pending->{$task->listenstring}) {
+					$self->log->debug("resetting pending flag for $task->{listenstring}");
+					$self->pending->{$task->listenstring} = 0;
+				}
+				return;
 			}
 
-			$self->log->debug("cookie $cookie inargs $inargs");
-			$inargs = decode_json( $inargs ); # unless $self->json;
+			my $inargs = decode_json( $inargsj ); # unless $self->json;
 
-			my $tmr =  Mojo::IOLoop->timer($self->timeout => sub { $self->_task_timeout($cookie) } );
+			# timeouts (if any) will be done by the maestro..
+			#my $tmr = Mojo::IOLoop->timer($self->timeout => sub { $self->_task_timeout($cookie) } );
 
 			$task->update(
+				job_id => $job_id2,
 				cookie => $cookie,
 				inargs => $inargs,
-				tmr => $tmr,
+				#tmr => $tmr,
 			);
 			$task->workeraction->{used}++;
 			# ugh.. what a hack
 			$self->{tasks}->{$cookie} = $task;
 
-			$rpccb->($cookie, $inargs);
+			$self->log->debug("get_task sending job_id $task->{job_id} to "
+				 . "$task->{workeraction}->{client}->{worker_id} used $task->{workeraction}->{used} "
+				 . "cookie $cookie inargs $inargsj");
+
+			$rpccb->($job_id, $cookie, $inargs);
 		}
 	); # catch?
 }
@@ -671,11 +721,37 @@ sub rpc_task_done {
 	};
 	$outargs = encode_json({'error' => 'cannot json encode outargs: ' . $@}) if $@;
 	#$self->log->debug("outargs $outargs");
-	eval {
-		$self->pg->db->dollar_only->query(q[select task_done($1, $2)], $cookie, $outargs, sub { 1; } );
-	};
+	#eval {
+	#	$self->pg->db->dollar_only->query(q[select task_done($1, $2)], $cookie, $outargs, sub { 1; } );
+	#};
 	$self->log->debug("task_done got $@") if $@;
-	$self->log->debug("worker $client->{who} done with action $task->{actionname} for job $task->{job_id} outargs $outargs\n");
+	$self->log->debug("worker '$client->{workername}' done with action '$task->{actionname}' for job $task->{job_id}"
+		." slots used $task->{workeraction}->{used} outargs '$outargs'");
+
+	Mojo::IOLoop->delay->steps(
+		sub {
+			my $d = shift;
+			$self->pg->db->dollar_only->query(
+				q[select task_done($1, $2)],
+				$cookie, $outargs, $d->begin
+			);
+		},
+		sub {
+			my ($d, $err, $res) = @_;
+			if ($err) {
+				$self->log->error("get_task threw $err");
+				return;
+			}
+			$self->log->debug("task_done_callback!");
+			if ($self->pending->{$task->workeraction->listenstring}) {
+				$self->log->debug("calling _task_readty from task_done_callback!");
+				$self->_task_ready(
+					$task->workeraction->listenstring,
+					'pollplease'
+				);
+			}
+		},
+	);
 	return;
 }
 
@@ -691,6 +767,25 @@ sub _task_timeout {
 	};
 	$self->log->debug("task_done got $@") if $@;
 	$self->log->debug("timeout for action $task->{actionname} for job $task->{job_id}");
+}
+
+sub _shutdown {
+	my($self, $sig) = @_;
+	$self->log->info("caught sig$sig, shutting down");
+
+	for my $was (values %{$self->listenstrings}) {
+		for my $wa (@$was) {
+			$self->log->debug("withdrawing '$wa->{actionname}' for '$wa->{client}->{workername}'");
+			my ($res) = $self->pg->db->query(
+					q[select withdraw($1, $2)],
+					$wa->client->workername,
+					$wa->actionname
+				)->array;
+			die "no result" unless $res and @$res;
+		}
+	}
+
+	Mojo::IOLoop->stop;
 }
 
 1;

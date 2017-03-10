@@ -1,7 +1,7 @@
 package JobCenter::Api::Job;
 use Mojo::Base 'Mojo::EventEmitter';
 
-has [qw(cb job_id inargs listenstring timeout tmr vtag wfname)];
+has [qw(cb job_id inargs lcb listenstring timeout tmr vtag wfname)];
 
 sub update {
 	my ($self, %attr) = @_;
