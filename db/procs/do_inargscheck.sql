@@ -54,6 +54,7 @@ BEGIN
 			END IF;
 		ELSE
 			IF v_opt THEN
+				--RAISE NOTICE 'setting % to default  %', v_key, v_def;
 				v_inargs := jsonb_set(v_inargs, ARRAY[v_key], v_def);
 			ELSE
 				RAISE EXCEPTION 'required input parameter "%" not found', v_key;
