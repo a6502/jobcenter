@@ -253,6 +253,12 @@ sub dumpert {
 				($attr->{lockvalue}) ? " '$attr->{lockvalue}'" : " '$attr->{stringcode}'",
 				($attr->{lockinherit}) ? ' inherit' : '';
 			$task_id = $task->{next_task_id};
+		} elsif ($action_id == -15) {
+			 # sleep
+			$attr->{imapcode} =~ s/\n/\\n/g if $attr->{imapcode};
+			say $i, "$task_id $action->{name}: ",
+				($attr->{imapcode}) ? "'$attr->{imapcode}'" : '';
+			$task_id = $task->{next_task_id};
 		} elsif ($action_id > 0) {
 			# 'normal' tasks
 			#print Dumper($task);
