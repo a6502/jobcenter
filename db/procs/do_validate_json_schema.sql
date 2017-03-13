@@ -2,6 +2,7 @@ CREATE OR REPLACE FUNCTION jobcenter.do_validate_json_schema(schema jsonb, data 
  RETURNS boolean
  LANGUAGE plpgsql
  IMMUTABLE
+ SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$
 /*
 
