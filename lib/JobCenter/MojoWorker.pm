@@ -31,7 +31,7 @@ use Config::Tiny;
 
 # jobcenter
 use JobCenter::MojoWorker::Task;
-use JobCenter::Util;
+use JobCenter::Util qw(:daemon);
 
 has [qw(cfg daemon debug json log pg pid_file ping tmr worker_id workername)];
 

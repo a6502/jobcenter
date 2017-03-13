@@ -4,7 +4,7 @@ no lib '.';
 
 # mojo
 use Mojo::Base -base;
-use Mojo::Util qw(decode slurp);
+use Mojo::Util qw(decode);
 #use Mojo::IOLoop;
 use Mojo::Pg;
 
@@ -25,6 +25,7 @@ use lib realpath("$FindBin::Bin/../lib");
 use JobCenter::JCC::CodeGenerator;
 use JobCenter::JCC::Grammar;
 use JobCenter::JCC::Receiver;
+use JobCenter::Util qw(slurp);
 
 exit main(@ARGV);
 

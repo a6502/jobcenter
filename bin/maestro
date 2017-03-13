@@ -28,7 +28,7 @@ use Mojo::Server;
 
 # JobCenter
 use lib "$FindBin::Bin/../lib";
-use JobCenter::Util;
+use JobCenter::Util qw(:daemon);
 
 # transaction backoff time
 our $backoff = 0.1;

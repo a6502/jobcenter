@@ -41,7 +41,7 @@ use JobCenter::Api::Client;
 use JobCenter::Api::Job;
 use JobCenter::Api::Task;
 use JobCenter::Api::WorkerAction;
-use JobCenter::Util;
+use JobCenter::Util qw(:daemon);
 
 has [qw(
 	actionnames

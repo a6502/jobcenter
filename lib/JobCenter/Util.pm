@@ -3,9 +3,11 @@ package JobCenter::Util;
 use strict;
 use warnings;
 
-our @EXPORT = qw(check_pid daemonize ensure_pid_file);
+our @EXPORT_OK = qw(check_pid daemonize ensure_pid_file slurp);
+our %EXPORT_TAGS = ('daemon' => [qw(check_pid daemonize ensure_pid_file)]);
 
 use parent qw(Exporter);
+use Carp qw(croak);
 
 # copied from Mojo::Server
 sub daemonize {
@@ -51,6 +53,18 @@ sub ensure_pid_file {
 	chmod 0644, $handle;
 	print $handle $$;
 	close $handle;
+}
+
+# copied from Mojo::Util v6.66 because newer Mojo's deprecate this function
+sub slurp {
+	my $path = shift;
+
+	open my $file, '<', $path or croak qq{Can't open file "$path": $!};
+	my $ret = my $content = '';
+	while ($ret = $file->sysread(my $buffer, 131072, 0)) { $content .= $buffer }
+	croak qq{Can't read from file "$path": $!} unless defined $ret;
+
+	return $content;
 }
 
 1;
