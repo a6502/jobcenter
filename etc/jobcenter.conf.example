@@ -28,11 +28,11 @@ role=jc_system
 role=jc_perl
 
 [api]
-user=api
+user=jc_client
 pass=password
 listenport=6522
-tls_cert=/some/path/jobcenter/etc/api.crt
-tls_key=/some/path/jobcenter/etc/api.pem
+;tls_cert=/some/path/jobcenter/etc/api.crt
+;tls_key=/some/path/jobcenter/etc/api.pem
 
 [api|auth]
 password=JobCenter::Api::Auth::Passwd
