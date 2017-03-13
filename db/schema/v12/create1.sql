@@ -181,7 +181,6 @@ DROP FUNCTION IF EXISTS jobcenter.do_eval(code text, args jsonb, env jsonb, vars
 DROP FUNCTION IF EXISTS jobcenter.do_end_task(a_jobtask jobtask);
 DROP FUNCTION IF EXISTS jobcenter.do_create_childjob(a_parentjobtask jobtask);
 DROP FUNCTION IF EXISTS jobcenter.do_clear_waiting_events();
-DROP FUNCTION IF EXISTS jobcenter.do_cleanup_on_finish_trigger();
 DROP FUNCTION IF EXISTS jobcenter.do_cleanup_on_finish(a_jobtask jobtask);
 DROP FUNCTION IF EXISTS jobcenter.do_check_wait_for_task(a_action_id integer, a_wait_for_task integer);
 DROP FUNCTION IF EXISTS jobcenter.do_check_wait(a_action_id integer, a_wait boolean);
@@ -199,9 +198,6 @@ DROP TYPE IF EXISTS jobcenter.nextjobtask;
 DROP TYPE IF EXISTS jobcenter.jobtask;
 DROP TYPE IF EXISTS jobcenter.job_state;
 DROP TYPE IF EXISTS jobcenter.action_type;
-DROP EXTENSION IF EXISTS plpgsql;
-DROP EXTENSION IF EXISTS plperl;
-DROP SCHEMA IF EXISTS public;
 DROP SCHEMA IF EXISTS jobcenter;
 --
 -- Name: jobcenter; Type: SCHEMA; Schema: -; Owner: $JCADMIN
@@ -211,49 +207,12 @@ CREATE SCHEMA jobcenter;
 
 
 ALTER SCHEMA jobcenter OWNER TO $JCADMIN;
-
---
--- Name: public; Type: SCHEMA; Schema: -; Owner: postgres
---
-
-CREATE SCHEMA public;
-
-
-ALTER SCHEMA public OWNER TO postgres;
-
---
--- Name: SCHEMA public; Type: COMMENT; Schema: -; Owner: postgres
---
-
-COMMENT ON SCHEMA public IS 'standard public schema';
-
-
---
--- Name: plperl; Type: EXTENSION; Schema: -; Owner: 
---
-
-CREATE EXTENSION IF NOT EXISTS plperl WITH SCHEMA pg_catalog;
-
-
---
--- Name: EXTENSION plperl; Type: COMMENT; Schema: -; Owner: 
---
-
-COMMENT ON EXTENSION plperl IS 'PL/Perl procedural language';
-
-
---
--- Name: plpgsql; Type: EXTENSION; Schema: -; Owner: 
---
-
-CREATE EXTENSION IF NOT EXISTS plpgsql WITH SCHEMA pg_catalog;
-
-
---
--- Name: EXTENSION plpgsql; Type: COMMENT; Schema: -; Owner: 
---
-
-COMMENT ON EXTENSION plpgsql IS 'PL/pgSQL procedural language';
+REVOKE ALL ON SCHEMA jobcenter FROM PUBLIC;
+GRANT ALL ON SCHEMA jobcenter TO $JCADMIN;
+GRANT USAGE ON SCHEMA jobcenter TO $JCCLIENT;
+GRANT USAGE ON SCHEMA jobcenter TO $JCMAESTRO;
+GRANT ALL ON SCHEMA jobcenter TO $JCSYSTEM;
+GRANT ALL ON SCHEMA jobcenter TO $JCPERL;
 
 
 SET search_path = jobcenter, pg_catalog;
