@@ -23,7 +23,7 @@ DECLARE
 		'job_task_log',
 		'jobs',
 		'jobs_archive',
-		'jsonb_object_fields',
+		'json_schemas',
 		'locks',
 		'locktypes',
 		'next_tasks',
