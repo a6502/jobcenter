@@ -16,7 +16,7 @@ BEGIN
 	-- paranoia check with side effects
 	SELECT 
 		on_error_task_id, parentjob_id,
-		(job_state->>'parenttask_id')::bigint, (job_state->>'parentwait')::boolean
+		(job_state->>'parenttask_id')::bigint, (job_state->>'parentwait')::boolean,
 		environment, COALESCE(task_state->'error', '{}'::jsonb)
 		INTO
 		v_errortask_id, v_parentjob_id,
@@ -34,10 +34,6 @@ BEGIN
 	IF NOT FOUND THEN
 		RAISE EXCEPTION 'do_jobtaskerror called for job not in error state %', a_jobtask.job_id;
 	END IF;	
-
-	IF v_eo IS NULL THEN
-		v_eo = '{}'::jsonb;
-	END IF;
 
 	RAISE NOTICE 'v_erortask_id %, v_eo %', v_errortask_id, v_eo;
 	IF v_errortask_id IS NOT NULL -- we have an error task

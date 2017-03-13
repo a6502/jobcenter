@@ -16,7 +16,7 @@ BEGIN
 		state = 'error',
 		task_completed = now(),
 		timeout = NULL,
-		out_args = v_error
+		task_state = COALESCE(task_state, '{}'::jsonb) || v_error
 	WHERE job_id = a_jobtask.job_id;
 	PERFORM do_log(a_jobtask.job_id, false, null, v_error);
 
