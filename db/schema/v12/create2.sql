@@ -1579,13 +1579,6 @@ REVOKE ALL ON FUNCTION do_cleanup_on_finish(a_jobtask jobtask) FROM PUBLIC;
 
 
 --
--- Name: do_cleanup_on_finish_trigger(); Type: ACL; Schema: jobcenter; Owner: $JCSYSTEM
---
-
-REVOKE ALL ON FUNCTION do_cleanup_on_finish_trigger() FROM PUBLIC;
-
-
---
 -- Name: do_clear_waiting_events(); Type: ACL; Schema: jobcenter; Owner: $JCSYSTEM
 --
 
