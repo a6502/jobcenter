@@ -1,15 +1,23 @@
 #!/usr/bin/perl
 
+# mojo
 use Mojo::Base -base;
-use FindBin;
-#use lib "$FindBin::Bin/../lib";
-use Mojo::Util qw( slurp );
 use Mojo::Pg;
 
+# stdperl
+use Cwd qw(realpath);
 use Data::Dumper;
 use Digest::MD5 qw(md5_hex);
+use FindBin;
+use Data::Dumper;
 
+# other
 use Config::Tiny;
+
+# JobCenter
+use lib realpath("$FindBin::Bin/../lib");
+use JobCenter::Util qw( slurp );
+
 
 exit main(@ARGV);
 
@@ -169,9 +177,9 @@ sub createschema {
 				undef;
 			}
 		}
-		sort # in ascending order
+		sort {($a =~ /v(\d+)$/)[0] <=> ($b =~ /v(\d+)$/)[0]} # numerically in ascending order
 		grep {
-			my ($v) = $_ =~ m|^schema/v([0-9.]+)$|;
+			my ($v) = $_ =~ m|^schema/v([0-9]+)$|;
 			-d $_ and $v and $v <= $reposchema
 		}
 		<schema/v*>
@@ -179,7 +187,7 @@ sub createschema {
 	#print "scripts: ", Dumper(\@scripts);
 	#exit;
 
-	($dbschema) = ($scripts[0][0] =~ m|^schema/v([0-9.]+)/|) or die "cannot find script version";
+	($dbschema) = ($scripts[0][0] =~ m|^schema/v([0-9]+)/|) or die "cannot find script version";
 	
 	say 'need to do ', join(', ', map { (ref) ? join(', ', @$_) : $_ } @scripts);
 	
