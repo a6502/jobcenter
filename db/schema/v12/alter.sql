@@ -6,7 +6,7 @@ insert into action_inputs(action_id, name, type, optional) values (-15, 'timeout
 
 alter table jobs add column task_state jsonb;
 
-alter table jobs_task_log add column task_state jsonb;
+alter table job_task_log add column task_state jsonb;
 
 alter table jobs add column job_state jsonb;
 
@@ -39,3 +39,9 @@ alter index steps_pkey rename to tasks_pkey;
 alter table jobs drop column parenttask_id, drop column parentwait;
 
 create index on workers (stopped);
+
+DO $BODY$
+BEGIN
+        RAISE NOTICE 'Please load super.sql as a Postgresql superuser.';
+END
+$BODY$;
