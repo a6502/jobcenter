@@ -4,17 +4,15 @@ CREATE OR REPLACE FUNCTION jobcenter.do_prepare_for_action(a_jobtask jobtask)
  SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$DECLARE
 	v_action_id int;
-	v_config jsonb;
 	v_args jsonb;
 	v_env jsonb;
 	v_vars jsonb;
 	v_in_args jsonb;
-	v_task_state jsonb;
 BEGIN
 	-- get the arguments and variables
 	SELECT
-		action_id, config, arguments, environment, variables
-		INTO v_action_id, v_config, v_args, v_env, v_vars
+		action_id, arguments, environment, variables
+		INTO v_action_id, v_args, v_env, v_vars
 	FROM 
 		actions
 		JOIN tasks USING (action_id)
@@ -36,13 +34,9 @@ BEGIN
 		RETURN do_raise_error(a_jobtask, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;
 
-	v_task_state = v_config; -- -> 'retry';
-	
-	-- FIXME: add an extra field to jobs?
 	-- 'abuse' the out_args field to store the calulated in_args
 	UPDATE jobs SET
-		 out_args = v_in_args,
-		 task_state = v_task_state
+		out_args = v_in_args
 	WHERE
 		job_id = a_jobtask.job_id;
 

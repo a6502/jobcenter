@@ -86,7 +86,7 @@ ALTER TABLE IF EXISTS ONLY jobcenter.actions DROP CONSTRAINT IF EXISTS actions_p
 ALTER TABLE IF EXISTS ONLY jobcenter.action_version_tags DROP CONSTRAINT IF EXISTS action_version_tags_pkey;
 ALTER TABLE IF EXISTS ONLY jobcenter.action_outputs DROP CONSTRAINT IF EXISTS action_outputs_pkey;
 ALTER TABLE IF EXISTS ONLY jobcenter.action_inputs DROP CONSTRAINT IF EXISTS action_inputs_pkey;
-ALTER TABLE IF EXISTS ONLY jobcenter._procs DROP CONSTRAINT IF EXISTS _funcs_pkey;
+ALTER TABLE IF EXISTS ONLY jobcenter._procs DROP CONSTRAINT IF EXISTS _procs_pkey;
 
 ALTER TABLE IF EXISTS jobcenter.workers ALTER COLUMN worker_id DROP DEFAULT;
 ALTER TABLE IF EXISTS jobcenter.tasks ALTER COLUMN task_id DROP DEFAULT;

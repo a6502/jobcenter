@@ -45,9 +45,6 @@ BEGIN
 				-- mark task done
 				UPDATE jobs SET
 					state = 'done',
-					--waitforlocktype = null,
-					--waitforlockvalue = null,
-					--waitforlockinherit = null,
 					task_completed = now()
 				WHERE
 					job_id = v_waitjob_id;

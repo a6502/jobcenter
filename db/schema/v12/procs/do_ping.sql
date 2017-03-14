@@ -17,7 +17,7 @@ FROM
 WHERE
 	worker_actions.worker_id = a_worker_id
 	AND jobs.state = 'ready'
- 	AND jobs.task_entered < now() - interval '1 minute'
+	AND jobs.task_entered < now() - interval '1 minute'
 GROUP BY
 	action_id;
 $function$

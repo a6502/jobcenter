@@ -48,18 +48,14 @@ BEGIN
 			RAISE NOTICE 'retry action % for %', v_action_id, v_job_id;
 			PERFORM pg_notify('action:' || v_action_id || ':ready', v_job_id::text);
 		WHEN 'working' THEN
-			/*
-			-- check retry policy..
-			UPDATE
-				jobs
-			SET
-				state = 'ready',
-				task_state = jsonb_set(COALESCE(task_state,'{}'::jsonb), '{tries}', to_jsonb(COALESCE((task_state->>'tries')::integer,0) + 1))
-			WHERE
-				job_id = v_job_id;
-			*/
+			v_eventdata = jsonb_build_object(
+				'error', jsonb_build_object(
+					'class', 'soft',
+					'msg', 'timeout'
+				)
+			);
 			RAISE NOTICE 'timeout for job %', v_job_id;
-			PERFORM do_task_done(v_jobtask, v_eventdata);
+			PERFORM do_task_error(v_jobtask, v_eventdata);
 		WHEN 'sleeping' THEN
 			-- done sleeping
 			SELECT

@@ -107,9 +107,6 @@ BEGIN
 			'waitforlocktype', v_locktype,
 			'waitforlockvalue', v_lockvalue,
 			'waitforlockinherit', v_lockinherit),
-		--waitforlocktype = v_locktype,
-		--waitforlockvalue = v_lockvalue,
-		--waitforlockinherit = v_lockinherit,
 		task_started = now()
 	WHERE
 		job_id = a_jobtask.job_id;
