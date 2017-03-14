@@ -10,8 +10,6 @@ AS $function$DECLARE
 	v_in_args jsonb;
 	v_errargs jsonb;
 	v_out_args jsonb;
-	v_changed boolean;
-	v_newvars jsonb;
 BEGIN
 	-- this functions can be called in two ways:
 	-- 1. from do_jobtask directly
@@ -43,9 +41,6 @@ BEGIN
 
 	IF v_state = 'ready' THEN
 		-- mark job as waiting for children
-		-- we need locking here to prevent a race condition with do_end_task
-		-- any deadlock error will be handled in do_jobtask		
-		--LOCK TABLE jobs IN SHARE ROW EXCLUSIVE MODE;
 
 		UPDATE jobs SET
 			state = 'childwait',
@@ -85,7 +80,9 @@ BEGIN
 	END IF;
 
 	-- check if all children are finished
-	PERFORM * FROM jobs WHERE parentjob_id = a_jobtask.job_id AND state <> 'zombie' FOR UPDATE OF jobs;
+	PERFORM * FROM jobs WHERE parentjob_id = a_jobtask.job_id AND state <> 'zombie';
+		-- FOR UPDATE OF jobs;
+	-- using locking here can lead to deadlocks with unreleted queries (task_done)
 
 	IF FOUND THEN -- not finished
 		-- the childjob will unblock us when it is finished (we hope)
@@ -94,6 +91,12 @@ BEGIN
 	END IF;
 
 	RAISE NOTICE 'all children of % are zombies', a_jobtask.job_id;
+
+	-- but we need to lock all zombie jobs to prevent a race condition
+	PERFORM * FROM jobs WHERE parentjob_id = a_jobtask.job_id AND state = 'zombie'
+		FOR UPDATE OF jobs;
+
+	--RAISE NOTICE 'all locked..';
 
 	-- a reap_child_job task will to the actual reaping
 	RETURN do_task_epilogue(v_waitjobtask, false, null, null, null);
