@@ -20,7 +20,11 @@ our %a = %{from_json($jargs // '{}')};
 our %e = %{from_json($jenv // '{}')};
 our %v = %{from_json($jvars // '{}')};
 
-$safe->share(qw(%a %e %v &from_json &to_json));
+our $TRUE = JSON->true;
+our $FALSE = JSON->false;
+our $JSON = JSON::MaybeXS->new(utf8 => 0);
+
+$safe->share(qw(%a %e %v $TRUE $FALSE $JSON));
 
 my $res = $safe->reval($code, 1);
 
