@@ -105,6 +105,7 @@ sub new {
 	$rpc->register('get_job_status', sub { $self->rpc_get_job_status(@_) }, non_blocking => 1, state => 'auth');
 	$rpc->register('get_task', sub { $self->rpc_get_task(@_) }, non_blocking => 1, state => 'auth');
 	$rpc->register('hello', sub { $self->rpc_hello(@_) }, non_blocking => 1);
+	$rpc->register('ping', sub { $self->rpc_ping(@_) });
 	$rpc->register('task_done', sub { $self->rpc_task_done(@_) }, notification => 1, state => 'auth');
 	$rpc->register('withdraw', sub { $self->rpc_withdraw(@_) }, state => 'auth');
 
@@ -205,6 +206,12 @@ sub _disconnect {
 	#delete $self->clients->{refaddr($client)};
 }
 
+sub rpc_ping {
+        my ($self, $c, $i, $rpccb) = @_;
+        return 'pong?';
+}
+
+
 sub rpc_hello {
 	my ($self, $con, $args, $rpccb) = @_;
 	my $client = $con->owner;
@@ -290,15 +297,17 @@ sub rpc_create_job {
 				job_id => $job_id,
 				inargs => $inargs,
 				listenstring => $listenstring,
-				tmr => Mojo::IOLoop->timer($timeout => sub {
-						# request failed, cleanup
-						#$self->pg->pubsub->unlisten($listenstring);
-						$self->pg->pubsub->unlisten('job:finished');
-						&$cb($job_id, {'error' => 'timeout'});
-					}),
 				vtag => $vtag,
 				wfname => $wfname,
 			);
+
+			my $tmr = Mojo::IOLoop->timer($timeout => sub {
+				# request failed, cleanup
+				#$self->pg->pubsub->unlisten($listenstring);
+				$self->pg->pubsub->unlisten('job:finished');
+				&$cb($job_id, {'error' => 'timeout'});
+				$job->destroy;
+			});
 
 			#$self->pg->pubsub->listen($listenstring, sub {
 			# fixme: 1 central listen?
@@ -310,7 +319,7 @@ sub rpc_create_job {
 				$self->log->debug("pubsub cb $@") if $@;
 			});
 
-			$job->update(lcb => $lcb);
+			$job->update(tmr => $tmr, lcb => $lcb);
 
 			# do one poll first..
 			$self->_poll_done($job);
@@ -347,6 +356,7 @@ sub _poll_done {
 			$outargsp = { error => 'error decoding json: ' . $outargs } if $@;
 			eval { $job->cb->($job->{job_id}, $outargsp); };
 			$self->log->debug("got $@ calling callback") if $@;
+			$job->destroy;
 		}
 	);
 }
