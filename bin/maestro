@@ -93,6 +93,11 @@ sub do_timeout {
 				$log->debug("scheduling retry of do_timeout");
 				Mojo::IOLoop->timer($backoff => \&do_timeout);
 			}
+			if ($err) {
+				$res->sth->finish;
+				$log->error("do_timeout got errror $err");
+				return;
+			}
 			my $r = $res->array;
 			$res->sth->finish;
 			if ($r and ref $r eq 'ARRAY' and defined @$r[0]) {
