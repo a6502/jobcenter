@@ -40,6 +40,7 @@ BEGIN
 				jobs
 			SET
 				state = 'ready',
+				timeout = null, -- done with this timeout
 				task_state = jsonb_set(COALESCE(task_state,'{}'::jsonb), '{tries}', to_jsonb(COALESCE((task_state->>'tries')::integer,0) + 1))
 			WHERE
 				job_id = v_job_id;
@@ -79,6 +80,14 @@ BEGIN
 				)
 			);			
 			PERFORM do_task_error(v_jobtask, v_eventdata);
+		ELSE -- this should not happen
+			UPDATE
+				jobs
+			SET
+				timeout = null -- done with this timeout
+			WHERE
+				job_id = v_job_id;
+			RAISE NOTICE 'got spurious timeout for job % in state %', v_job_id, v_state;
 		END CASE;
 	END LOOP;
 
