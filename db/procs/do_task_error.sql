@@ -35,22 +35,33 @@ BEGIN
 
 		IF v_tries < v_maxtries THEN
 			-- interval exists?
-			v_timeout = now() + (v_config#>>'{retry,interval}')::interval;
+			BEGIN
+				v_timeout = now() + (v_config#>>'{retry,interval}')::interval;
 
-			RAISE NOTICE 'do_task_error timeout %', v_timeout;
+				RAISE NOTICE 'do_task_error timeout %', v_timeout;
 
-			UPDATE jobs SET
-				state = 'retrywait',
-				cookie = NULL,
-				timeout = v_timeout,
-				-- save soft error in task_state
-				task_state = COALESCE(task_state, '{}'::jsonb) || a_outargs
-			WHERE
-				job_id = a_jobtask.job_id
-				AND task_id = a_jobtask.task_id
-				AND workflow_id = a_jobtask.workflow_id;
+				UPDATE jobs SET
+					state = 'retrywait',
+					cookie = NULL,
+					timeout = v_timeout,
+					-- save soft error in task_state
+					task_state = COALESCE(task_state, '{}'::jsonb) || a_outargs
+				WHERE
+					job_id = a_jobtask.job_id
+					AND task_id = a_jobtask.task_id
+					AND workflow_id = a_jobtask.workflow_id;
 
-			RETURN;
+				RETURN;
+			EXCEPTION WHEN OTHERS THEN -- or just catch invalid_datetime_format?
+				a_outargs = jsonb_build_object(
+					'error', jsonb_build_object(
+						'msg',  format('error calculating retry timeout sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM),
+						'class', 'normal',
+						'olderror', a_outargs
+					)
+				);
+			END;
+
 		END IF;
 	END IF;
 
