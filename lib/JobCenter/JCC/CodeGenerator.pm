@@ -695,7 +695,7 @@ sub make_variable {
 		unshift @a, $default if $default and length($a[0]) > 1;
 		die "invalid top level $a[0] for $what" unless $a[0] =~ $toplevel; # /^[aeiov]$/;
 		my $perl = '$' . shift @a;
-		$perl .= "{$_}" for @a;
+		$perl .= "{'$_'}" for @a;
 		return $perl;
 	} else {
 		die "huh?";
