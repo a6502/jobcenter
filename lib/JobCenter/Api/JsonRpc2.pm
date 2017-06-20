@@ -110,6 +110,7 @@ sub new {
 	$rpc->register('withdraw', sub { $self->rpc_withdraw(@_) }, state => 'auth');
 
 	my $serveropts = { port => ( $cfg->{api}->{listenport} // 6522 ) };
+	$serveropts->{address} = $cfg->{api}->{listenaddress} if $cfg->{api}->{listenaddress};
 	if ($cfg->{api}->{tls_key}) {
 		$serveropts->{tls} = 1;
 		$serveropts->{tls_key} = $cfg->{api}->{tls_key};
@@ -301,14 +302,6 @@ sub rpc_create_job {
 				wfname => $wfname,
 			);
 
-			my $tmr = Mojo::IOLoop->timer($timeout => sub {
-				# request failed, cleanup
-				#$self->pg->pubsub->unlisten($listenstring);
-				$self->pg->pubsub->unlisten('job:finished');
-				&$cb($job_id, {'error' => 'timeout'});
-				$job->destroy;
-			});
-
 			#$self->pg->pubsub->listen($listenstring, sub {
 			# fixme: 1 central listen?
 			my $lcb = $self->pg->pubsub->listen('job:finished', sub {
@@ -317,6 +310,15 @@ sub rpc_create_job {
 				local $@;
 				eval { $self->_poll_done($job); };
 				$self->log->debug("pubsub cb $@") if $@;
+			});
+
+			my $tmr = Mojo::IOLoop->timer($timeout => sub {
+				# request failed, cleanup
+				#$self->pg->pubsub->unlisten($listenstring);
+				$self->pg->pubsub->unlisten('job:finished' => $lcb);
+				# the cb might fail if the connection is gone..
+				eval { &$cb($job_id, {'error' => 'timeout'}); };
+				$job->destroy;
 			});
 
 			$job->update(tmr => $tmr, lcb => $lcb);
