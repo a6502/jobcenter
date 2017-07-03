@@ -155,7 +155,7 @@ sub dumpert {
 			say $i, "$task_id catch:";
 			dumpert($task_id+1 , $task_id, $indent + 1);
 		}
-		if (not $task->{wait}) {
+		if ($attr and exists $attr->{wait} and $attr->{wait} == 0) {
 			if (not $split) {
 				say $i, "$task_id split:";
 				$i .= "\t";
@@ -225,7 +225,7 @@ sub dumpert {
 			say $i, "$task_id         '$attr->{evalcode}'";
 			$task_id = $task->{next_task_id};
 		} elsif ($action_id == -6) { # reap_child
-			say $i, "$task_id reap_child from task $task->{reapfromtask_id}";
+			say $i, "$task_id reap_child from task $attr->{reapfromtask_id}";
 			if (not --$split) { # should be the last reap_child
 				$indent--;
 				$i = "\t" x $indent;
