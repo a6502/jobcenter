@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.announce(workername text, actionname text, impersonate text DEFAULT NULL::text)
+CREATE OR REPLACE FUNCTION jobcenter.announce(workername text, actionname text, impersonate text DEFAULT NULL::text, filter jsonb DEFAULT NULL::jsonb)
  RETURNS TABLE(o_worker_id bigint, o_listenstring text)
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -7,11 +7,15 @@ AS $function$DECLARE
 	a_workername ALIAS FOR $1;
 	a_actionname ALIAS FOR $2;
 	a_impersonate ALIAS FOR $3;
+	a_filter ALIAS FOR $4;
 	v_worker_id bigint;
 	v_action_id int;
 	v_have_role text;
 	v_should_role text;
 	v_listenstring text;
+	v_config jsonb;
+	v_allowed_filter jsonb;
+	v_key text;
 BEGIN
 	-- create worker if it does not exist already
 	-- see Example 40.2 in http://www.postgresql.org/docs/current/static/plpgsql-control-structures.html
@@ -26,8 +30,8 @@ BEGIN
 	END LOOP;
 
 	SELECT
-		action_id, rolename
-		INTO v_action_id, v_should_role
+		action_id, rolename, config->'filter'
+		INTO v_action_id, v_should_role, v_allowed_filter
 	FROM
 		actions
 	WHERE
@@ -62,8 +66,29 @@ BEGIN
 		RAISE EXCEPTION 'worker % with role % has no permission for role %', session_user, v_have_role, v_should_role;
 	END IF;
 
+	IF a_filter IS NOT NULL THEN
+		IF v_allowed_filter IS NULL OR jsonb_typeof(v_allowed_filter) <> 'array' THEN
+			RAISE EXCEPTION 'filtering is not allowed for action %', a_actionname;
+		END IF;
+		IF jsonb_typeof(a_filter) <> 'object' THEN
+			RAISE EXCEPTION 'filter needs to be a json object %', a_filter;
+		END IF;
+
+		FOR v_key IN SELECT jsonb_object_keys(a_filter) LOOP
+			IF NOT v_allowed_filter ? v_key THEN
+				RAISE EXCEPTION 'filtering is not allowed for key %',v_key;
+			END IF;
+		END LOOP;
+	ELSE
+		IF v_allowed_filter IS NOT NULL
+			AND jsonb_typeof(v_allowed_filter) = 'array'
+			AND NOT v_allowed_filter ? '_*_' THEN
+				RAISE EXCEPTION 'filtering is required for action %', a_actionname;
+		END IF;
+	END IF;
+
 	BEGIN
-		INSERT INTO worker_actions(worker_id, action_id) VALUES (v_worker_id, v_action_id);
+		INSERT INTO worker_actions(worker_id, action_id, filter) VALUES (v_worker_id, v_action_id, a_filter);
 	EXCEPTION WHEN unique_violation THEN
 		-- fixme: or just ignore?
 		RAISE EXCEPTION 'worker % already can do action %', a_workername, a_actionname;
