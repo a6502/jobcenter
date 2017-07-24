@@ -83,11 +83,11 @@ has text =>  <<'EOT';
 jcl: .ignorable* ( +workflow | +action ) .ignorable*
 
 # hack in action support
-action: +action-type +workflow-name colon ( .ignorable | +in | +out )*
+action: +action-type +workflow-name colon ( .ignorable | +in | +out | +filter | +role )*
 
 action-type: / ( 'action' | 'procedure' ) / __
 
-workflow: / 'workflow' __ / +workflow-name colon ( .ignorable | +in | +out | +limits | +locks | +wfomap | +do )*
+workflow: / 'workflow' __ / +workflow-name colon ( .ignorable | +in | +out | +limits | +role | +locks | +wfomap | +do )*
 
 workflow-name: identifier
 
@@ -99,13 +99,21 @@ inout: ( iospec | .ignorable )*
 
 iospec: block-ondent identifier __ identifier (__ / ('optional') / | __ literal)? / _ SEMI? _ /
 
-limits: / 'limits' <colon> / block-indent ( limitspec | .ignorable)* block-undent
+filter: / 'filter' <colon> / block-indent ( filterspec | .ignorable )* block-undent
+
+filterspec: block-ondent identifier ( __ identifier )*
+
+limits: / 'limits' <colon> / block-indent ( limitspec | .ignorable )* block-undent
 
 limitspec: block-ondent / ( 'max_depth' | 'max_steps' ) __ EQUAL __ / unsigned-integer
 
 locks: / 'locks' <colon> / block-indent ( lockspec | .ignorable )* block-undent
 
 lockspec: block-ondent identifier  __ ( identifier | / ( UNDER ) / ) (__ / ( 'inherit' | 'manual') / )*
+
+role: / 'role' <colon> / block-indent ( rolespec | .ignorable )* block-undent
+
+rolespec: block-ondent identifier
 
 wfomap: / 'wfomap' <colon> / assignments
 

@@ -105,13 +105,21 @@ sub generate_workflow {
 	}
 	say 'version: ', $version;
 
+	my $role;
+	if ($wf->{role}) {
+		my @roles = @{$wf->{role}};
+		die "multiple roles not supported (yet?)" if $#roles > 0;
+		$role = @roles[0];
+	}
+
 	my $wfenv = to_json({ map { $$_[0] => $$_[1] } @{$wf->{limits}} });
 	say 'wfenv ', $wfenv;
 	$wfenv = undef if $wfenv and ($wfenv eq 'null' or $wfenv eq '{}');
 
 	my $wfid = $self->qs(
-		q|insert into actions (name, type, version, wfenv) values ($1, 'workflow', $2, $3) returning action_id|, 
-		$wf->{workflow_name}, $version, $wfenv
+		q|insert into actions (name, type, version, wfenv, rolename)
+		  values ($1, 'workflow', $2, $3, $4) returning action_id|,
+		$wf->{workflow_name}, $version, $wfenv, $role
 	);
 	$self->{wfid} = $wfid;
 	say "wfid: $wfid";
@@ -198,9 +206,22 @@ sub generate_action {
 	}
 	say 'version: ', $version;
 
+	my $role;
+	if ($wf->{role}) {
+		my @roles = @{$wf->{role}};
+		die "multiple roles not supported (yet?)" if $#roles > 0;
+		$role = @roles[0];
+	}
+
+	my $config;
+	if ($wf->{filter}) {
+		my @filter = @{$wf->{filter}};
+		$config = json_encode({filter => \@filter});
+	}
+
 	my $wfid = $self->qs(
-		q|insert into actions (name, type, version) values ($1, $2, $3) returning action_id|, 
-		$wf->{workflow_name}, $what,  $version
+		q|insert into actions (name, type, version, rolename, config) values ($1, $2, $3, $4) returning action_id|,
+		$wf->{workflow_name}, $what,  $version, $role, $config
 	);
 	say "wfid: $wfid";
 

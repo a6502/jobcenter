@@ -79,12 +79,14 @@ sub got_to_flatten {
 }
 
 *got_case_label = \&got_to_flatten;
+*got_filter =\&got_to_flatten;
 *got_iospec =\&got_to_flatten;
 *got_lockspec =\&got_to_flatten;
 *got_parented = \&got_to_flatten;
 *got_lhs = \&got_to_flatten;
 *got_rhs = \&got_to_flatten;
 *got_funcarg = \&got_to_flatten;
+*got_role = \&got_to_flatten;
 *got_term = \&got_to_flatten;
 *got_variable = \&got_to_flatten;
 
