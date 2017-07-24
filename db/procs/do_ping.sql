@@ -4,11 +4,12 @@ CREATE OR REPLACE FUNCTION jobcenter.do_ping(a_worker_id bigint)
  SECURITY DEFINER
  SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$
+/* not used anymore
 -- do notify for all jobs in the ready state for this worker
 -- that are older than 1 minute
 -- FIXME: make timeout configurable?
 SELECT
-	pg_notify('action:' || action_id || ':ready', 'pollprettyplease')
+	pg_notify('action:' || action_id || ':ready', '{"poll":"prettyplease"}')
 FROM
 	jobs 
 	JOIN tasks USING (workflow_id, task_id)
@@ -20,4 +21,5 @@ WHERE
 	AND jobs.task_entered < now() - interval '1 minute'
 GROUP BY
 	action_id;
+*/
 $function$
