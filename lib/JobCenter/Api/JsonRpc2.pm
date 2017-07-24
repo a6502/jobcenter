@@ -26,7 +26,7 @@ use Data::Dumper;
 use Encode qw(encode_utf8 decode_utf8);
 use File::Basename;
 use FindBin;
-use IO::Pipe;
+#use IO::Pipe;
 use Scalar::Util qw(refaddr);
 
 # cpan
@@ -95,13 +95,14 @@ sub new {
 		. ( ($cfg->{pg}->{port}) ? ':' . $cfg->{pg}->{port} : '' )
 		. '/' . $cfg->{pg}->{db}
 	) or die 'no pg?';
-
+	$pg->max_connections(5);
 	$pg->on(connection => sub { my ($e, $dbh) = @_; $log->debug("pg: new connection: $dbh"); });
 
 	my $rpc = JSON::RPC2::TwoWay->new(debug => $debug) or die 'no rpc?';
 
 	$rpc->register('announce', sub { $self->rpc_announce(@_) }, non_blocking => 1, state => 'auth');
 	$rpc->register('create_job', sub { $self->rpc_create_job(@_) }, non_blocking => 1, state => 'auth');
+	$rpc->register('find_jobs', sub { $self->rpc_find_jobs(@_) }, non_blocking => 1, state => 'auth');
 	$rpc->register('get_job_status', sub { $self->rpc_get_job_status(@_) }, non_blocking => 1, state => 'auth');
 	$rpc->register('get_task', sub { $self->rpc_get_task(@_) }, non_blocking => 1, state => 'auth');
 	$rpc->register('hello', sub { $self->rpc_hello(@_) }, non_blocking => 1);
@@ -363,6 +364,35 @@ sub _poll_done {
 	);
 }
 
+sub rpc_find_jobs {
+	my ($self, $con, $i, $rpccb) = @_;
+	my $filter = $i->{filter} or die 'no job_id?';
+	Mojo::IOLoop->delay->steps(
+		sub {
+			my $d = shift;
+			$self->pg->db->dollar_only->query(
+				q[select find_jobs($1)],
+				$filter,
+				$d->begin
+			);
+		},
+		sub {
+			my ($d, $err, $res) = @_;
+			if ($err) {
+				$rpccb->(undef, $err);
+				return;
+			}
+			my ($jobs) = @{$res->array};
+			unless (ref $jobs eq 'ARRAY') {
+				$rpccb->(undef, undef);
+				return;
+			}
+			$self->log->debug("found jobs for filter $filter: " . join(' ,', @$jobs));
+			$rpccb->($jobs);
+		}
+	); # fixme: catch?
+}
+
 
 # fixme: reuse _poll_done?
 sub rpc_get_job_status {
@@ -401,6 +431,7 @@ sub rpc_announce {
 	my $actionname = $i->{actionname} or die 'actionname required';
 	my $slots      = $i->{slots} // 1;
 	my $workername = $i->{workername} // $client->workername // $client->who;
+	my $filter     = $i->{filter};
 
 	my ($worker_id, $listenstring);
 	local $@;
@@ -410,10 +441,11 @@ sub rpc_announce {
 		# - actionname does not exist
 		# - worker has already announced action
 		($worker_id, $listenstring) = @{$self->pg->db->dollar_only->query(
-			q[select * from announce($1, $2, $3)],
+			q[select * from announce($1, $2, $3, $4)],
 			$workername,
 			$actionname,
-			$client->who
+			$client->who,
+			($filter ? encode_json($filter) : undef),
 		)->array};
 		die "no result" unless $worker_id;
 	};
@@ -445,6 +477,7 @@ sub rpc_announce {
 		client => $client,
 		listenstring => $listenstring,
 		slots => $slots,
+		filter => $filter,
 		used => 0,
 	);
 
@@ -460,8 +493,9 @@ sub rpc_announce {
 	}
 	$rpccb->(JSON->true, 'success');
 
-	# if this is a new action we'll force a poll
-	$self->_task_ready($listenstring, 'pollfirst') if $self->pending->{$listenstring};
+	# if this is a new action or this worker has a filter we'll force a poll
+	$self->_task_ready($listenstring, '{"poll":"first"}')
+		if $self->pending->{$listenstring} or $filter;
 
 	return
 }
@@ -540,25 +574,37 @@ sub _ping {
 
 # not a method!
 sub _rot {
-	my ($l) = @_;
-	my $e = shift @$l;
-        push @$l, $e;
-        return $e;
+	my $l = shift;
+        push @$l, shift @$l;
 }
 
 # fixme: merge with _task_ready_next
 sub _task_ready {
-	my ($self, $listenstring, $job_id) = @_;
+	my ($self, $listenstring, $payload) = @_;
 	
-	$self->log->debug("got notify $listenstring for '$job_id'");
+	$self->log->debug("got notify $listenstring payload " . ($payload // '<null>'));
+	die '_task_ready: no payload?' unless $payload; # whut?
+
+	$payload = decode_json($payload);
+	my $job_id = $payload->{job_id} // $payload->{poll} // die '_task_ready: invalid payload?';
+
+	my $workers;
+	%$workers = map { $_ => 1 } @{$payload->{workers}} if ref $payload->{workers} eq 'ARRAY';
+
 	my $l = $self->listenstrings->{$listenstring};
 	return unless $l; # should not happen? maybe unlisten here?
 
 	_rot($l); # rotate listenstrings list (list of workeractions)
 	my $wa;
 	for (@$l) { # now find a worker with a free slot
-		die "no wa?" unless $_;
-		$self->log->debug('worker ' . $_->client->worker_id . ' has ' . $_->used . ' of ' . $_->slots . ' used');
+		my $worker_id = $_->client->worker_id;
+		if ($workers) {
+			unless ($workers->{$worker_id}) {
+				$self->log->debug("skipping $worker_id because of filter");
+				next;
+			}
+		}
+		$self->log->debug('worker ' . $worker_id . ' has ' . $_->used . ' of ' . $_->slots . ' used');
 		if ($_->used < $_->slots) {
 			$wa = $_;
 			last;
@@ -577,7 +623,8 @@ sub _task_ready {
 
 	$wa->client->con->notify('task_ready', {actionname => $wa->actionname, job_id => $job_id});
 
-	my $tmr =  Mojo::IOLoop->timer(3 => sub { $self->_task_ready_next($job_id) } );
+	# ask the next worker after 3 seconds
+	my $tmr = Mojo::IOLoop->timer(3 => sub { $self->_task_ready_next($job_id) } );
 
 	my $task = JobCenter::Api::Task->new(
 		actionname => $wa->actionname,
@@ -586,6 +633,7 @@ sub _task_ready {
 		listenstring => $listenstring,
 		tmr => $tmr,
 		workeraction => $wa,
+		workers => $workers,
 	);
 	$self->{tasks}->{$job_id} = $task;
 }
@@ -595,6 +643,7 @@ sub _task_ready_next {
 	my ($self, $job_id) = @_;
 	
 	my $task = $self->{tasks}->{$job_id} or return; # die 'no task in _task_ready_next?';
+	my $workers = $task->workers;
 	
 	$self->log->debug("try next client for $task->{listenstring} for $task->{job_id}");
 	my $l = $self->listenstrings->{$task->listenstring};
@@ -604,7 +653,14 @@ sub _task_ready_next {
 	_rot($l); # rotate listenstrings list (list of workeractions)
 	my $wa;
 	for (@$l) { # now find a worker with a free slot
-		$self->log->debug('worker ' . $_->client->worker_id . ' has ' . $_->used . ' of ' . $_->slots . ' used');
+		my $worker_id = $_->client->worker_id;
+		if ($workers) {
+			unless ($workers->{$worker_id}) {
+				$self->log->debug("skipping $worker_id because of filter");
+				next;
+			}
+		}
+		$self->log->debug('worker ' . $worker_id . ' has ' . $_->used . ' of ' . $_->slots . ' used');
 		if ($_->used < $_->slots) {
 			$wa = $_;
 			last;
@@ -620,13 +676,14 @@ sub _task_ready_next {
 	}
 
 	if (refaddr $wa == refaddr $task->workeraction) {
-		# hmmm...
+		# no other workers available than the one we already tried?
+		# give up for now and let the retry mechanisms cope with this
 		return;
 	}
 
 	$wa->client->con->notify('task_ready', {actionname => $wa->actionname, job_id => $job_id});
 
-	my $tmr =  Mojo::IOLoop->timer(3 => sub { $self->_task_ready_next($job_id) } );
+	my $tmr = Mojo::IOLoop->timer(3 => sub { $self->_task_ready_next($job_id) } );
 
 	$task->update(
 		#client => $client,
@@ -759,7 +816,7 @@ sub rpc_task_done {
 				$self->log->debug("calling _task_readty from task_done_callback!");
 				$self->_task_ready(
 					$task->workeraction->listenstring,
-					'pollplease'
+					'{"poll":"please"}'
 				);
 			}
 		},
