@@ -10,6 +10,18 @@ UPDATE workers SET
 WHERE
 	stopped IS NULL
 	AND last_ping + interval '3 minutes' < now();
+-- remove worker actions of dead workers
+DELETE FROM
+	 worker_actions
+WHERE
+	worker_id NOT IN (
+		SELECT
+			worker_id
+		FROM
+			workers
+		WHERE
+			stopped IS NULL
+	);
 -- move finished jobs to the jobs_archive table
 WITH jobrecords AS (
 	DELETE FROM
