@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.get_task(a_workername text, a_actionname text, a_job_id bigint DEFAULT NULL::bigint, a_pattern jsonb DEFAULT NULL::jsonb)
+CREATE OR REPLACE FUNCTION jobcenter.get_task(a_workername text, a_actionname text, a_job_id bigint DEFAULT NULL::bigint)
  RETURNS TABLE(o_job_id bigint, o_job_cookie text, o_in_args jsonb)
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -12,70 +12,31 @@ AS $function$DECLARE
 	v_task_id int;
 	v_key text;
 	v_val jsonb;
-	v_havepat jsonb DEFAULT '{}'::jsonb;
-	v_havenotpat jsonb DEFAULT 'null'::jsonb;
+	v_filter jsonb;
 BEGIN
 	SELECT
-		worker_id INTO v_worker_id
+		worker_id, action_id, a.config, wa.filter
+		INTO v_worker_id, v_action_id, v_config, v_filter
 	FROM
-		workers
+		workers w
+		JOIN worker_actions wa USING (worker_id)
+		JOIN actions a USING (action_id)
 	WHERE
-		name = a_workername 
-		AND stopped IS NULL;
+		w.name = a_workername
+		AND w.stopped IS NULL
+		AND a.name = a_actionname
+		AND type = 'action';
 
 	IF NOT FOUND THEN
-		RAISE EXCEPTION 'no worker named %.', a_workername;
-	END IF;
-
-	SELECT
-		action_id, config INTO v_action_id, v_config
-	FROM
-		actions
-	WHERE
-		name = a_actionname
-		AND type = 'action'
-	ORDER BY version DESC LIMIT 1; -- FIXME
-
-	IF NOT FOUND THEN
-		RAISE EXCEPTION 'no action named %.', a_actionname;
-	END IF;
-
-	PERFORM 
-		true
-	FROM
-		worker_actions
-	WHERE
-		worker_id = v_worker_id
-		AND action_id = v_action_id;
-
-	IF NOT FOUND THEN
-		RAISE EXCEPTION 'worker % has not announced action %.', a_workername, a_actionname;
-	END IF;
-
-	IF a_pattern IS NOT NULL THEN
-		v_havenotpat = '{}'::jsonb;
-
-		FOR v_key, v_val IN SELECT * FROM jsonb_each(a_pattern) LOOP
-			IF v_key ~~ '!%' THEN
-				v_havenotpat := jsonb_set(v_havenotpat, ARRAY[right(v_key,-1)], v_val);
-			ELSE
-				v_havepat := jsonb_set(v_havepat, ARRAY[v_key], v_val);
-			END IF;
-		END LOOP;
-
-		IF v_havenotpat = '{}'::jsonb THEN
-			v_havenotpat = 'null'::jsonb;
-		END IF;
-
-		RAISE NOTICE 'havepat % havenotpat %', v_havepat, v_havenotpat;
+		RAISE EXCEPTION 'no workeraction for worker % action %.', a_workername, a_actionname;
 	END IF;
 
 	-- let's assume that the jsonb patternmatching is cheap enough..
 
 	IF a_job_id IS NOT NULL THEN
 		SELECT
-			job_id, workflow_id, task_id
-			INTO o_job_id, v_workflow_id, v_task_id
+			job_id, workflow_id, task_id, out_args
+			INTO o_job_id, v_workflow_id, v_task_id, o_in_args
 		FROM
 			jobs AS j
 			JOIN tasks AS t USING (task_id, workflow_id)
@@ -83,21 +44,22 @@ BEGIN
 			j.job_id = a_job_id
 			AND t.action_id = v_action_id
 			AND state = 'ready'
-			AND out_args @> v_havepat
-			AND NOT out_args @> v_havenotpat
+			AND (v_filter IS NULL
+			     OR out_args @> v_filter)
 		FOR UPDATE OF j SKIP LOCKED; -- sigh: because of jobs as j
 	ELSE
+		-- poll
 		SELECT
-			job_id, workflow_id, task_id
-			INTO o_job_id, v_workflow_id, v_task_id
+			job_id, workflow_id, task_id, out_args
+			INTO o_job_id, v_workflow_id, v_task_id, o_in_args
 		FROM
 			jobs AS j
 			JOIN tasks AS t USING (task_id, workflow_id)
 		WHERE
 			state = 'ready'
 			AND t.action_id = v_action_id
-			AND out_args @> v_havepat
-			AND NOT out_args @> v_havenotpat
+			AND (v_filter IS NULL
+			     OR out_args @> v_filter)
 		ORDER BY job_id LIMIT 1
 		FOR UPDATE OF j SKIP LOCKED; -- sigh: because of jobs as j
 	END IF;
@@ -121,9 +83,10 @@ BEGIN
 		job_id = o_job_id
 		AND task_id = v_task_id
 		AND state = 'ready'
-	RETURNING cookie, out_args INTO o_job_cookie, o_in_args;
+	RETURNING cookie INTO o_job_cookie;
 
 	IF NOT FOUND THEN
+		-- should not happen because of select for update?
 		RAISE NOTICE 'task gone for job_id % and action_id %', o_job_id, v_action_id;
 		RETURN;
 	END IF;
