@@ -20,10 +20,8 @@ do:
 	lock schloss 'schlüssel'
 	eval:
 		thing .= ' and got lock "schloss"'
-	wait_for_event:
-		timeout = 1.5
-	into:
-		<event>
+	sleep:
+		timeout = "11.55 seconds"
 	eval:
 		thing .= ' and did a nap'
 	#unlock slot 'sleutel'
