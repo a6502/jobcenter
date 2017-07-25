@@ -3,15 +3,29 @@
 
 ### Requirements & Dependencies:
 
-*   PostgreSQL 9.5: [http://www.postgresql.org/download/](http://www.postgresql.org/download/)
+*   PostgreSQL 9.6: [http://www.postgresql.org/download/](http://www.postgresql.org/download/)
     *   server, client and plperl procedural language
-    *   debian: postgresql-9.5 postgresql-client-9.5 postgresql-contrib-9.5 postgresql-plperl-9.5
+    *   debian: postgresql-9.6 postgresql-client-9.6 postgresql-contrib-9.6 postgresql-plperl-9.6
     *   rhel: postgresql95-server, postgresql95, postgresql95-contrib, postgresql95-plperl
-    *   The jsonb features of version 9.5 are required, older versions won't
+    *   The jsonb features of version 9.6 are required, older versions won't
         work. Consider using the packages from postgresql.org if your
         distriubtion does not have the required version.
-*   A initialized PostgreSQL cluster, configured to accept network connections
-    using md5 passwords
+*   A initialized PostgreSQL cluster, configured to accept local and/or network connections
+    using md5 passwords. Example pg_hba.conf:
+```
+# Database administrative login by Unix domain socket
+local   all             postgres                                peer
+
+# TYPE  DATABASE        USER            ADDRESS                 METHOD
+
+# "local" is for Unix domain socket connections only
+local   all             all                                     md5
+# IPv4 local connections:
+host    all             all             127.0.0.1/32            md5
+# IPv6 local connections:
+host    all             all             ::1/128                 md5
+
+```
 *   (one time) access to the PostresSQL unix user to configure pl/perl
 *   (one time) access to the PostgreSQL superuser (user postgres or create a new one)
     * required for setting up the JobCenter database and roles
@@ -78,8 +92,8 @@
 
     *   add a "include_if_exists = '<jobcenter>/etc/plperl.conf'" to the main PostgreSQL
         config file
-        * debian: /etc/postgresql/9.5/postgresql.conf
-        * rhel: /var/lib/pgsql/9.5/data/postgresql.conf
+        * debian: /etc/postgresql/9.6/postgresql.conf
+        * rhel: /var/lib/pgsql/9.6/data/postgresql.conf
 *   Restart PostgreSQL for the configuration changes to be effective.
 *   run `db/dbdings create` as the jobcenter user to create the schema in the db you
     just created
@@ -96,7 +110,11 @@ outargs as json: {"output": 15}
 result: {"output": 15}
 ```
 *   Run the unittests: `cd tests; ./dotest.pl`
-*   Start the JobCenter API: bin/jcapi
+*   Configure the API:
+    *   If you want to use SSL, you need a certificate. To create a self-signed one:
+        * 'openssl req -x509 -newkey rsa:2048 -keyout api.key -out api.pem -days 3065 -nodes'
+        * use
+    *   Now start the JobCenter API: bin/jcapi
 
 ### Uprading:
 
