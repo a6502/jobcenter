@@ -109,7 +109,7 @@ sub generate_workflow {
 	if ($wf->{role}) {
 		my @roles = @{$wf->{role}};
 		die "multiple roles not supported (yet?)" if $#roles > 0;
-		$role = @roles[0];
+		$role = $roles[0];
 	}
 
 	my $wfenv = to_json({ map { $$_[0] => $$_[1] } @{$wf->{limits}} });
@@ -210,7 +210,7 @@ sub generate_action {
 	if ($wf->{role}) {
 		my @roles = @{$wf->{role}};
 		die "multiple roles not supported (yet?)" if $#roles > 0;
-		$role = @roles[0];
+		$role = $roles[0];
 	}
 
 	my $config;
