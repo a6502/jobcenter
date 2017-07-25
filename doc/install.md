@@ -96,8 +96,9 @@ host    all             all             ::1/128                 md5
         * debian: /etc/postgresql/9.6/postgresql.conf
         * rhel: /var/lib/pgsql/9.6/data/postgresql.conf
 *   Restart PostgreSQL for the configuration changes to be effective.
-*   run `db/dbdings create` as the jobcenter user to create the schema in the db you
+*   Run `db/dbdings create` as the jobcenter user to create the schema in the db you
     just created
+*   Then run `db/dbding update` to load the latest stored procedures
 *   Start the maestro (use `bin/maestro --nodaemon` to see the debug output)
 *   Start a worker, for example `bin/mojoworker --nodaemon`
 *   Try a 'hello world' test:
