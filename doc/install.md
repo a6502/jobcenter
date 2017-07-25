@@ -1,4 +1,3 @@
-
 # JobCenter Installation
 
 ### Requirements & Dependencies:
@@ -12,6 +11,7 @@
         distriubtion does not have the required version.
 *   A initialized PostgreSQL cluster, configured to accept local and/or network connections
     using md5 passwords. Example pg_hba.conf:
+
 ```
 # Database administrative login by Unix domain socket
 local   all             postgres                                peer
@@ -26,6 +26,7 @@ host    all             all             127.0.0.1/32            md5
 host    all             all             ::1/128                 md5
 
 ```
+
 *   (one time) access to the PostresSQL unix user to configure pl/perl
 *   (one time) access to the PostgreSQL superuser (user postgres or create a new one)
     * required for setting up the JobCenter database and roles
