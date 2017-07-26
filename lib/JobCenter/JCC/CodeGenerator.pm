@@ -118,7 +118,7 @@ sub generate_workflow {
 
 	my $wfid = $self->qs(
 		q|insert into actions (name, type, version, wfenv, rolename)
-		  values ($1, 'workflow', $2, $3, $4) returning action_id|,
+		  values ($1, 'workflow', $2, $3, $4, $5) returning action_id|,
 		$wf->{workflow_name}, $version, $wfenv, $role
 	);
 	$self->{wfid} = $wfid;
@@ -220,7 +220,8 @@ sub generate_action {
 	}
 
 	my $wfid = $self->qs(
-		q|insert into actions (name, type, version, rolename, config) values ($1, $2, $3, $4) returning action_id|,
+		q|insert into actions (name, type, version, rolename, config)
+		  values ($1, $2, $3, $4, $5) returning action_id|,
 		$wf->{workflow_name}, $what,  $version, $role, $config
 	);
 	say "wfid: $wfid";
