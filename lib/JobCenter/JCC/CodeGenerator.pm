@@ -118,7 +118,7 @@ sub generate_workflow {
 
 	my $wfid = $self->qs(
 		q|insert into actions (name, type, version, wfenv, rolename)
-		  values ($1, 'workflow', $2, $3, $4, $5) returning action_id|,
+		  values ($1, 'workflow', $2, $3, $4) returning action_id|,
 		$wf->{workflow_name}, $version, $wfenv, $role
 	);
 	$self->{wfid} = $wfid;
@@ -216,7 +216,7 @@ sub generate_action {
 	my $config;
 	if ($wf->{filter}) {
 		my @filter = @{$wf->{filter}};
-		$config = json_encode({filter => \@filter});
+		$config = to_json({filter => \@filter});
 	}
 
 	my $wfid = $self->qs(
@@ -365,7 +365,10 @@ sub gen_case {
 			}));
 	my $endcasetid = $self->instask(T_NO_OP); # dummy task to tie things together
 
-	for my $when (@{$case->{when}}) {
+	my $whens = $case->{when};
+	# workaround for single when cases
+	$whens = [$whens] unless ref $whens eq 'ARRAY';
+	for my $when (@$whens) {
 		my ($whenf, $whenl) = $self->gen_do($when->{block});
 		for my $match (@{$when->{case_label}}) {
 			$self->qs(q|insert into next_tasks values($1, $2, $3) returning from_task_id|, $casetid, $whenf, $match);
@@ -691,6 +694,7 @@ sub make_literal {
 	if ($key eq 'number'
 	    or $key eq 'single_quoted_string'
 	    or $key eq 'double_quoted_string'
+	    or $key eq 'boolean'
 	    or $key eq 'null'){
 		return $val;
 	} else {
