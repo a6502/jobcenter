@@ -684,7 +684,8 @@ sub make_term {
 }
 
 # note: not a method
-# used for the default values in a imap
+# used for the default values in a imap, so this generates json and not perl like the
+# sub above
 sub make_literal {
 	my ($ast) = @_;
 	return undef unless $ast;
@@ -692,11 +693,13 @@ sub make_literal {
 	die 'expected a hashref with 1 key' unless ref $ast eq 'HASH' and keys %$ast == 1;
 	my ($key, $val) = each(%$ast);
 	if ($key eq 'number'
-	    or $key eq 'single_quoted_string'
-	    or $key eq 'double_quoted_string'
 	    or $key eq 'boolean'
-	    or $key eq 'null'){
+	    or $key eq 'null') {
 		return $val;
+	} elsif ($key eq 'single_quoted_string'
+	    or $key eq 'double_quoted_string') {
+		$val =~ s/"/\\"/g;
+		return '"' . $val . '"';
 	} else {
 		die "dunno how to make a literal from $key";
 	}
