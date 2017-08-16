@@ -9,7 +9,7 @@ AS $function$DECLARE
 BEGIN
 
 	SELECT 
-		state, out_args INTO STRICT v_state, v_out_args
+		state, out_args INTO v_state, v_out_args
 	FROM
 		jobs
 	WHERE
