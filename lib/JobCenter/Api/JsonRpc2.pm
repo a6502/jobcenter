@@ -418,7 +418,9 @@ sub rpc_get_job_status {
 				$rpccb->(undef, undef);
 				return;
 			}
-			$outargs = decode_json($outargs);
+			if (ref $outargs) {
+				$outargs = decode_json($outargs);
+			}
 			$self->log->debug("got status for job_id $job_id outargs $outargs");
 			$rpccb->($job_id, $outargs);
 		}
