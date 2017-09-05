@@ -639,6 +639,7 @@ sub get_type {
 # note: not a method
 sub make_rhs {
 	my ($ast, $default) = @_;
+	$ast = [ $ast ] if $ast and ref $ast eq 'HASH';
 	say "rhs: ", Dumper(\$ast);
 	die 'expected a array' unless $ast and ref $ast eq 'ARRAY';
 	my @rhs = @$ast; # a copy to consume
