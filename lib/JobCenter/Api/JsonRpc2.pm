@@ -249,6 +249,7 @@ sub rpc_create_job {
 	my $vtag = $i->{vtag};
 	my $timeout = $i->{timeout} // 60;
 	my $impersonate = $client->who;
+	my $env; # = decode_utf8(encode_json({foo => 'bar'}));
 	my $cb = sub {
 		my ($job_id, $outargs) = @_;
 		$con->notify('job_done', {job_id => $job_id, outargs => $outargs});
@@ -267,11 +268,12 @@ sub rpc_create_job {
 			my $d = shift;
 			#($job_id, $listenstring) = @{
 			$self->pg->db->dollar_only->query(
-				q[select * from create_job(wfname := $1, args := $2, tag := $3, impersonate := $4)],
+				q[select * from create_job(wfname := $1, args := $2, tag := $3, impersonate := $4, env := $5)],
 				$wfname,
 				$inargs,
 				$vtag,
 				$impersonate,
+				$env,
 				$d->begin
 			);
 		},
