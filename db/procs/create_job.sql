@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.create_job(wfname text, args jsonb, tag text DEFAULT NULL::text, impersonate text DEFAULT NULL::text)
+CREATE OR REPLACE FUNCTION jobcenter.create_job(wfname text, args jsonb, tag text DEFAULT NULL::text, impersonate text DEFAULT NULL::text, env jsonb DEFAULT '{}'::jsonb)
  RETURNS TABLE(o_job_id bigint, o_listenstring text)
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -8,6 +8,7 @@ AS $function$DECLARE
 	a_args ALIAS FOR $2;
 	a_tag ALIAS FOR $3;
 	a_impersonate ALIAS FOR $4;
+	a_env ALIAS FOR $5;
 	v_workflow_id int;
 	v_task_id int;
 	v_val jsonb;
@@ -24,7 +25,7 @@ BEGIN
 
 	-- find the worklow by name
 	SELECT
-		action_id, wfenv, rolename INTO
+		action_id, COALESCE(wfenv, '{}'::jsonb), rolename INTO
 		v_workflow_id, v_env, v_should_role
 	FROM 
 		actions
@@ -56,6 +57,7 @@ BEGIN
 
 		v_have_role := a_impersonate;
 		v_via_role := session_user;
+		v_env := a_env || v_env; -- wfenv overwrites a_env
 	ELSE
 		v_have_role := session_user;
 	END IF;
@@ -82,7 +84,7 @@ BEGIN
 	END IF;
 
 	SELECT jcenv FROM jc_env INTO STRICT v_val; -- hack, reuse v-val
-	v_env := COALESCE(v_env, '{}'::jsonb) || v_val; -- jcenv overwrites wfenv
+	v_env := v_env || v_val; -- jcenv overwrites wfenv/a_env
 	v_env := jsonb_set(v_env, '{client}', to_jsonb(v_have_role));
 	IF v_via_role IS NOT NULL THEN
 		v_env := jsonb_set(v_env, '{via}', to_jsonb(v_via_role));
