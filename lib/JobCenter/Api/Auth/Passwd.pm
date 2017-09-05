@@ -49,3 +49,9 @@ sub authenticate {
 }
 
 1;
+
+=pod
+
+Create the encrypted password with "mkpasswd --method=sha-256 <pw>"
+
+=cut
