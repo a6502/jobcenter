@@ -1,5 +1,5 @@
 CREATE OR REPLACE FUNCTION jobcenter.get_task(a_workername text, a_actionname text, a_job_id bigint DEFAULT NULL::bigint)
- RETURNS TABLE(o_job_id bigint, o_job_cookie text, o_in_args jsonb)
+ RETURNS TABLE(o_job_id bigint, o_job_cookie text, o_in_args jsonb, o_env jsonb)
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO jobcenter, pg_catalog, pg_temp
@@ -35,8 +35,8 @@ BEGIN
 
 	IF a_job_id IS NOT NULL THEN
 		SELECT
-			job_id, workflow_id, task_id, out_args
-			INTO o_job_id, v_workflow_id, v_task_id, o_in_args
+			job_id, workflow_id, task_id, out_args, task_state -> 'env'
+			INTO o_job_id, v_workflow_id, v_task_id, o_in_args, o_env
 		FROM
 			jobs AS j
 			JOIN tasks AS t USING (task_id, workflow_id)
@@ -50,8 +50,8 @@ BEGIN
 	ELSE
 		-- poll
 		SELECT
-			job_id, workflow_id, task_id, out_args
-			INTO o_job_id, v_workflow_id, v_task_id, o_in_args
+			job_id, workflow_id, task_id, out_args, task_state -> 'env'
+			INTO o_job_id, v_workflow_id, v_task_id, o_in_args, o_env
 		FROM
 			jobs AS j
 			JOIN tasks AS t USING (task_id, workflow_id)
@@ -95,7 +95,7 @@ BEGIN
 		-- maybe we should do this in the client?
 		o_in_args = '{}'::jsonb;
 	END IF;
-	RAISE NOTICE 'get_task: o_in_args %', o_in_args;
+	RAISE NOTICE 'get_task: o_in_args % o_env %', o_in_args, o_env;
 	RETURN NEXT;
 	RETURN;
 END$function$
