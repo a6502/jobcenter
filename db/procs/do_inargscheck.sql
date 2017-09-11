@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.do_inargscheck(a_action_id integer, a_args jsonb)
+CREATE OR REPLACE FUNCTION jobcenter.do_inargscheck(a_action_id integer, a_args jsonb, a_dest action_input_destination DEFAULT 'arguments'::action_input_destination)
  RETURNS jsonb
  LANGUAGE plpgsql
  STABLE
@@ -25,7 +25,8 @@ BEGIN
 			FROM
 				action_inputs JOIN json_schemas USING ("type")
 			WHERE
-				action_id = a_action_id LOOP
+				action_id = a_action_id
+				AND destination = a_dest LOOP
 		IF v_inargs ? v_key THEN
 			v_val := v_inargs->v_key;
 			IF v_base THEN
@@ -33,14 +34,14 @@ BEGIN
 				IF v_actual IS NULL OR v_actual = 'null' or v_actual = v_type THEN
 					NULL;
 				ELSE
-					RAISE EXCEPTION 'input parameter "%" has wrong type % (should be %)', v_key, v_actual, v_type;
+					RAISE EXCEPTION 'input argument "%" has wrong type % (should be %)', v_key, v_actual, v_type;
 				END IF;
 			ELSE
 				IF jsonb_typeof(v_schema) = 'string' THEN
 					SELECT regexp_matches((v_schema #>> '{}')::text, '^jcdb:(\w+)(#.*)$') INTO v_tmp;
 					SELECT "schema" INTO v_rootschema FROM json_schemas WHERE "type" = v_tmp[1];
 					IF v_rootschema IS NULL THEN
-						RAISE EXCEPTION 'unkown type % referenced from schema % for input parameter %', v_tmp[1], v_schema, v_key;
+						RAISE EXCEPTION 'unkown type % referenced from schema % for input argument %', v_tmp[1], v_schema, v_key;
 					END IF;
 					v_subschema = json_build_object('$ref', v_tmp[2]);
 					-- RAISE NOTICE 'val % rootschema % subschema %', v_val, v_rootschema, v_subschema;
@@ -49,7 +50,7 @@ BEGIN
 				END IF;
 
 				IF NOT do_validate_json_schema(v_subschema, v_val, v_rootschema) THEN
-					RAISE EXCEPTION E'input parameter "%" with value "%" does not validate against schema:\n"%"', v_key, v_val, jsonb_pretty(v_schema);
+					RAISE EXCEPTION 'input argument "%" with value "%" does not validate against schema:\n"%"', v_key, v_val, jsonb_pretty(v_schema);
 				END IF;
 			END IF;
 		ELSE
@@ -57,7 +58,7 @@ BEGIN
 				--RAISE NOTICE 'setting % to default  %', v_key, v_def;
 				v_inargs := jsonb_set(v_inargs, ARRAY[v_key], v_def);
 			ELSE
-				RAISE EXCEPTION 'required input parameter "%" not found', v_key;
+				RAISE EXCEPTION 'required input argument "%" not found', v_key;
 			END IF;
 		END IF;
 	END LOOP;
