@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.create_job(wfname text, args jsonb, tag text DEFAULT NULL::text, impersonate text DEFAULT NULL::text, env jsonb DEFAULT '{}'::jsonb)
+CREATE OR REPLACE FUNCTION jobcenter.create_job(wfname text, args jsonb, tag text DEFAULT NULL::text, impersonate text DEFAULT NULL::text, env jsonb DEFAULT NULL::jsonb)
  RETURNS TABLE(o_job_id bigint, o_listenstring text)
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -57,7 +57,8 @@ BEGIN
 
 		v_have_role := a_impersonate;
 		v_via_role := session_user;
-		v_env := a_env || v_env; -- wfenv overwrites a_env
+		RAISE NOTICE 'v_env before: %; a_env: %', v_env, a_env;
+		v_env := COALESCE(a_env, '{}'::jsonb) || v_env; -- wfenv overwrites a_env
 	ELSE
 		v_have_role := session_user;
 	END IF;
