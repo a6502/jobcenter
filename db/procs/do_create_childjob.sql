@@ -19,8 +19,8 @@ BEGIN
 	-- find the sub-worklow using the task in the parent
 	-- get the arguments and variables as well
 	SELECT
-		action_id, COALESCE( (attributes->>'wait')::boolean, true),
-		arguments, environment, variables, current_depth
+		action_id, COALESCE( (attributes->>'wait')::boolean, true), arguments,
+		COALESCE(environment, '{}'::jsonb), variables, current_depth
 		INTO v_workflow_id, v_wait, v_args, v_parent_env, v_vars, v_curdepth
 	FROM 
 		actions
@@ -52,8 +52,7 @@ BEGIN
 	
 	-- ok, now find the start task of the workflow
 	SELECT 
-		t.task_id, a.wfenv
-		INTO v_task_id, v_env
+		t.task_id INTO v_task_id
 	FROM
 		tasks AS t
 		JOIN actions AS a ON t.action_id = a.action_id
@@ -66,13 +65,13 @@ BEGIN
 		RAISE EXCEPTION 'no start task in workflow % .', a_wfname;
 	END IF;
 
-	-- setup childjob env
+	-- setup childjob env: copy parent env but overwrite with the per workflow
+	-- and global env (in that order)
+	SELECT COALESCE(wfenv, '{}'::jsonb) INTO v_env FROM actions WHERE action_id = v_workflow_id;
 	SELECT jcenv FROM jc_env INTO STRICT v_jcenv;
-	v_env := COALESCE(v_env, '{}'::jsonb) || v_jcenv; -- jcenv overwrites wfenv
+	v_env := v_parent_env || v_env || v_jcenv;
+	-- jcenv overwrites wfenv overwrites parent_env
 	v_env := jsonb_set(v_env, '{max_depth}', to_jsonb(v_maxdepth));
-	-- copy some values from parent env
-	v_env := jsonb_set(v_env, '{client}', v_parent_env->'client');
-
 
 	--RAISE NOTICE 'do_create_childjob: v_wait is %', v_wait;
 
