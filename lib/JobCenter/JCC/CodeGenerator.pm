@@ -8,6 +8,7 @@ use Mojo::Util qw(quote);
 # stdperl
 use Carp qw(croak);
 use Data::Dumper;
+use Digest::MD5 qw(md5_hex);
 use List::Util qw( any );
 #use Scalar::Util qw(blessed);
 
@@ -71,6 +72,7 @@ sub generate {
 sub generate_workflow {
 	my ($self, %args) = @_;
 
+	my $wfsrc = $args{wfsrc};
 	my $wf = $args{wfast}->{workflow};
 	my $labels = $args{labels} // [];	
 	my $tags = $args{tags};
@@ -117,9 +119,9 @@ sub generate_workflow {
 	$wfenv = undef if $wfenv and ($wfenv eq 'null' or $wfenv eq '{}');
 
 	my $wfid = $self->qs(
-		q|insert into actions (name, type, version, wfenv, rolename)
-		  values ($1, 'workflow', $2, $3, $4) returning action_id|,
-		$wf->{workflow_name}, $version, $wfenv, $role
+		q|insert into actions (name, type, version, wfenv, rolename, src, srcmd5)
+		  values ($1, 'workflow', $2, $3, $4, $5, $6) returning action_id|,
+		$wf->{workflow_name}, $version, $wfenv, $role, $$wfsrc, md5_hex($$wfsrc)
 	);
 	$self->{wfid} = $wfid;
 	say "wfid: $wfid";
@@ -155,7 +157,6 @@ sub generate_workflow {
 
 	my $start = $self->instask(T_START, next_task_id => (($lockfirst) ? $lockfirst : $first)); # magic start task to first real task
 	$self->set_next($locklast, $first) if $lockfirst; # lock tasks to other tasks
-	#my $end = $self->instask(T_END); # magic end task
 	my $end = $self->instask(T_END, attributes => # magic end task
 		to_json({
 			wfmapcode => $self->make_perl($wf->{wfomap}, WFOMAP)
@@ -184,6 +185,7 @@ sub generate_workflow {
 sub generate_action {
 	my ($self, %args) = @_;
 
+	my $wfsrc = $args{wfsrc};
 	my $wf = $args{wfast}->{action};
 	my $what = $wf->{action_type};
 	my $tags = $args{tags};
@@ -213,16 +215,15 @@ sub generate_action {
 		$role = $roles[0];
 	}
 
-	my $config;
-	if ($wf->{filter}) {
-		my @filter = @{$wf->{filter}};
-		$config = to_json({filter => \@filter});
-	}
+	my (%config, $config);
+	#$config{env} = $wf->{env} if $wf->{env} and @{$wf->{env}};
+	$config{filter} = $wf->{filter} if $wf->{filter} and @{$wf->{filter}};
+	$config = to_json(\%config) if %config;
 
 	my $wfid = $self->qs(
-		q|insert into actions (name, type, version, rolename, config)
-		  values ($1, $2, $3, $4, $5) returning action_id|,
-		$wf->{workflow_name}, $what,  $version, $role, $config
+		q|insert into actions (name, type, version, rolename, config, src, srcmd5)
+		  values ($1, $2, $3, $4, $5, $6, $7) returning action_id|,
+		$wf->{workflow_name}, $what,  $version, $role, $config, $$wfsrc, md5_hex($$wfsrc)
 	);
 	say "wfid: $wfid";
 
@@ -231,6 +232,17 @@ sub generate_action {
 		$self->qs(
 			q|insert into action_inputs (action_id, name, type, optional, "default") values ($1, $2, $3, $4, $5) returning action_id|,
 			$wfid, $$in[0], $$in[1], ($$in[2] ? 'true' : 'false'), make_literal($$in[2])
+		);
+	}
+
+	for my $env (@{$wf->{env}}) {
+		$self->qs(
+			q|insert into action_inputs
+				(action_id, name, type, optional, "default", destination)
+			 values
+				($1, $2, $3, $4, $5, 'environment')
+			 returning action_id|,
+			$wfid, $$env[0], $$env[1], ($$env[2] ? 'true' : 'false'), make_literal($$env[2])
 		);
 	}
 
@@ -352,6 +364,7 @@ EOF
 				imapcode => $imap,
 				omapcode => $omap,
 				wait => ($magic) ? 0 : 1, # bleh.. !magic is undef, not 0
+				#_line => $call->{_line},
 			}));
 	return ($tid, $tid);
 }
@@ -361,7 +374,8 @@ sub gen_case {
 
 	my $casetid = $self->instask(T_SWITCH, attributes => # case
 			to_json({
-				stringcode => $self->make_perl($case->{case_expression}, STRING)
+				stringcode => $self->make_perl($case->{case_expression}, STRING),
+				#_line => $case->{_line},
 			}));
 	my $endcasetid = $self->instask(T_NO_OP); # dummy task to tie things together
 
@@ -391,7 +405,9 @@ sub gen_if {
 
 	my $iftid = $self->instask(T_BRANCH, attributes => # if
 			to_json({
-				boolcode => $self->make_perl($if->{condition}, BOOL)
+				boolcode => $self->make_perl($if->{condition}, BOOL),
+				#_line => $if->{_line},
+				_stmt => 'if',
 			}));
 	my $endiftid = $self->instask(T_NO_OP); # dummy task to tie things together
 
@@ -418,13 +434,18 @@ sub gen_eval {
 	my $evaltid = $self->instask(T_EVAL, attributes =>
 			to_json({
 				evalcode => $self->make_perl($eval, OMAP),
+				#_line => $eval->{_line},
 			}));
 	return ($evaltid, $evaltid);
 }
 
 sub gen_goto {
 	my ($self, $goto) = @_;
-	my $gototid = $self->instask(T_NO_OP); # use a no_op to set the next_task_id of
+	my $gototid = $self->instask(T_NO_OP, attributes =>
+			to_json({
+				#_line => $goto->{_line},
+				_stmt => 'goto',
+			})); # use a no_op to set the next_task_id of
 	die "goto: unknown label $goto" unless exists $self->{labels}->{$goto};
 	push @{$self->{fixup}}, [ $gototid, $goto ];
 	# return undef so gen_do does not meddle with the next_task_id
@@ -457,15 +478,9 @@ sub gen_lock {
 			locktype => $type,
 			stringcode => $value,
 			lockinherit => $self->{locks}->{$type}->{inherit},
+			#_line => $lock->{_line},
 		})
 	);
-	#	$tid = $self->instask(T_LOCK, attributes =>
-	#		to_json({
-	#			locktype => $type,
-	#			lockvalue => $self->{locks}->{$type}->{value},
-	#			lockinherit => self->{locks}->{$type}->{inherit},
-	#		})
-	#	);
 	return ($tid, $tid);
 }
 
@@ -474,6 +489,7 @@ sub gen_raise_error {
 	my $raisetid = $self->instask(T_RAISE_ERROR, attributes =>
 			to_json({
 				imapcode => $self->make_perl($raise, IMAP),
+				#_line => $raise->{_line},
 			}));
 	return ($raisetid, $raisetid);
 }
@@ -483,6 +499,7 @@ sub gen_raise_event {
 	my $raisetid = $self->instask(T_RAISE_EVENT, attributes =>
 			to_json({
 				imapcode => $self->make_perl($raise, IMAP),
+				#_line => $raise->{_line},
 			}));
 	return ($raisetid, $raisetid);
 }
@@ -493,6 +510,8 @@ sub gen_repeat {
 	my $untiltid = $self->instask(T_BRANCH, attributes => # until with repeat block as default (else) next_task_id
 			to_json({
 				boolcode => $self->make_perl($repeat->{condition}, BOOL),
+				#_line => $repeat->{_line},
+				_stmt => 'repeat',
 			}), next_task_id => $bf);
 	$self->set_next($bl, $untiltid); # repeat block to until
 	my $endtid = $self->instask(T_NO_OP); # dummy task to tie things together
@@ -509,6 +528,7 @@ sub gen_sleep {
 	my $tid = $self->instask(T_SLEEP, attributes =>
 		to_json({
 			imapcode => $self->make_perl($sleep, IMAP),
+			 #_line => $sleep->{_line},
 		}));
 	return ($tid, $tid);
 }
@@ -534,6 +554,7 @@ sub gen_split {
 		my $tid = $self->instask(T_REAP_CHILD, attributes =>
 			to_json({
 				reapfromtask_id => $ct,
+				# _line => $split->{_line},
 			}));
 		$self->set_next($lasttid, $tid); # $lasttid should be set
 		$lasttid = $tid;
@@ -546,6 +567,7 @@ sub gen_subscribe {
 	my $tid = $self->instask(T_SUBSCRIBE, attributes =>
 		to_json({
 			imapcode => $self->make_perl($sub, IMAP),
+			 _line => $sub->{_line},
 		}));
 	return ($tid, $tid);
 }
@@ -580,13 +602,9 @@ sub gen_unlock {
 		to_json({
 			locktype => $type,
 			stringcode => $value,
+			#_line => $unlock->{_line},
 		})
 	);
-	#	$tid = $self->instask(T_UNLOCK, attributes =>
-	#		to_json({
-	#			locktype => $unlock->{type},
-	#			lockvalue => $unlock->{value},
-	#		}));
 	return ($tid, $tid);
 }
 
@@ -595,6 +613,7 @@ sub gen_unsubscribe {
 	my $tid = $self->instask(T_UNSUBSCRIBE, attributes =>
 		to_json({
 			imapcode => $self->make_perl($unsub, IMAP),
+			#_line => $unsub->{_line},
 		}));
 	return ($tid, $tid);
 }
@@ -605,6 +624,7 @@ sub gen_wait_for_event {
 		to_json({
 			imapcode => $self->make_perl($wait->{imap}, IMAP),
 			omapcode => $self->make_perl($wait->{omap}, OMAP),
+			#_line => $wait->{_line},
 		}));
 	return ($tid, $tid);
 }
@@ -614,6 +634,8 @@ sub gen_while {
 	my $whiletid = $self->instask(T_BRANCH, attributes => # while test
 		to_json({
 			boolcode => $self->make_perl($while->{condition}, BOOL),
+			#_line => $while->{_line},
+			_stmt => 'while',
 		}));
 	my $endwhiletid = $self->instask(T_NO_OP); # dummy task to tie things together
 	my ($bf, $bl) = $self->gen_do($while->{block});
