@@ -11,11 +11,14 @@ AS $function$DECLARE
 	v_in_args jsonb;
 	v_workers bigint[];
 	v_payload jsonb;
+	v_task_state jsonb;
+	v_key text;
+	v_aenv jsonb;
 BEGIN
 	-- get the arguments and such
 	SELECT
-		action_id, config, arguments, environment, variables
-		INTO v_action_id, v_conf, v_args, v_env, v_vars
+		action_id, config, arguments, environment, variables, task_state
+		INTO v_action_id, v_conf, v_args, v_env, v_vars, v_task_state
 	FROM 
 		actions
 		JOIN tasks USING (action_id)
@@ -37,9 +40,30 @@ BEGIN
 		RETURN do_raise_error(a_jobtask, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;
 
+	FOR v_key IN SELECT
+				"name"
+			FROM
+				action_inputs
+			WHERE
+				action_id = v_action_id
+				AND destination = 'environment' LOOP
+		v_aenv = COALESCE(v_aenv, '{}'::jsonb) || jsonb_build_object(v_key, v_env -> v_key);
+	END LOOP;
+	IF v_key IS NOT NULL THEN
+		-- only do this when we have env because the checking is expensive
+		BEGIN
+			v_aenv := do_inargscheck(v_action_id, v_aenv, 'environment');
+		EXCEPTION WHEN OTHERS THEN
+			RETURN do_raise_error(a_jobtask, format('action environment error: %s', SQLERRM));
+		END;
+		v_task_state := COALESCE(v_task_state, '{}'::jsonb) || jsonb_build_object('env', v_aenv);
+	END IF;
+	-- RAISE NOTICE 'v_task_state %', v_task_state;
+
 	-- 'abuse' the out_args field to store the calulated in_args
 	UPDATE jobs SET
-		out_args = v_in_args
+		out_args = v_in_args,
+		task_state = v_task_state
 	WHERE
 		job_id = a_jobtask.job_id;
 
