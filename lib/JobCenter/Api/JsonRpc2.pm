@@ -740,8 +740,8 @@ sub rpc_get_task {
 				return;
 			}
 			$res = $res->array;
-			my ($job_id2, $cookie, $inargsj);
-			($job_id2, $cookie, $inargsj) = @{$res} if ref $res;
+			my ($job_id2, $cookie, $inargsj, $env);
+			($job_id2, $cookie, $inargsj, $env) = @{$res} if ref $res;
 			unless ($cookie) {
 				$self->log->debug("no cookie?");
 				$rpccb->();
@@ -753,6 +753,7 @@ sub rpc_get_task {
 			}
 
 			my $inargs = decode_json( $inargsj ); # unless $self->json;
+			$env = decode_json( $env ) if $env;
 
 			# timeouts (if any) will be done by the maestro..
 			#my $tmr = Mojo::IOLoop->timer($self->timeout => sub { $self->_task_timeout($cookie) } );
@@ -771,7 +772,7 @@ sub rpc_get_task {
 				 . "$task->{workeraction}->{client}->{worker_id} used $task->{workeraction}->{used} "
 				 . "cookie $cookie inargs $inargsj");
 
-			$rpccb->($job_id, $cookie, $inargs);
+			$rpccb->($job_id, $cookie, $inargs, $env);
 		}
 	); # catch?
 }
