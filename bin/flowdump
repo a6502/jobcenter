@@ -163,7 +163,20 @@ sub dumpert {
 			}
 			$split++;
 		}
-		if ($action_id == -4) { # branch
+		if ($action_id == -2) { # no-op
+			my $stmt = $attr->{_stmt};
+			$stmt //= 'no_op';
+			$stmt .= " $task->{next_task_id}" if $stmt eq 'goto';
+			say $i, "$task_id $stmt";
+			$task_id = $task->{next_task_id};
+		} elsif ($action_id == -3) { # eval
+			$attr->{evalcode} =~ s/\n/\\n/g;
+			say $i, "$task_id eval:";
+			say $i, "$task_id         '$attr->{evalcode}'";
+			$task_id = $task->{next_task_id};
+		} elsif ($action_id == -4) { # branch
+			my $stmt = $attr->{_stmt};
+			die 'huh? no debug info?' unless $stmt;
 			#print Dumper($task);
 			#say $i, "$task_id $action->{name} $attr->{boolcode}";
 			# find the branch target
@@ -178,14 +191,14 @@ sub dumpert {
 			my $branchend = $task_id + 1;
 			my $next = $task->{next_task_id};
 			# another hack: we can guess which statement created this branch
-			if ($true == $branchend and $done{$next}) {
+			if ($stmt eq 'repeat') {
 				say $i, "$task_id until '$attr->{boolcode}': goto $next";
 				#say $i, "$task_id on true: goto $true";
 				#say $i, "$task_id on false: goto $next";
-			} elsif (not $done{$true} and $next == $branchend) {
+			} elsif ($stmt eq 'while') {
 				say $i, "$task_id while '$attr->{boolcode}':";
 				dumpert($true, $task_id, $indent + 1);
-			} else {
+			} elsif ($stmt eq 'if') {
 				say $i, "$task_id if '$attr->{boolcode}':";
 				#say $i, "$task_id on true:";
 				dumpert($true, $branchend, $indent + 1);
@@ -193,6 +206,8 @@ sub dumpert {
 					say $i, "$task_id else:";
 					dumpert($task->{next_task_id}, $branchend, $indent + 1);
 				}
+			} else {
+				die 'how did we get here?'
 			}
 			
 			#say $i, "$task_id branchend";
