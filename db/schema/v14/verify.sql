@@ -7,7 +7,7 @@ BEGIN
 			information_schema.columns
 		WHERE
 			table_schema='jobcenter'
-			AND table_name='action'
+			AND table_name='actions'
 			AND column_name='src'
 	)), 'no column src in table action??';
 	ASSERT (SELECT EXISTS(
@@ -17,7 +17,7 @@ BEGIN
 			information_schema.columns
 		WHERE
 			table_schema='jobcenter'
-			AND table_name='action'
+			AND table_name='actions'
 			AND column_name='srcmd5'
 	)), 'no column src in table action??';
 	ASSERT (SELECT EXISTS(
