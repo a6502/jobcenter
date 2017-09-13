@@ -47,7 +47,10 @@ BEGIN
 			WHERE
 				action_id = v_action_id
 				AND destination = 'environment' LOOP
-		v_aenv = COALESCE(v_aenv, '{}'::jsonb) || jsonb_build_object(v_key, v_env -> v_key);
+		IF v_env ? v_key THEN
+			v_aenv = COALESCE(v_aenv, '{}'::jsonb)
+				|| jsonb_build_object(v_key, v_env -> v_key);
+		END IF;
 	END LOOP;
 	IF v_key IS NOT NULL THEN
 		-- only do this when we have env because the checking is expensive
