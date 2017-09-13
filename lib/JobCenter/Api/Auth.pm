@@ -36,9 +36,9 @@ sub authenticate {
 		return;
 	}
 
-	my ($res, $msg) = $adapter->authenticate($client, $who, $token, $cb);
+	my @res = $adapter->authenticate($client, $who, $token, $cb);
 	
-	$cb->($res, $msg) if defined $res;
+	$cb->(@res) if @res;
 }
 
 1;

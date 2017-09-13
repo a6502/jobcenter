@@ -7,7 +7,7 @@ use MojoX::NetstringStream;
 
 use Data::Dumper;
 
-has [qw(actions con id ns ping rpc stream tmr who workername worker_id)];
+has [qw(actions con id ns ping reqauth rpc stream tmr who workername worker_id)];
 
 sub new {
 	my $self = shift->SUPER::new();

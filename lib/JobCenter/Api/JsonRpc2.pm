@@ -222,10 +222,11 @@ sub rpc_hello {
 	my $token = $args->{token} or die "no token?";
 
 	$self->auth->authenticate($method, $client, $who, $token, sub {
-		my ($res, $msg) = @_;
+		my ($res, $msg, $reqauth) = @_;
 		if ($res) {
 			$self->log->debug("hello from $who succeeded: method $method msg $msg");
 			$client->who($who);
+			$client->reqauth($reqauth);
 			$con->state('auth');
 			$rpccb->(JSON->true, "welcome to the clientapi $who!");
 		} else {
@@ -249,7 +250,15 @@ sub rpc_create_job {
 	my $vtag = $i->{vtag};
 	my $timeout = $i->{timeout} // 60;
 	my $impersonate = $client->who;
-	my $env; # = decode_utf8(encode_json({foo => 'bar'}));
+	my $env;
+	if ($client->reqauth) {
+		my ($res, $log, $authscope) = $client->reqauth->request_authentication($client, $i->{reqauth});
+		unless ($res) {
+			$rpccb->(undef, $log);
+			return;
+		}
+		$env = decode_utf8(encode_json({authscope => $authscope}));
+	}
 	my $cb = sub {
 		my ($job_id, $outargs) = @_;
 		$con->notify('job_done', {job_id => $job_id, outargs => $outargs});
