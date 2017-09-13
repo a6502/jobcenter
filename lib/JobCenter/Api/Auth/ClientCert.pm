@@ -1,5 +1,5 @@
 package JobCenter::Api::Auth::ClientCert;
-use Mojo::Base 'Mojo::EventEmitter';
+use Mojo::Base 'JobCenter::Api::Auth::Base';
 
 use List::Util qw(any);
 

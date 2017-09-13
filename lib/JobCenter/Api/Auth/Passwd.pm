@@ -1,5 +1,5 @@
 package JobCenter::Api::Auth::Passwd;
-use Mojo::Base 'Mojo::EventEmitter';
+use Mojo::Base 'JobCenter::Api::Auth::Base';
 
 use Data::Dumper;
 
