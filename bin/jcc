@@ -31,7 +31,7 @@ exit main(@ARGV);
 
 sub main {
 	my $config = realpath("$FindBin::Bin/../etc/jobcenter.conf");
-	my $debug = 0;
+	my $debug = 1;
 	my $parseonly = 0;
 	my $tags;
 
@@ -98,6 +98,7 @@ sub main {
 	);
 
 	$jcg->generate(
+		wfsrc => \$wfsrc,
 		wfast => $wfast,
 		labels => $receiver->labels,
 		tags => $tags,
