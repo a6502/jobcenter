@@ -324,14 +324,16 @@ sub rpc_create_job {
 				$self->log->debug("pubsub cb $@") if $@;
 			});
 
-			my $tmr = Mojo::IOLoop->timer($timeout => sub {
+			my $tmr;
+			$tmr = Mojo::IOLoop->timer($timeout => sub {
 				# request failed, cleanup
 				#$self->pg->pubsub->unlisten($listenstring);
 				$self->pg->pubsub->unlisten('job:finished' => $lcb);
 				# the cb might fail if the connection is gone..
 				eval { &$cb($job_id, {'error' => 'timeout'}); };
 				$job->destroy;
-			});
+			}) if $timeout > 0;
+			#$self->log->debug("setting tmr: $tmr") if $tmr;
 
 			$job->update(tmr => $tmr, lcb => $lcb);
 
@@ -600,6 +602,8 @@ sub _task_ready {
 
 	$payload = decode_json($payload);
 	my $job_id = $payload->{job_id} // $payload->{poll} // die '_task_ready: invalid payload?';
+
+	$self->pending->{$listenstring} = 1 if $payload->{poll};
 
 	my $workers;
 	%$workers = map { $_ => 1 } @{$payload->{workers}} if ref $payload->{workers} eq 'ARRAY';
