@@ -57,6 +57,7 @@ has [qw(
 	pg
 	pid_file
 	ping
+	pqq
 	server
 	rpc
 	tasks
@@ -150,6 +151,7 @@ sub new {
 	$self->{pg} = $pg;
 	$self->{pid_file} = $pid_file if $daemon;
 	$self->{ping} = $args{ping} || 60;
+	$self->{pqq} = undef; # ping query queue
 	$self->{server} = $server;
 	$self->{rpc} = $rpc;
 	$self->{tasks} = {};
@@ -581,11 +583,33 @@ sub _ping {
 			}
 			$self->log->debug('got ' . $r . ' from ' . $client->who . ' : ping(' . $client->worker_id . ')');
 			Mojo::IOLoop->remove($tmr);
-			$self->pg->db->query(q[select ping($1)], $client->worker_id, $d->begin);
+			#$self->pg->db->query(q[select ping($1)], $client->worker_id, $d->begin);
+			my $pqq = $self->pqq;
+			if ($pqq) {
+				# pqq already active, just push
+				push @$pqq, $client->worker_id;
+			} else {
+				# start queue processing
+				$self->pqq([$client->worker_id]);
+				$self->_ppqq($self->pg->db);
+			}
 		}
 	});
 }
 
+# process ping query queue: serialize calls to ping on one db connection
+# because the pongs tend to come in in batches
+sub _ppqq {
+	my ($self, $db) = @_;
+	my $pqq = $self->pqq or return; # should not happen?
+	my $wi = shift @$pqq;
+	unless ($wi) {
+		# done with processing the queue
+		$self->{pqq} = undef;
+		return;
+	}
+	$db->query(q[select ping($1)], $wi, sub { $self->_ppqq($db) });
+}
 
 # not a method!
 sub _rot {
