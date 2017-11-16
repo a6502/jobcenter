@@ -96,7 +96,7 @@ sub new {
 		. ( ($cfg->{pg}->{port}) ? ':' . $cfg->{pg}->{port} : '' )
 		. '/' . $cfg->{pg}->{db}
 	) or die 'no pg?';
-	$pg->max_connections(5);
+	$pg->max_connections(10);
 	$pg->on(connection => sub { my ($e, $dbh) = @_; $log->debug("pg: new connection: $dbh"); });
 
 	my $rpc = JSON::RPC2::TwoWay->new(debug => $debug) or die 'no rpc?';
@@ -374,7 +374,7 @@ sub _poll_done {
 			$outargsp = { error => 'error decoding json: ' . $outargs } if $@;
 			eval { $job->cb->($job->{job_id}, $outargsp); };
 			$self->log->debug("got $@ calling callback") if $@;
-			$job->destroy;
+			$job->delete;
 		}
 	);
 }
@@ -433,10 +433,8 @@ sub rpc_get_job_status {
 				$rpccb->(undef, undef);
 				return;
 			}
-			if (ref $outargs) {
-				$outargs = decode_json($outargs);
-			}
 			$self->log->debug("got status for job_id $job_id outargs $outargs");
+			$outargs = decode_json($outargs);
 			$rpccb->($job_id, $outargs);
 		}
 	); # fixme: catch?
@@ -585,6 +583,7 @@ sub _ping {
 			Mojo::IOLoop->remove($tmr);
 			#$self->pg->db->query(q[select ping($1)], $client->worker_id, $d->begin);
 			my $pqq = $self->pqq;
+			#print 'pqq: ', Dumper($pqq);
 			if ($pqq) {
 				# pqq already active, just push
 				push @$pqq, $client->worker_id;
@@ -592,6 +591,7 @@ sub _ping {
 				# start queue processing
 				$self->pqq([$client->worker_id]);
 				$self->_ppqq($self->pg->db);
+				#$self->_ppqq();
 			}
 		}
 	});
@@ -601,14 +601,29 @@ sub _ping {
 # because the pongs tend to come in in batches
 sub _ppqq {
 	my ($self, $db) = @_;
+	#say 'in _ppqq';
 	my $pqq = $self->pqq or return; # should not happen?
 	my $wi = shift @$pqq;
 	unless ($wi) {
 		# done with processing the queue
+		$self->log->debug('done with pqq');
 		$self->{pqq} = undef;
 		return;
 	}
-	$db->query(q[select ping($1)], $wi, sub { $self->_ppqq($db) });
+	$self->log->debug("select ping($wi)");
+	$db->query(q[select ping($1)], $wi, sub {
+		my ($db2, $err, $res) = @_;
+		if ($err) {
+			$self->log->error("err in ping cb:$err");
+			return;
+		}
+		#print 'res in cb ', Dumper($res->array);
+		$res->finish;
+		Mojo::IOLoop->next_tick(sub {
+			#say 'next tick';
+			$self->_ppqq($db);
+		});
+	});
 }
 
 # not a method!
