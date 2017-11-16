@@ -263,7 +263,9 @@ sub rpc_create_job {
 	}
 	my $cb = sub {
 		my ($job_id, $outargs) = @_;
-		$con->notify('job_done', {job_id => $job_id, outargs => $outargs});
+		$con->notify('job_done', {job_id => $job_id, outargs => $outargs})
+			if %$con; # mild hack: the con object will be empty when
+			          # the client is already disconnected
 	};
 
 	die  'inargs should be a hashref' unless ref $inargs eq 'HASH';
