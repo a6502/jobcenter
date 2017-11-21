@@ -14,7 +14,7 @@ sub update {
 
 # clean up all (circular) references so that perl can do 
 # the real destroying
-sub destroy {
+sub delete {
 	my $self = shift;
 	%$self = ();
 }

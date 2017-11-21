@@ -608,11 +608,11 @@ sub _ppqq {
 	my $wi = shift @$pqq;
 	unless ($wi) {
 		# done with processing the queue
-		$self->log->debug('done with pqq');
+		#$self->log->debug('done with pqq');
 		$self->{pqq} = undef;
 		return;
 	}
-	$self->log->debug("select ping($wi)");
+	#$self->log->debug("select ping($wi)");
 	$db->query(q[select ping($1)], $wi, sub {
 		my ($db2, $err, $res) = @_;
 		if ($err) {
@@ -629,17 +629,17 @@ sub _ppqq {
 }
 
 # not a method!
-sub _rot {
-	my $l = shift;
-        push @$l, shift @$l;
-}
+#sub _rot {
+#	my $l = shift;
+#        push @$l, shift @$l;
+#}
 
 # fixme: merge with _task_ready_next
 sub _task_ready {
 	my ($self, $listenstring, $payload) = @_;
 	
-	$self->log->debug("got notify $listenstring payload " . ($payload // '<null>'));
 	die '_task_ready: no payload?' unless $payload; # whut?
+	$self->log->debug("_task_ready $listenstring payload $payload");
 
 	$payload = decode_json($payload);
 	my $job_id = $payload->{job_id} // $payload->{poll} // die '_task_ready: invalid payload?';
@@ -652,7 +652,8 @@ sub _task_ready {
 	my $l = $self->listenstrings->{$listenstring};
 	return unless $l; # should not happen? maybe unlisten here?
 
-	_rot($l); # rotate listenstrings list (list of workeractions)
+	push @$l, shift @$l; # rotate listenstrings list (list of workeractions)
+
 	my $wa;
 	for (@$l) { # now find a worker with a free slot
 		my $worker_id = $_->client->worker_id;
@@ -676,6 +677,8 @@ sub _task_ready {
 		# and the maestro will bother us again later anyways
 		return;
 	}
+
+	$wa->{used}++; # let's assmume the worker takes it
 
 	$self->log->debug('sending task ready to worker ' . $wa->client->worker_id . ' for ' . $wa->actionname);
 
@@ -701,6 +704,7 @@ sub _task_ready_next {
 	my ($self, $job_id) = @_;
 	
 	my $task = $self->{tasks}->{$job_id} or return; # die 'no task in _task_ready_next?';
+	$task->workeraction->{used}--; # this worker didn't take the job
 	my $workers = $task->workers;
 	
 	$self->log->debug("try next client for $task->{listenstring} for $task->{job_id}");
@@ -708,7 +712,8 @@ sub _task_ready_next {
 
 	return unless $l; # should not happen?
 
-	_rot($l); # rotate listenstrings list (list of workeractions)
+	push @$l, shift @$l; # rotate listenstrings list (list of workeractions)
+
 	my $wa;
 	for (@$l) { # now find a worker with a free slot
 		my $worker_id = $_->client->worker_id;
@@ -739,6 +744,7 @@ sub _task_ready_next {
 		return;
 	}
 
+	$wa->{used}++; # let's assmume the next worker takes it
 	$wa->client->con->notify('task_ready', {actionname => $wa->actionname, job_id => $job_id});
 
 	my $tmr = Mojo::IOLoop->timer(3 => sub { $self->_task_ready_next($job_id) } );
@@ -758,9 +764,12 @@ sub rpc_get_task {
 	my $actionname = $i->{actionname};
 	my $job_id = $i->{job_id};
 
+	say 'tasks: ', join(', ', keys %{$self->{tasks}});
+
 	# need to think about this relating to the poll scenario..
 	my $task = delete $self->{tasks}->{$job_id};
 	unless ($task) {
+		$self->log->debug("get_task: no task!?");
 		$rpccb->();
 		return;
 	}
@@ -771,6 +780,7 @@ sub rpc_get_task {
 	$self->log->debug("get_task: workername '$workername', actioname '$actionname', job_id $job_id");
 
 	# in the stored-procedure low-level api a null value means poll
+	# (yeah it's a hack)
 	$job_id = undef if $job_id !~ /^\d+/;
 	
 	#local $SIG{__WARN__} = sub {
@@ -803,6 +813,8 @@ sub rpc_get_task {
 					$self->log->debug("resetting pending flag for $task->{listenstring}");
 					$self->pending->{$task->listenstring} = 0;
 				}
+				# no need to consider the worker busy then..
+				$task->{workeraction}->{used}--;
 				return;
 			}
 
@@ -818,7 +830,7 @@ sub rpc_get_task {
 				inargs => $inargs,
 				#tmr => $tmr,
 			);
-			$task->workeraction->{used}++;
+			#$task->workeraction->{used}++;
 			# ugh.. what a hack
 			$self->{tasks}->{$cookie} = $task;
 
@@ -841,18 +853,15 @@ sub rpc_task_done {
 	my $task = delete $self->{tasks}->{$cookie};
 	return unless $task; # really?	
 	Mojo::IOLoop->remove($task->tmr) if $task->tmr;
-	$task->workeraction->{used}--; # done..
+	$task->{workeraction}->{used}--; # done..
 
 	local $@;
 	eval {
 		$outargs = encode_json( $outargs );
 	};
 	$outargs = encode_json({'error' => 'cannot json encode outargs: ' . $@}) if $@;
-	#$self->log->debug("outargs $outargs");
-	#eval {
-	#	$self->pg->db->dollar_only->query(q[select task_done($1, $2)], $cookie, $outargs, sub { 1; } );
-	#};
 	$self->log->debug("task_done got $@") if $@;
+
 	$self->log->debug("worker '$client->{workername}' done with action '$task->{actionname}' for job $task->{job_id}"
 		." slots used $task->{workeraction}->{used} outargs '$outargs'");
 
@@ -870,9 +879,9 @@ sub rpc_task_done {
 				$self->log->error("get_task threw $err");
 				return;
 			}
-			$self->log->debug("task_done_callback!");
+			#$self->log->debug("task_done_callback!");
 			if ($self->pending->{$task->workeraction->listenstring}) {
-				$self->log->debug("calling _task_readty from task_done_callback!");
+				$self->log->debug("calling _task_ready from task_done_callback!");
 				$self->_task_ready(
 					$task->workeraction->listenstring,
 					'{"poll":"please"}'
@@ -887,7 +896,7 @@ sub _task_timeout {
 	my ($self, $cookie) = @_;
 	my $task = delete $self->{tasks}->{$cookie};
 	return unless $task; # really?
-	$task->workeraction->{used}++; # done..
+	$task->workeraction->{used}--; # done..
 
 	my $outargs = encode_json({'error' => 'timeout after ' . $self->timeout . ' seconds'});
 	eval {
