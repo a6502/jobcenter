@@ -449,6 +449,10 @@ sub rpc_announce {
 	my $slots      = $i->{slots} // 1;
 	my $workername = $i->{workername} // $client->workername // $client->who;
 	my $filter     = $i->{filter};
+	if (defined $filter) {
+		die "filter must be a json object" unless ref $filter eq 'HASH';
+		$filter = encode_json($filter);
+	}
 
 	my ($worker_id, $listenstring);
 	local $@;
@@ -462,7 +466,7 @@ sub rpc_announce {
 			$workername,
 			$actionname,
 			$client->who,
-			($filter ? encode_json($filter) : undef),
+			$filter,
 		)->array};
 		die "no result" unless $worker_id;
 	};
@@ -472,6 +476,9 @@ sub rpc_announce {
 		return;
 	}
 	$self->log->debug("worker_id $worker_id listenstring $listenstring");
+
+	# always poll for filters
+	$self->pending->{$listenstring} = $filter ? $worker_id : 0;
 
 	unless ($self->listenstrings->{$listenstring}) {
 		# oooh.. a totally new action
@@ -486,8 +493,9 @@ sub rpc_announce {
 		$self->actionnames->{$actionname} = $listenstring;
 		$self->listenstrings->{$listenstring} = [];
 		# let's assume there are pending jobs, this will trigger a poll
-		$self->pending->{$listenstring} = 1;
+		$self->pending->{$listenstring} = $filter ? $worker_id : -1;
 	}		
+
 
 	my $wa = JobCenter::Api::WorkerAction->new(
 		actionname => $actionname,
@@ -508,13 +516,23 @@ sub rpc_announce {
 	unless ($client->tmr) {
 		$client->{tmr} = Mojo::IOLoop->recurring( $client->ping, sub { $self->_ping($client) } );
 	}
+
+	# reply to the client/worker first
 	$rpccb->(JSON->true, 'success');
 
-	# if this is a new action or this worker has a filter we'll force a poll
-	$self->_task_ready($listenstring, '{"poll":"first"}')
-		if $self->pending->{$listenstring} or $filter;
+	# before potentially sending any pending work
+	# if this is a new action or this  worker has a filter
+	# force a poll for this specific worker
+	$self->_task_ready(
+		$listenstring,
+		encode_json({
+			poll => "first_$actionname:$worker_id",
+			( $filter ? (workers => [$worker_id]) : ()),
+		})
+	) if $self->pending->{$listenstring} < 0 or
+		$self->pending->{$listenstring} == $worker_id;
 
-	return
+	return;
 }
 
 sub rpc_withdraw {
@@ -644,10 +662,12 @@ sub _task_ready {
 	$payload = decode_json($payload);
 	my $job_id = $payload->{job_id} // $payload->{poll} // die '_task_ready: invalid payload?';
 
-	$self->pending->{$listenstring} = 1 if $payload->{poll};
-
 	my $workers;
 	%$workers = map { $_ => 1 } @{$payload->{workers}} if ref $payload->{workers} eq 'ARRAY';
+
+	if ($payload->{poll}) {
+		$self->pending->{$listenstring} = $workers ? ${$payload->{workers}}[0] : -1;
+	}
 
 	my $l = $self->listenstrings->{$listenstring};
 	return unless $l; # should not happen? maybe unlisten here?
@@ -672,7 +692,7 @@ sub _task_ready {
 
 	unless ($wa) {
 		$self->log->debug("no free slots for $listenstring!?");
-		$self->pending->{$listenstring} = 1;
+		$self->pending->{$listenstring} = $workers ? ${$payload->{workers}}[0] : -1;
 		# we'll do a poll when a worker becomes available
 		# and the maestro will bother us again later anyways
 		return;
@@ -732,13 +752,17 @@ sub _task_ready_next {
 
 	unless ($wa) {
 		$self->log->debug("no free slots for $task->{listenstring}!?");
-		$self->pending->{$task->listenstring} = 1;
+		my @workers = keys %{$task->workers};
+		$self->pending->{$task->listenstring} = @workers ? $workers[0] : -1;
 		# we'll do a poll when a worker becomes available
 		# and the maestro will bother us again later anyways
 		return;
 	}
 
 	if (refaddr $wa == refaddr $task->workeraction) {
+		$self->log->debug("no other worker for $task->{listenstring}!?");
+		# needtothink
+		#$self->pending->{$task->listenstring} = 1;
 		# no other workers available than the one we already tried?
 		# give up for now and let the retry mechanisms cope with this
 		return;
@@ -764,7 +788,7 @@ sub rpc_get_task {
 	my $actionname = $i->{actionname};
 	my $job_id = $i->{job_id};
 
-	say 'tasks: ', join(', ', keys %{$self->{tasks}});
+	#say 'tasks: ', join(', ', keys %{$self->{tasks}});
 
 	# need to think about this relating to the poll scenario..
 	my $task = delete $self->{tasks}->{$job_id};
@@ -809,9 +833,11 @@ sub rpc_get_task {
 			unless ($cookie) {
 				$self->log->debug("no cookie?");
 				$rpccb->();
-				if (not defined $job_id	and $self->pending->{$task->listenstring}) {
-					$self->log->debug("resetting pending flag for $task->{listenstring}");
-					$self->pending->{$task->listenstring} = 0;
+				if (not defined $job_id	and my $p = $self->pending->{$task->listenstring}) {
+					if ($p < 0 or $p == $client->worker_id) {
+						$self->log->debug("resetting pending flag $p for $task->{listenstring}");
+						$self->pending->{$task->listenstring} = 0;
+					}
 				}
 				# no need to consider the worker busy then..
 				$task->{workeraction}->{used}--;
@@ -847,13 +873,14 @@ sub rpc_task_done {
 	#my ($self, $task, $outargs) = @_;
 	my ($self, $con, $i, $rpccb) = @_;
 	my $client = $con->owner;
-	my $cookie = $i->{cookie} or die 'no cookie?';
-	my $outargs = $i->{outargs} or die 'no outargs?';
+	my $cookie = $i->{cookie} or die 'no cookie!?';
+	my $outargs = $i->{outargs} or die 'no outargs!?';
 
 	my $task = delete $self->{tasks}->{$cookie};
 	return unless $task; # really?	
 	Mojo::IOLoop->remove($task->tmr) if $task->tmr;
-	$task->{workeraction}->{used}--; # done..
+	# try to prevent used going negative..
+	$task->{workeraction}->{used}-- if $task->{workeraction}->{used} > 0;
 
 	local $@;
 	eval {
@@ -876,16 +903,34 @@ sub rpc_task_done {
 		sub {
 			my ($d, $err, $res) = @_;
 			if ($err) {
-				$self->log->error("get_task threw $err");
+				$self->log->error("task_done threw $err");
 				return;
 			}
 			#$self->log->debug("task_done_callback!");
-			if ($self->pending->{$task->workeraction->listenstring}) {
+			my $p = $self->pending->{$task->workeraction->listenstring} // 0;
+			if ($p < 0) {
 				$self->log->debug("calling _task_ready from task_done_callback!");
+
 				$self->_task_ready(
 					$task->workeraction->listenstring,
-					'{"poll":"please"}'
+					encode_json({
+						poll => "please_$task->{actionname}",
+					})
 				);
+			} elsif ($p == $client->{worker_id}) {
+				$self->log->debug("calling _task_ready from task_done_callback for $client->{worker_id}!");
+
+				$self->_task_ready(
+					$task->workeraction->listenstring,
+					encode_json({
+						poll => "please_$task->{actionname}:$client->{worker_id}",
+						workers => [$client->{worker_id}],
+					})
+				);
+				#$self->_task_ready(
+				#	$task->workeraction->listenstring,
+				#	'{"poll":"please"}'
+				#);
 			}
 		},
 	);
@@ -893,6 +938,8 @@ sub rpc_task_done {
 }
 
 sub _task_timeout {
+	# not used anymore
+	die 'should not get here';
 	my ($self, $cookie) = @_;
 	my $task = delete $self->{tasks}->{$cookie};
 	return unless $task; # really?

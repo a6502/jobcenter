@@ -20,14 +20,14 @@ AS $function$BEGIN
 	PERFORM
 		pg_notify(
 			'action:' || wa.action_id || ':ready',
-			 CASE WHEN wa.filter IS NOT NULL THEN
+			CASE WHEN wa.filter IS NOT NULL THEN
 				jsonb_build_object(
-					'poll', 'prettyplease',
+					'poll', ('prettyplease_' || a.name::text || ':' || a_worker_id::text),
 					'workers', array[a_worker_id]
 				)::text
 			ELSE
 				jsonb_build_object(
-					'poll', 'prettyplease'
+					'poll', ('prettyplease_' || wa.action_id::text)
 				)::text
 			END
 		)
@@ -43,7 +43,7 @@ AS $function$BEGIN
 		AND ( wa.filter IS NULL
 		      OR j.out_args @> wa.filter )
 	GROUP BY
-		wa.action_id, wa.filter;
+		wa.action_id, wa.filter, a.name;
 
 	RETURN 'pong';
 END;$function$
