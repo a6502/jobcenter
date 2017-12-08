@@ -1,0 +1,41 @@
+#!/usr/bin/env perl
+
+use Mojo::Base -base;
+
+BEGIN {
+	#$ENV{MOJO_IOLOOP_DEBUG} = 1;
+        $ENV{MOJO_REACTOR} = 'Mojo::Reactor::Poll';
+}
+#use Mojo::IOLoop; # for the timer in do_square
+
+# standard perl
+use Cwd qw(realpath);
+use Data::Dumper;
+use FindBin;
+use Getopt::Long;
+
+# JobCenter
+use lib realpath("$FindBin::Bin/../lib");
+use JobCenter::RPC::Switch;
+
+exit main();
+
+sub main {
+	my $config = realpath("$FindBin::Bin/../etc/jcswitch.conf");
+	my $daemonize = 0;
+	my $debug = 0;
+
+	GetOptions(
+		'config=s' => \$config,
+		'daemon!' => \$daemonize,
+		'debug' => \$debug,
+	) or die "Error in command line arguments\n";
+
+	my $jcswitch = JobCenter::RPC::Switch->new(
+		cfgpath => $config,
+		debug => $debug,
+	);
+	die 'no jcswitch?' unless $jcswitch;
+
+	return $jcswitch->work();
+}
