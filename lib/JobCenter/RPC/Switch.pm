@@ -485,7 +485,7 @@ sub announce_rpcs {
 		$self->log->debug("succesfully announced $method");
 	})->catch(sub {
 		($err) = @_;
-		$self->log->debug("something went wrong with announce: $err");
+		$self->log->error("something went wrong with announce_rpcs: $err");
 	})->wait();
 
 	return $err;
@@ -643,7 +643,9 @@ sub _poll_done {
 			$job->{cb}->(RES_OK, "$self->{prefix}:$job->{job_id}", $outargsp);
 			%$job = (); # delete
 		}
-	);
+	)->catch(sub {
+		 $self->log->error("_poll_done caught $_[0]");
+	});
 }
 
 
@@ -711,7 +713,9 @@ sub _get_status {
 				%$job = ();
 			}
 		}
-	);
+	)->catch(sub {
+		 $self->log->error("get_status caught $_[0]");
+	});
 }
 
 # withdraw a method at the rpcswitch
@@ -834,20 +838,21 @@ sub _get_task {
 			);
 		},
 		sub {
-			my ($d, $err, $res) = @_;
+			my ($d, $err, $res1) = @_;
 			if ($err) {
 				$self->log->error("get_task threw $err");
 				return;
 			}
-			$res = $res->array;
+			my $res2 = $res1->array;
+			$res1->finish;
 			my ($job_id, $cookie, $inargs, $env);
-			($job_id, $cookie, $inargs, $env) = @{$res};
+			($job_id, $cookie, $inargs, $env) = @$res2 if $res2;
 			unless ($cookie) {
-				$self->log->debug("no cookie?");
+				$self->log->debug("unset pending flag for $actionname");
 				$self->{pending}->{actionname} = 0;
 				return;
 			}
-			$self->log->debug("cookie $cookie inargs $inargs");
+			$self->log->debug("actionname $actionname cookie $cookie inargs $inargs");
 			$inargs = decode_json($inargs);
 
 			my $task = {
@@ -868,7 +873,9 @@ sub _get_task {
 				},
 			);
 		}
-	); # catch?
+	)->catch(sub {
+		 $self->log->error("_get_task caught $_[0]");
+	}); # catch?
 }
 
 sub _task_done {
@@ -912,23 +919,30 @@ sub _task_done {
 				$self->log->error("task_done threw $err");
 				return;
 			}
+			$res->finish(); # because we don't need the results
 			#$self->log->debug("task_done_callback!");
 			#print 'pending: ', Dumper($self->{pending});
 			if ($self->{pending}->{$task->{actionname}}) {
-				$self->log->debug("calling _get_task from task_done_callback!");
 
-				$self->_get_task(
-					$task->{actionname},
-					$task->{methodname},
-					encode_json({
-						poll => "please_$task->{actionname}",
-					})
-				);
+				# sigh.. we can't call get_task directly
+				# bacause we're in a Mojo::Pg callback chain here
+				# and recursing doesn't work
+				Mojo::IOLoop->next_tick(sub {
+					#$self->log->debug("calling _get_task from next_tick callback!");
+					$self->_get_task(
+						$task->{actionname},
+						$task->{methodname},
+						encode_json({
+							poll => "please_$task->{actionname}",
+						})
+					);
+				});
+				$self->log->debug("calling _get_task from task_done callback!");
 			}
 		},
-	);
-
-
+	)->catch(sub {
+		 $self->log->error("get_status caught $_[0]");
+	});
 }
 
 # withdraw an action from the jobcenter
