@@ -1,9 +1,5 @@
 package JobCenter::Api::JsonRpc2;
 
-use strict;
-use warnings;
-use 5.10.0;
-
 #
 # Mojo's default reactor uses EV, and EV does not play nice with signals
 # without some handholding. We either can try to detect EV and do the
@@ -14,9 +10,8 @@ BEGIN {
 }
 
 # mojo
-use Mojo::Base 'Mojo::EventEmitter';
+use Mojo::Base -base;
 use Mojo::IOLoop;
-#use Mojo::JSON qw(decode_json encode_json);
 use Mojo::Log;
 use Mojo::Pg;
 
@@ -26,13 +21,11 @@ use Data::Dumper;
 use Encode qw(encode_utf8 decode_utf8);
 use File::Basename;
 use FindBin;
-#use IO::Pipe;
 use Scalar::Util qw(refaddr);
 
 # cpan
 use Config::Tiny;
 use JSON::MaybeXS;
-
 use JSON::RPC2::TwoWay;
 
 # JobCenter
@@ -157,9 +150,6 @@ sub new {
 	$self->{tasks} = {};
 	$self->{timeout} = $args{timeout} // 60; # 0 is a valid timeout?
 
-	# add a catch all error handler..
-	$self->catch(sub { my ($self, $err) = @_; warn "This looks bad: $err"; });
-
 	return $self;
 }
 
@@ -276,7 +266,7 @@ sub rpc_create_job {
 	# create_job throws an error when:
 	# - wfname does not exist
 	# - inargs not valid
-	Mojo::IOLoop->delay->steps(
+	Mojo::IOLoop->delay(
 		sub {
 			my $d = shift;
 			#($job_id, $listenstring) = @{
@@ -335,7 +325,7 @@ sub rpc_create_job {
 				$self->pg->pubsub->unlisten('job:finished' => $lcb);
 				# the cb might fail if the connection is gone..
 				eval { &$cb($job_id, {'error' => 'timeout'}); };
-				$job->destroy;
+				$job->delete;
 			}) if $timeout > 0;
 			#$self->log->debug("setting tmr: $tmr") if $tmr;
 
@@ -345,14 +335,14 @@ sub rpc_create_job {
 			$self->_poll_done($job);
 		}
 	)->catch(sub {
-		my ($delay, $err) = @_;
+		my ($err) = @_;
 		$rpccb->(undef, $err);
 	});
 }
 
 sub _poll_done {
 	my ($self, $job) = @_;
-	Mojo::IOLoop->delay->steps(
+	Mojo::IOLoop->delay(
 		sub {
 			my $d = shift;
 			$self->pg->db->dollar_only->query(
@@ -378,13 +368,15 @@ sub _poll_done {
 			$self->log->debug("got $@ calling callback") if $@;
 			$job->delete;
 		}
-	);
+	)->catch(sub {
+		 $self->log->error("_poll_done caught $_[0]");
+	});
 }
 
 sub rpc_find_jobs {
 	my ($self, $con, $i, $rpccb) = @_;
 	my $filter = $i->{filter} or die 'no job_id?';
-	Mojo::IOLoop->delay->steps(
+	Mojo::IOLoop->delay(
 		sub {
 			my $d = shift;
 			$self->pg->db->dollar_only->query(
@@ -407,7 +399,9 @@ sub rpc_find_jobs {
 			$self->log->debug("found jobs for filter $filter: " . join(' ,', @$jobs));
 			$rpccb->($jobs);
 		}
-	); # fixme: catch?
+	)->catch(sub {
+		 $self->log->error("rpc_find_jobs caught $_[0]");
+	});
 }
 
 
@@ -415,7 +409,7 @@ sub rpc_find_jobs {
 sub rpc_get_job_status {
 	my ($self, $con, $i, $rpccb) = @_;
 	my $job_id = $i->{job_id} or die 'no job_id?';
-	Mojo::IOLoop->delay->steps(
+	Mojo::IOLoop->delay(
 		sub {
 			my $d = shift;
 			$self->pg->db->dollar_only->query(
@@ -439,7 +433,9 @@ sub rpc_get_job_status {
 			$outargs = decode_json($outargs);
 			$rpccb->($job_id, $outargs);
 		}
-	); # fixme: catch?
+	)->catch(sub {
+		 $self->log->error("rpc_job_job_status caught $_[0]");
+	});
 }
 
 sub rpc_announce {
@@ -582,7 +578,7 @@ sub rpc_withdraw {
 sub _ping {
 	my ($self, $client) = @_;
 	my $tmr;
-	Mojo::IOLoop->delay->steps(sub {
+	Mojo::IOLoop->delay(sub {
 		my $d = shift;
 		my $e = $d->begin;
 		$tmr = Mojo::IOLoop->timer(10 => sub { $e->(@_, 'timeout') } );
@@ -614,6 +610,8 @@ sub _ping {
 				#$self->_ppqq();
 			}
 		}
+	})->catch(sub {
+		 $self->log->error("_ping caught $_[0]");
 	});
 }
 
@@ -811,7 +809,7 @@ sub rpc_get_task {
 	#	$self->log->debug($_[0]);
 	#};
 
-	Mojo::IOLoop->delay->steps(
+	Mojo::IOLoop->delay(
 		sub {
 			my $d = shift;
 			$self->pg->db->dollar_only->query(
@@ -866,7 +864,9 @@ sub rpc_get_task {
 
 			$rpccb->($job_id, $cookie, $inargs, $env);
 		}
-	); # catch?
+	)->catch(sub {
+		 $self->log->error("rpc_get_task caught $_[0]");
+	});
 }
 
 sub rpc_task_done {
@@ -892,7 +892,7 @@ sub rpc_task_done {
 	$self->log->debug("worker '$client->{workername}' done with action '$task->{actionname}' for job $task->{job_id}"
 		." slots used $task->{workeraction}->{used} outargs '$outargs'");
 
-	Mojo::IOLoop->delay->steps(
+	Mojo::IOLoop->delay(
 		sub {
 			my $d = shift;
 			$self->pg->db->dollar_only->query(
@@ -933,7 +933,9 @@ sub rpc_task_done {
 				#);
 			}
 		},
-	);
+	)->catch(sub {
+		 $self->log->error("rpc_task done caught $_[0]");
+	});
 	return;
 }
 
