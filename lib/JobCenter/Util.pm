@@ -3,7 +3,7 @@ package JobCenter::Util;
 use strict;
 use warnings;
 
-our @EXPORT_OK = qw(check_pid daemonize ensure_pid_file slurp);
+our @EXPORT_OK = qw(check_pid daemonize ensure_pid_file hdiff slurp);
 our %EXPORT_TAGS = ('daemon' => [qw(check_pid daemonize ensure_pid_file)]);
 
 use parent qw(Exporter);
@@ -65,6 +65,24 @@ sub slurp {
 	croak qq{Can't read from file "$path": $!} unless defined $ret;
 
 	return $content;
+}
+
+sub hdiff {
+	my ($old, $new) = @_;
+	my %add;
+	my %rem;
+
+	for (keys %$old) {
+		$rem{$_} = $old->{$_} unless
+			exists $new->{$_} and $old->{$_} eq $new->{$_};
+	}
+
+	for (keys %$new) {
+		$add{$_} = $new->{$_} unless
+			exists $old->{$_} and $old->{$_} eq $new->{$_};
+	}
+
+	return (\%add, \%rem);
 }
 
 1;
