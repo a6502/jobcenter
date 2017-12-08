@@ -24,7 +24,7 @@ sub main {
 	GetOptions(
 		'config=s' => \$config,
 		'daemon!' => \$daemonize,
-		'debug' => \&debug,
+		'debug' => \$debug,
 	) or die "Error in command line arguments\n";
 
 	my $jcapi = JobCenter::Api::JsonRpc2->new(
