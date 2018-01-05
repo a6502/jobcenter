@@ -1,0 +1,40 @@
+#!/usr/bin/env perl
+
+use Mojo::Base -strict;
+
+# standard perl
+use Cwd qw(realpath);
+use Data::Dumper;
+use FindBin;
+use Getopt::Long;
+
+# JobCenter
+use lib realpath("$FindBin::Bin/../lib");
+use JobCenter::Adm;
+
+exit main(@ARGV);
+
+sub main {
+	my %opts = (
+		cfgpath => realpath("$FindBin::Bin/../etc/jobcenter.conf"),
+		debug => 0
+	);
+
+	while ($_[0] and $_[0] =~ /^-/) {
+		my $opt=shift;
+		if ($opt eq '-h' or $opt eq '-?' or $opt eq '--help') {
+			say "try 'jcadm help'";
+			return 0;
+		}
+		if ($opt =~ /^--(\w+)=(.*?)$/ and exists $opts{$1}) {
+			$opts{$1} = $2;
+		} else {
+			die "unknown option $opt";
+		}		
+	}
+
+	my $jcadm = JobCenter::Adm->new(%opts)
+		or die 'no jcadm?';
+
+	return $jcadm->do_cmd(@_);
+}
