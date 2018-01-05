@@ -1,8 +1,6 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 
-use strict;
-use warnings;
-use 5.10.0;
+use Mojo::Base -strict;
 
 # standard perl
 use Cwd qw(realpath);
@@ -18,17 +16,18 @@ exit main();
 
 sub main {
 	my $config = realpath("$FindBin::Bin/../etc/jobcenter.conf");
-	my $daemonize = 0;
-	my $debug = 1;
+	my $daemonize = 1;
+	my $debug = 0;
 
 	GetOptions(
 		'config=s' => \$config,
 		'daemon!' => \$daemonize,
-		'debug' => \$debug,
+		'debug!' => \$debug,
 	) or die "Error in command line arguments\n";
 
 	my $jcapi = JobCenter::Api::JsonRpc2->new(
 		cfgpath => $config,
+		daemon => $daemonize,
 		debug => $debug,
 	);
 	die 'no jccapi?' unless $jcapi;
