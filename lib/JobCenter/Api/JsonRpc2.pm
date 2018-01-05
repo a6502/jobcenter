@@ -97,6 +97,7 @@ sub new {
 	$rpc->register('announce', sub { $self->rpc_announce(@_) }, non_blocking => 1, state => 'auth');
 	$rpc->register('create_job', sub { $self->rpc_create_job(@_) }, non_blocking => 1, state => 'auth');
 	$rpc->register('find_jobs', sub { $self->rpc_find_jobs(@_) }, non_blocking => 1, state => 'auth');
+	$rpc->register('get_api_status', sub { $self->rpc_get_api_status(@_) }, state => 'auth');
 	$rpc->register('get_job_status', sub { $self->rpc_get_job_status(@_) }, non_blocking => 1, state => 'auth');
 	$rpc->register('get_task', sub { $self->rpc_get_task(@_) }, non_blocking => 1, state => 'auth');
 	$rpc->register('hello', sub { $self->rpc_hello(@_) }, non_blocking => 1);
@@ -119,9 +120,9 @@ sub new {
 	my $server = Mojo::IOLoop->server(
 		$serveropts => sub {
 			my ($loop, $stream, $id) = @_;
-			my $client = JobCenter::Api::Client->new($rpc, $stream, $id);
+			my $client = JobCenter::Api::Client->new($self, $rpc, $stream, $id);
 			$client->on(close => sub { $self->_disconnect($client) });
-			#$self->clients->{refaddr($client)} = $client;
+			$self->clients->{refaddr($client)} = $client;
 		}
 	) or die 'no server?';
 
@@ -135,7 +136,7 @@ sub new {
 	$self->{apiname} = $apiname;
 	$self->{auth} = $auth;
 	$self->{cfg} = $cfg;
-	#$self->{clients} = {};
+	$self->{clients} = {};
 	$self->{daemon} = $daemon;
 	$self->{debug} = $debug;
 	$self->{listenstrings} = {}; # connected workers, grouped by listenstring
@@ -152,6 +153,7 @@ sub new {
 
 	return $self;
 }
+
 
 sub work {
 	my ($self) = @_;
@@ -183,6 +185,7 @@ sub work {
 	return 0;
 }
 
+
 sub _disconnect {
 	my ($self, $client) = @_;
 	$self->log->info('oh my.... ' . ($client->who // 'somebody') . ' disonnected..');
@@ -197,8 +200,10 @@ sub _disconnect {
 		$self->rpc_withdraw($client->con, {actionname => $a});
 	}
 
-	#delete $self->clients->{refaddr($client)};
+	delete $self->clients->{refaddr($client)};
+	%$client = (); # nuke'm
 }
+
 
 sub rpc_ping {
         my ($self, $c, $i, $rpccb) = @_;
@@ -232,6 +237,7 @@ sub rpc_hello {
 		}
 	});
 }
+
 
 sub rpc_create_job {
 	my ($self, $con, $i, $rpccb) = @_;
@@ -340,6 +346,7 @@ sub rpc_create_job {
 	});
 }
 
+
 sub _poll_done {
 	my ($self, $job) = @_;
 	Mojo::IOLoop->delay(
@@ -372,6 +379,7 @@ sub _poll_done {
 		 $self->log->error("_poll_done caught $_[0]");
 	});
 }
+
 
 sub rpc_find_jobs {
 	my ($self, $con, $i, $rpccb) = @_;
@@ -437,6 +445,7 @@ sub rpc_get_job_status {
 		 $self->log->error("rpc_job_job_status caught $_[0]");
 	});
 }
+
 
 sub rpc_announce {
 	my ($self, $con, $i, $rpccb) = @_;
@@ -531,6 +540,7 @@ sub rpc_announce {
 	return;
 }
 
+
 sub rpc_withdraw {
 	my ($self, $con, $i) = @_;
 	my $client = $con->owner;
@@ -575,6 +585,7 @@ sub rpc_withdraw {
 	return 1;
 }
 
+
 sub _ping {
 	my ($self, $client) = @_;
 	my $tmr;
@@ -615,6 +626,7 @@ sub _ping {
 	});
 }
 
+
 # process ping query queue: serialize calls to ping on one db connection
 # because the pongs tend to come in in batches
 sub _ppqq {
@@ -644,11 +656,6 @@ sub _ppqq {
 	});
 }
 
-# not a method!
-#sub _rot {
-#	my $l = shift;
-#        push @$l, shift @$l;
-#}
 
 # fixme: merge with _task_ready_next
 sub _task_ready {
@@ -717,6 +724,7 @@ sub _task_ready {
 	$self->{tasks}->{$job_id} = $task;
 }
 
+
 # fixme: merge with _task_ready
 sub _task_ready_next {
 	my ($self, $job_id) = @_;
@@ -778,6 +786,7 @@ sub _task_ready_next {
 		#job_id => $job_id,
 	);
 }
+
 
 sub rpc_get_task {
 	my ($self, $con, $i, $rpccb) = @_;
@@ -869,6 +878,7 @@ sub rpc_get_task {
 	});
 }
 
+
 sub rpc_task_done {
 	#my ($self, $task, $outargs) = @_;
 	my ($self, $con, $i, $rpccb) = @_;
@@ -939,21 +949,6 @@ sub rpc_task_done {
 	return;
 }
 
-sub _task_timeout {
-	# not used anymore
-	die 'should not get here';
-	my ($self, $cookie) = @_;
-	my $task = delete $self->{tasks}->{$cookie};
-	return unless $task; # really?
-	$task->workeraction->{used}--; # done..
-
-	my $outargs = encode_json({'error' => 'timeout after ' . $self->timeout . ' seconds'});
-	eval {
-		$self->pg->db->dollar_only->query(q[select task_done($1, $2)], $cookie, $outargs, sub { 1; } );
-	};
-	$self->log->debug("task_done got $@") if $@;
-	$self->log->debug("timeout for action $task->{actionname} for job $task->{job_id}");
-}
 
 sub _shutdown {
 	my($self, $sig) = @_;
@@ -972,6 +967,47 @@ sub _shutdown {
 	}
 
 	Mojo::IOLoop->stop;
+}
+
+
+sub rpc_get_api_status {
+	my ($self, $con, $i) = @_;
+	my $client = $con->owner;
+	die 'permission denied' unless $client->who eq 'apimeister';
+	my $what = $i->{what} or die 'what status?';
+	# find listenstring by actionname
+
+	if ($what eq 'clients') {
+		my @out;
+
+		for my $c (values %{$self->clients}) {
+			my %actions;
+			$actions{$_->actionname} = {
+				filter => $_->filter,
+				slots => $_->slots,
+				used => $_->used,
+			} for values %{$c->actions};
+			push @out, {
+				actions => \%actions,
+				from => $c->from,
+				who => $c->who,
+				workername => $c->workername,
+			}
+		}
+
+		return \@out;
+	} elsif ($what eq 'pending') {
+		my %out;
+		for my $l (keys %{$self->pending}) {
+			my $wa = $self->listenstrings->{$l}[0];
+			$out{$wa->actionname} = ($self->pending->{$l} ? 'jobs pending' : 'no jobs pending');
+		}
+
+		return \%out;
+	} else {
+		return "no status for $what";
+	}
+
 }
 
 1;
