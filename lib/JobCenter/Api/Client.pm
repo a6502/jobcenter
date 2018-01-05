@@ -7,15 +7,19 @@ use MojoX::NetstringStream;
 
 use Data::Dumper;
 
-has [qw(actions con id ns ping reqauth rpc stream tmr who workername worker_id)];
+has [qw(actions api con from id ns ping reqauth rpc stream tmr who
+	 workername worker_id)];
 
 sub new {
 	my $self = shift->SUPER::new();
-	my ($rpc, $stream, $id) = @_;
+	my ($api, $rpc, $stream, $id) = @_;
 	#say 'new connection!';
 	die 'no stream?' unless $stream and $stream->can('write');
+	my $handle = $stream->handle;
+	my $from = $handle->peerhost .':'. $handle->peerport;
 	my $ns = MojoX::NetstringStream->new(
-		stream => $stream
+		stream => $stream,
+		maxsize => 999999, # fixme: configurable?
 	);
 	my $con = $rpc->newconnection(
 		owner => $self,
@@ -30,11 +34,21 @@ sub new {
 		$ns->close if $err[0];
 	});
 	$ns->on(close => sub { $self->_on_close(@_) });
+	$ns->on(nserr => sub {
+		my ($ns, $msg) = @_;
+		$api->log->error("$from ($self): $msg");
+		# whut?
+		#$self->rpc->_error($con, undef, -32010, $msg);
+		$self->close;
+	});
+
+	$api->log->info("new connection $self from $from");
 
 	$con->notify('greetings', {who =>'jcapi', version => '1.1'});
 	
 	$self->{actions} = {};
 	$self->{con} = $con;
+	$self->{from} = $from;
 	$self->{id} = $id;
 	$self->{ns} = $ns;
 	$self->{ping} = 60; # fixme: configurable?
@@ -47,7 +61,7 @@ sub _on_close {
 	my ($self, $ns) = @_;
 	Mojo::IOLoop->remove($self->{tmr}) if $self->{tmr};
 	$self->emit(close => $self);
-	$self->con->close;
+	$self->con->close if $self->con;
 	%$self = ();
 }
 
