@@ -21,17 +21,22 @@ has [qw(cfg cfgpath client debug log)];
 has client => sub {
 	my ($self) = @_;
 
-	my $client = JobCenter::Client::Mojo->new(
+	my %args = (
 		who => $self->{cfg}{admin}{apiuser},
 		token => $self->{cfg}{admin}{apitoken},
 		debug => $self->debug,
 		log => $self->log,
-		# todo:
-		#tls => 1,
-		#tls_ca => '/home/wieger/src/jobcenter/etc/JobcenterCA.crt',
-		#tls_cert => '/home/wieger/wsclient.crt',
-		#tls_key => '/home/wieger/wsclient.pem',
+		tls => ($self->{cfg}{api}{tls_key} ? 1 : 0 ),
 	) or die 'no jobcenter api client?';
+
+	if ($self->{cfg}{admin}{client_key}) {
+		$args{tls_key} = $self->{cfg}{admin}{client_key};
+		$args{tls_cert} = $self->{cfg}{admin}{client_cert};
+		$args{tls_ca} = $self->{cfg}{api}{tls_ca};
+	}
+
+	my $client = JobCenter::Client::Mojo->new(%args)
+		or die 'no jobcenter api client?';
 
 	return $client;
 };
