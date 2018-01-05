@@ -1,6 +1,6 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 
-use Mojo::Base -base;
+use Mojo::Base -strict;
 
 #
 # Mojo's default reactor uses EV, and EV does not play nice with signals
@@ -12,6 +12,7 @@ BEGIN {
 }
 
 # standard perl
+use Cwd qw(realpath);
 use Data::Dumper;
 use FindBin;
 use Getopt::Long;
@@ -21,19 +22,21 @@ use Time::HiRes qw( time );
 use Config::Tiny;
 
 # more mojo
-use Mojolicious::Lite;
 use Mojo::IOLoop;
+use Mojo::Log;
 use Mojo::Pg;
-use Mojo::Server;
 
 # JobCenter
-use lib "$FindBin::Bin/../lib";
+use lib realpath("$FindBin::Bin/../lib");
 use JobCenter::Util qw(:daemon);
 
 # transaction backoff time
 our $backoff = 0.1;
 
-# some package globals
+# minimal timer value
+our $timer_min = 0.1;
+
+# some handy package globals
 our ($log, $pg, $tmr, $next);
 
 exit main();
@@ -127,7 +130,7 @@ sub do_settimer {
 
 	if ($payload) {
 		if ($now + $payload < $next or $next <= $now) {
-			$payload = .1 if $payload < .1;
+			$payload = $timer_min if $payload < $timer_min;
 			$log->debug("settimer: $payload");
 
 			Mojo::IOLoop->remove($tmr) if $tmr;
@@ -142,19 +145,15 @@ sub do_settimer {
 	}
 }
 
-sub do_slash {
-	my $c = shift;
-	# fixme: do something usefull here?
-	$c->render(text => "Hello World!");
-}
-
 sub main {
-	my $config = "$FindBin::Bin/../etc/jobcenter.conf";
+	my $config = realpath("$FindBin::Bin/../etc/jobcenter.conf");
 	my $daemon = 1;
+	my $debug = 0;
 
 	GetOptions(
 		'config=s' => \$config,
 		'daemon!' => \$daemon,
+		'debug!', => \$debug,
 	) or die "Error in command line arguments\n";
 
 	$ENV{'PGAPPNAME'} = "maestro [$$]";
@@ -165,10 +164,10 @@ sub main {
 	my $pid_file = $cfg->{pid_file} // "$FindBin::Bin/../log/maestro.pid";
 	die "maestro already running?" if check_pid($pid_file);
 
-	$log = app->log;
+	$log = Mojo::Log->new(level => ($debug) ? 'debug' : 'info');
 	$log->path("$FindBin::Bin/../log/maestro.log") if $daemon;
 
-	Mojo::Server::daemonize() if $daemon;
+	daemonize() if $daemon;
 
 	ensure_pid_file($pid_file, $log);
 
@@ -182,29 +181,40 @@ sub main {
 	);
 	$pg->max_connections(5);
 
-	$pg->on(connection => sub { my ($e, $dbh) = @_;  $log->debug("pg: new connection: $dbh"); });
+	$pg->on(connection => sub {
+		my ($e, $dbh) = @_;
+		$log->debug("pg: new connection: $dbh");
+	});
 
 	for my $listen (qw[jobtask jobtaskdone jobtaskerror ping]) {
 		$pg->pubsub->listen($listen => sub {
 			my ($pubsub, $payload) = @_;
-			$log->debug("got NOTIFY \"$listen\", '$payload';");
+			$log->debug("got NOTIFY \"$listen\""
+				. ($payload ? ", '$payload';" : ''));
 			calljobtaskproc($pg->db, "do_$listen", $payload);
 		});
 	}
 
-	$next = time()*2; # something far far away..
+	$next = time()-1; # somewhere in the past
 	$pg->pubsub->listen('timer' => \&do_settimer);
+
+	$pg->pubsub->listen('timerquery' => sub {
+		$log->debug("got timerquery");
+		$pg->pubsub->notify('nexttimer', $next);
+	});
 
 	my $mopupper = Mojo::IOLoop->recurring(60 => sub {
 		$log->debug('do_archival_and_cleanup');
 		calljobtaskproc($pg->db, 'do_archival_and_cleanup', '(dummy)');
 	});
 
-	local $SIG{TERM} = local $SIG{INT} = sub { Mojo::IOLoop->stop };
+	local $SIG{TERM} = local $SIG{INT} = sub {
+		my $sig = shift;
+		$log->info("caught sig$sig.");
+		Mojo::IOLoop->stop
+	};
 
-	get('/' => \&do_slash);
-
-	app->start('daemon', '-l', 'http://*:' . ( $cfg->{maestro}->{listenport} // '6502' ) );
+	Mojo::IOLoop->start;
 
 	$log->info('the end is nigh!');
 	unlink $pid_file if -w $pid_file;
