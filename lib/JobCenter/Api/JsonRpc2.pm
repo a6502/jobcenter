@@ -981,6 +981,7 @@ sub rpc_get_api_status {
 		my @out;
 
 		for my $c (values %{$self->clients}) {
+			next unless $c;
 			my %actions;
 			$actions{$_->actionname} = {
 				filter => $_->filter,
