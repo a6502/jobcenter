@@ -2,8 +2,6 @@ package JobCenter::Adm::Pending;
 
 use Mojo::Base 'JobCenter::Adm::Cmd';
 
-use Data::Dumper;
-
 sub do_cmd {
 	my $self = shift;
 	
@@ -11,7 +9,15 @@ sub do_cmd {
 	
 	my ($result) = $client->get_api_status('pending');
 	
-	print Dumper($result);
+	unless (ref $result eq 'HASH') {
+		say 'no result from api?';
+		return 1;
+	}
+
+	my @rows = [qw(action pending)];
+	push @rows, [$_, $result->{$_}] for keys %$result;
+	$self->tablify(\@rows, 'jobs pending flags in the api');
+
 
 	return 0;
 }
