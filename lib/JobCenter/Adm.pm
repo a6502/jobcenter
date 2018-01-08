@@ -27,13 +27,15 @@ has client => sub {
 		debug => $self->debug,
 		log => $self->log,
 		tls => ($self->{cfg}{api}{tls_key} ? 1 : 0 ),
+		( $self->{cfg}{admin}{apimethod} ? (method => $self->{cfg}{admin}{apimethod}) : ()),
+		( $self->{cfg}{admin}{apiaddress} ? (address => $self->{cfg}{admin}{apiaddress}) : ()),
 		( $self->{cfg}{api}{listenport} ? (port => $self->{cfg}{api}{listenport}) : ()),
 	) or die 'no jobcenter api client?';
 
-	if ($self->{cfg}{admin}{client_key}) {
+	if ($self->{cfg}{admin}{apiclient_key}) {
 		$args{tls_key} = $self->{cfg}{admin}{apiclient_key};
 		$args{tls_cert} = $self->{cfg}{admin}{apiclient_cert};
-		$args{tls_ca} = $self->{cfg}{api}{tls_ca};
+		$args{tls_ca} = $self->{cfg}{api}{tls_ca} if $self->{cfg}{api}{tls_ca};
 	}
 
 	my $client = JobCenter::Client::Mojo->new(%args)
