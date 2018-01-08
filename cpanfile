@@ -24,3 +24,4 @@ requires 'Pegex', '0.60';
 recommends 'Cpanel::JSON::XS', '2.3310';
 recommends 'IO::Socket::SSL', '1.94';
 recommends 'Net::DNS::Native';
+recommends 'Text::Table::Tiny', '0.04';
