@@ -1,0 +1,240 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use 5.10.0;
+
+# standard modules
+use Cwd qw(realpath);
+use Data::Dumper;
+use FindBin;
+use Getopt::Long;
+
+# cpan
+use Config::Tiny;
+use DBI;
+use DBD::Pg;
+
+# potentially useful globals
+my $debug = 0;
+my $pgh;
+
+exit main(@ARGV);
+
+sub main {
+	my $cfgpath = realpath("$FindBin::Bin/../etc/jobcenter.conf");
+	my $count = 1;
+
+	GetOptions(
+		'config=s' => \$cfgpath,
+		'count!' => \$count,
+		'debug!', => \$debug,
+	) or die "Error in command line arguments\n";
+	#my ($job_id) = @_;
+
+	my $cfg = Config::Tiny->read($cfgpath);
+	die 'failed to read config ' . $cfgpath . ': ' . Config::Tiny->errstr unless $cfg;
+
+	my $pgdsn = 'dbi:Pg:dbname=' . $cfg->{pg}->{db}
+		. (($cfg->{pg}->{host}) ? ';host=' . $cfg->{pg}->{host} : '')
+		. (($cfg->{pg}->{port}) ? ';port=' . $cfg->{pg}->{port} : '');
+	my $pguser = $cfg->{admin}->{user};
+	my $pgpass = $cfg->{admin}->{pass};
+
+	# make our clientname the application_name visible in postgresql
+	$ENV{'PGAPPNAME'} = "$0 [$$]";
+
+	$pgh = DBI->connect(
+		$pgdsn, $pguser, $pgpass,
+		{
+			AutoCommit => 1,
+			RaiseError => 1,
+			PrintError => 1,
+		}
+	) or die "cannot connect to db: $DBI::errstr";
+	$pgh->{pg_placeholder_dollaronly} = 1;
+
+	my $jobsq = $pgh->prepare(<<'EOT');
+select
+	job_id, job_finished
+from
+	jobs
+	where
+		job_id > $1
+		and job_finished < now() - interval '3 months'
+	order by job_id
+	limit 1000
+EOT
+
+	my $jobsarchiveq = $pgh->prepare(<<'EOT');
+select
+	job_id, job_finished
+from
+	jobs_archive
+	where
+		job_id > $1
+		and job_finished < now() - interval '1 months'
+	order by job_id
+	limit 1000
+EOT
+
+	my $purgeq = $pgh->prepare(<<'EOT');
+-- $1 job_id
+-- $2 job_finished
+select
+	-- return a perlish true or false
+	case when $2::date < now()
+		- max( coalesce( (actions.config ->> 'archive'), '1 month' )::interval )
+	then
+		1
+	else
+		0
+	end as purge
+from
+	job_task_log
+	join tasks using (workflow_id, task_id)
+	join actions using (action_id)
+where
+	job_id = $1
+EOT
+
+	my $purgeq2 = $pgh->prepare(<<'EOT');
+select
+	-- return a perlish true or false
+	case when job_finished < now() - (
+		select
+			max( coalesce( (actions.config ->> 'archive'), '1 month' )::interval )
+		from
+			job_task_log
+			join tasks using (workflow_id, task_id)
+			join actions using (action_id)
+		where
+			job_id = jobs_archive.job_id
+		)
+	then
+		1
+	else
+		0
+	end as purge
+from
+	jobs_archive
+where
+	job_id = $1
+EOT
+
+	my $deljobarch = $pgh->prepare(<<'EOT');
+delete from
+	jobs_archive
+where
+	job_id = $1
+EOT
+
+	my $deljob = $pgh->prepare(<<'EOT');
+delete from
+	jobs
+where
+	job_id = $1
+EOT
+
+	my $deltasks = $pgh->prepare(<<'EOT');
+delete from
+	job_task_log
+where
+	job_id = $1
+EOT
+
+	my ($last_job_id, $j);
+	my ($jap, $jak, $jp, $jk) = (0, 0, 0, 0);
+
+	say 'cleaning up jobs_archive table';
+
+	$last_job_id = 0;
+
+	while (1) {
+		say "batch starting at: $last_job_id" if $debug;
+
+		$jobsarchiveq->execute($last_job_id);
+		my $jobs = $jobsarchiveq->fetchall_arrayref();
+
+		last unless $jobs and @$jobs;
+
+		for my $j (@$jobs) {
+			($last_job_id) = @$j;
+
+			#say "last_job_id: $last_job_id";
+
+			$purgeq->execute(@$j);
+			my ($purge) = $purgeq->fetchrow_array();
+
+			#next unless $purge;
+			unless ($purge) {
+				say "skipping $last_job_id" if $debug;
+				$jak++;
+				next;
+			}
+
+			say "need to purge $last_job_id" if $debug;
+			$jap++;
+			
+			$pgh->begin_work();
+			$deltasks->execute($last_job_id);
+			$deljobarch->execute($last_job_id);
+			$pgh->commit();
+		}
+	}
+
+	if ($count) {
+		say "purged from jobs_archive: $jap";
+		say "    kept in jobs_archive: $jak";
+	}
+
+	$pgh->do('vacuum jobs_archive');
+
+	say 'cleaning up jobs table';
+
+	$last_job_id = 0;
+
+	while (1) {
+		say "batch starting at: $last_job_id" if $debug;
+
+		$jobsq->execute($last_job_id);
+		my $jobs = $jobsq->fetchall_arrayref();
+
+		last unless $jobs and @$jobs;
+
+		for my $j (@$jobs) {
+			($last_job_id) = @$j;
+
+			#say "last_job_id: $last_job_id";
+
+			$purgeq->execute(@$j);
+			my ($purge) = $purgeq->fetchrow_array();
+
+			#next unless $purge;
+			unless ($purge) {
+				say "skipping $last_job_id" if $debug;
+				$jk++;
+				next;
+			}
+
+			say "need to purge $last_job_id" if $debug;
+			$jp++;
+			
+			$pgh->begin_work();
+			$deltasks->execute($last_job_id);
+			$deljob->execute($last_job_id);
+			$pgh->commit();
+		}
+	}
+
+	$pgh->do('vacuum jobs');
+	$pgh->do('vacuum job_task_log');
+
+	if ($count) {
+		say "        purged from jobs: $jp";
+		say "            kept in jobs: $jk";
+	}
+
+	return 0;
+}
+
