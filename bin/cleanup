@@ -58,24 +58,37 @@ sub main {
 select
 	job_id, job_finished
 from
-	jobs
-	where
-		job_id > $1
-		and job_finished < now() - interval '3 months'
-	order by job_id
-	limit 1000
+	jobs p
+where
+	job_id > $1
+	and job_finished < now() - interval '3 months'
+	and not exists (
+		select
+			true
+		from
+			jobs c
+		where
+			c.parentjob_id=p.job_id
+		limit 1
+	)
+order by
+	job_id
+limit
+	1000
 EOT
 
 	my $jobsarchiveq = $pgh->prepare(<<'EOT');
 select
 	job_id, job_finished
 from
-	jobs_archive
-	where
-		job_id > $1
-		and job_finished < now() - interval '1 months'
-	order by job_id
-	limit 1000
+	jobs_archive p
+where
+	job_id > $1
+	and job_finished < now() - interval '1 months'
+order by
+	job_id
+limit
+	1000
 EOT
 
 	my $purgeq = $pgh->prepare(<<'EOT');
@@ -94,30 +107,6 @@ from
 	job_task_log
 	join tasks using (workflow_id, task_id)
 	join actions using (action_id)
-where
-	job_id = $1
-EOT
-
-	my $purgeq2 = $pgh->prepare(<<'EOT');
-select
-	-- return a perlish true or false
-	case when job_finished < now() - (
-		select
-			max( coalesce( (actions.config ->> 'archive'), '1 month' )::interval )
-		from
-			job_task_log
-			join tasks using (workflow_id, task_id)
-			join actions using (action_id)
-		where
-			job_id = jobs_archive.job_id
-		)
-	then
-		1
-	else
-		0
-	end as purge
-from
-	jobs_archive
 where
 	job_id = $1
 EOT
