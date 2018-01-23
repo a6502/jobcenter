@@ -41,47 +41,54 @@ our ($log, $pg, $tmr, $next);
 
 exit main();
 
-sub calljobtaskproc {
+sub _calljobtaskproc {
 	my ($db, $proc, $arg, $retries) = @_;
 	$retries //= 1;
-	local $@;
-	eval {
-		#$log->debug("select * from $proc($arg)");
-		$db->query("select * from $proc(\$1)", $arg, sub {
-			my ($db, $err, $res) = @_;
-			#$log->debug("calljobtaskproc callback");
-			my $sqlstate = $res->sth->state;
-			if ($sqlstate eq '40001' or $sqlstate eq '40P01') {
-				$log->debug("scheduling retry of calljobtaskproc $proc$arg: $sqlstate");
-				$res->sth->finish;
-				# try a backoff with a bit of randomness
-				Mojo::IOLoop->timer(($backoff + rand($retries * $backoff)) => sub {
-					$log->debug("retry $retries of calljobtaskproc $proc$arg");
-					calljobtaskproc($db, $proc, $arg, $retries + 1);
-				});
-				return;
-			}
-			if ($err) {
-				$res->sth->finish;
-				$log->error("calljobtaskproc $proc$arg: got errror $err");
-				return;
-			}
-			my $r = $res->array; # fixme: can wel call this in a error case?
+	#$log->debug("select * from $proc($arg)");
+	$db->query("select * from $proc(\$1)", $arg, sub {
+		my ($db, $err, $res) = @_;
+		$log->debug("_calljobtaskproc callback");
+		my $sqlstate = $res->sth->state;
+		if ($sqlstate eq '40001' or $sqlstate eq '40P01') {
+			$log->debug("scheduling retry of _calljobtaskproc $proc($arg): $sqlstate");
 			$res->sth->finish;
-			#print 'r: ', Dumper($r);
-			return unless ref $r eq 'ARRAY' and defined @$r[1];
-			my ($error, $jobtask) = @$r;
-			if ($error) {
-				$log->debug("calljobtaskproc: error condition, calling errortask $jobtask");
-				calljobtaskproc($db, 'do_jobtaskerror', $jobtask);
-			} else {
-				$log->debug("do_next_cb: next: $jobtask");
-				calljobtaskproc($db, 'do_jobtask', $jobtask);
-			}
+			# try a backoff with a bit of randomness
+			Mojo::IOLoop->timer(($backoff + rand($retries * $backoff)) => sub {
+				$log->debug("retry $retries of _calljobtaskproc $proc($arg)");
+				_calljobtaskproc($db, $proc, $arg, $retries + 1);
+			});
 			return;
-		});
-	};
-	$log->debug('calljobtaskproc threw error: ' . $@) if $@;
+		}
+		if ($err) {
+			$res->sth->finish;
+			$log->error("_calljobtaskproc $proc($arg): got errror $err");
+			return;
+		}
+		my $r = $res->array;
+		$res->sth->finish;
+		#print 'r: ', Dumper($r);
+		return unless ref $r eq 'ARRAY' and defined @$r[1];
+		my ($error, $jobtask) = @$r;
+		if ($error) {
+			$log->debug("_calljobtaskproc: error condition, calling errortask $jobtask");
+			_calljobtaskproc($db, 'do_jobtaskerror', $jobtask);
+		} else {
+			$log->debug("do_next_cb: next: $jobtask");
+			_calljobtaskproc($db, 'do_jobtask', $jobtask);
+		}
+		return;
+	});
+}
+
+sub calljobtaskproc {
+	local $@;
+	unless ( eval { _calljobtaskproc($pg->db, @_); 1; }) {
+		my $err = $@;
+		$log->error("calljobtaskproc got $err");
+		if ($err =~ /too many connections/) {
+			$log->debug('todo: implement this');
+		}
+	}
 }
 
 sub do_timeout {
@@ -191,7 +198,7 @@ sub main {
 			my ($pubsub, $payload) = @_;
 			$log->debug("got NOTIFY \"$listen\""
 				. ($payload ? ", '$payload';" : ''));
-			calljobtaskproc($pg->db, "do_$listen", $payload);
+			calljobtaskproc("do_$listen", $payload);
 		});
 	}
 
@@ -205,7 +212,7 @@ sub main {
 
 	my $mopupper = Mojo::IOLoop->recurring(60 => sub {
 		$log->debug('do_archival_and_cleanup');
-		calljobtaskproc($pg->db, 'do_archival_and_cleanup', '(dummy)');
+		calljobtaskproc('do_archival_and_cleanup', '(dummy)');
 	});
 
 	local $SIG{TERM} = local $SIG{INT} = sub {
