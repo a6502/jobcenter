@@ -256,7 +256,6 @@ sub _reconfigure {
 
 		my $err = $self->announce_rpcs(
 			method => "$self->{prefix}.get_status",
-			workflow => '_dummy',
 			handler => '_get_status',
 		);
 		die "could not announce get_status: $err" if $err;
@@ -427,10 +426,13 @@ sub work {
 sub announce_rpcs {
 	my ($self, %args) = @_;
 	my $method = $args{method} or croak 'no method?';
-	my $workflow = $args{workflow} or croak 'no workflow?';
+	my $workflow = $args{workflow};
 	my $handler = $args{handler} or croak 'no handler?';
 
 	croak "already have method $method" if $self->methods->{$method};
+
+	my $doc;
+	$doc = $self->_get_workflow_info($workflow) if $workflow;
 	
 	my $err;
 	Mojo::IOLoop->delay(
@@ -444,6 +446,7 @@ sub announce_rpcs {
 				method => $method,
 				#slots => $slots,
 				#(($args{filter}) ? (filter => $args{filter}) : ()),
+				($doc ? (doc => $doc) : ()),
 			},
 			$d->begin(0)
 		);
@@ -489,6 +492,19 @@ sub announce_rpcs {
 	})->wait();
 
 	return $err;
+}
+
+sub _get_workflow_info {
+	my ($self, $workflow) = @_;
+	die 'no workflow?' unless $workflow;
+
+	my $res = $self->pg->db->dollar_only->query(
+		q[select * from get_workflow_info($1)],
+		$workflow,
+	)->array;
+	die "worflow $workflow not found" unless $res and @$res;
+	#print "info for $workflow:", Dumper($res);
+	return decode_json($res->[0]);
 }
 
 # handle the rpcswitch magic
