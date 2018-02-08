@@ -10,6 +10,8 @@ sub new {
 	my $class = shift;
 	my $self = $class->SUPER::new(@_);
 
+	$self->{database_class} = 'JobCenter::Pg::Db';
+
 	$self->{__jcpg_concount} = 0;
 	$self->{__jcpg_queryqueue} = undef;
 	$self->{__jcpg_dbhqueue} = [];
@@ -18,7 +20,13 @@ sub new {
 	return $self;
 }
 
-
+sub db {
+	my ($self) = @_;
+	return JobCenter::Pg::Db->new(
+		dbh => $self->__jcpg_dequeue('yes, really'),
+		pg => $self,
+	);
+}
 
 # fixme: better name?
 sub queue_query {
@@ -69,7 +77,7 @@ sub queue_query {
 # our own private methods, different from those of the parent...
 
 sub __jcpg_dequeue {
-	my $self = shift;
+	my ($self, $really) = @_;
 	#$self->log->info('__jcpg_dequeue: ...');
 
 	# Fork-safety
@@ -88,7 +96,8 @@ sub __jcpg_dequeue {
 	if ($self->{__jcpg_concount} >= $self->{max_total_connections}) {
 		$self->log->debug('__jcpg_dequeue: concount ' . $self->{__jcpg_concount} .
 			' >= maxcon ' . $self->{max_total_connections});
-		return;
+		# the $really flag allows the caller to signal it really needs a dbh now
+		return unless $really;
 	}
 
 	my $dbh = DBI->connect(map { $self->$_ } qw(dsn username password options));
@@ -99,7 +108,7 @@ sub __jcpg_dequeue {
 		$dbh->do("set search_path to $search_path");
 	}
 
-	#$self->log->debug("__jcpg_dequeue: new dbh $dbh");
+	$self->log->debug("__jcpg_dequeue: new dbh $dbh");
 	$self->emit(connection => $dbh);
 	$self->{__jcpg_concount}++;
 
