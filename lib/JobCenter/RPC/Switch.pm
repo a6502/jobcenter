@@ -14,7 +14,7 @@ BEGIN {
 use Mojo::Base -base;
 use Mojo::IOLoop;
 use Mojo::Log;
-use Mojo::Pg;
+#use Mojo::Pg;
 
 # standard perl
 use Carp qw(croak);
@@ -33,11 +33,12 @@ use JSON::MaybeXS qw(decode_json encode_json);
 use MojoX::NetstringStream 0.05; # older versions have utf-8 bugs
 
 # jobcenter
+use JobCenter::Pg;
 use JobCenter::Util qw(:daemon hdiff);
 
 has [qw(
 	actions address auth cfg cfgpath channels clientid conn daemon debug
-	jc_worker_id jobs lastping log method methods pending pg
+	jcpg jc_worker_id jobs lastping log method methods pending
 	ping_timeout port prefix rpc timeout tasks tls tmr token who
 	workername
 )]; #
@@ -66,7 +67,7 @@ sub new {
 
 	# make our workername the application_name visible in postgresql
 	$ENV{'PGAPPNAME'} = $workername;
-	my $pg = Mojo::Pg->new(
+	my $jcpg = JobCenter::Pg->new(
 		'postgresql://'
 		. $cfg->{jcswitch}->{user}
 		. ':' . $cfg->{jcswitch}->{pass}
@@ -74,13 +75,14 @@ sub new {
 		. ( ($cfg->{jcswitch}->{port}) ? ':' . $cfg->{jcswitch}->{port} : '' )
 		. '/' . $cfg->{jcswitch}->{db}
 	);
-	$pg->max_connections(5); # how much? configurable?
-	$pg->on(connection => sub { my ($e, $dbh) = @_; $log->debug("pg: new connection: $dbh"); });
+	$jcpg->database_class('JobCenter::Pg::Db');
+	$jcpg->max_total_connections(5); # how much? configurable?
+	$jcpg->on(connection => sub { my ($e, $dbh) = @_; $log->debug("jcpg: new connection: $dbh"); });
 
 	# this tests the pg connection as well
 	#$pg->pubsub->listen($workername, sub { say 'ohnoes!'; exit(1) });
 	$self->{jobs} = {}; # jobs we are waiting for
-	$pg->pubsub->listen('job:finished', sub {
+	$jcpg->pubsub->listen('job:finished', sub {
 		my ($pubsub, $payload) = @_;
 		$self->log->debug("notify job:finished $payload");
 		#print 'jobs: ', Dumper($self->{jobs});
@@ -91,7 +93,7 @@ sub new {
 		$self->log->debug("pubsub cb $@") if $@;
 	});
 
-	$self->{pg} = $pg;
+	$self->{jcpg} = $jcpg;
 	$self->{workername} = $workername;
 
 	my $timeout = $args{timeout} // 60; # fixme: cfg?
@@ -498,7 +500,7 @@ sub _get_workflow_info {
 	my ($self, $workflow) = @_;
 	die 'no workflow?' unless $workflow;
 
-	my $res = $self->pg->db->dollar_only->query(
+	my $res = $self->jcpg->db->dollar_only->query(
 		q[select * from get_workflow_info($1)],
 		$workflow,
 	)->array;
@@ -577,9 +579,13 @@ sub _create_job {
 	# - inargs not valid
 	Mojo::IOLoop->delay(
 		sub {
-			my $d = shift;
+			my ($d) = @_;
+			$self->jcpg->queue_query($d->begin(0));
+		},
+		sub {
+			my ($d, $db) = @_;
 			#($job_id, $listenstring) = @{
-			$self->pg->db->dollar_only->query(
+			$db->dollar_only->query(
 				q[select * from create_job(wfname := $1, args := $2, tag := $3, impersonate := $4, env := $5)],
 				$wfname,
 				$inargs,
@@ -634,8 +640,12 @@ sub _poll_done {
 	my ($self, $job) = @_;
 	Mojo::IOLoop->delay->steps(
 		sub {
-			my $d = shift;
-			$self->pg->db->dollar_only->query(
+			my ($d) = @_;
+			$self->jcpg->queue_query($d->begin(0));
+		},
+		sub {
+			my ($d, $db) = @_;
+			$db->dollar_only->query(
 				q[select * from get_job_status($1)],
 				$job->{job_id},
 				$d->begin
@@ -695,8 +705,12 @@ sub _get_status {
 
 	Mojo::IOLoop->delay->steps(
 		sub {
-			my $d = shift;
-			$self->pg->db->dollar_only->query(
+			my ($d) = @_;
+			$self->jcpg->queue_query($d->begin(0));
+		},
+		sub {
+			my ($d, $db) = @_;
+			$db->dollar_only->query(
 				q[select * from get_job_status($1)],
 				$job_id,
 				$d->begin
@@ -795,7 +809,7 @@ sub announce_jc {
 		# announce throws an error when:
 		# - workername is not unique
 		# - actionname does not exist
-		my $res = $self->pg->db->dollar_only->query(
+		my $res = $self->jcpg->db->dollar_only->query(
 			q[select * from announce($1, $2)],
 			$self->{workername},
 			$actionname
@@ -808,7 +822,7 @@ sub announce_jc {
 		return $@;
 	}
 	$self->log->debug("worker_id $worker_id listenstring $listenstring");
-	$self->pg->pubsub->listen($listenstring, sub {
+	$self->jcpg->pubsub->listen($listenstring, sub {
 		my ($pubsub, $payload) = @_;
 		$self->_get_task($actionname, $methodname, $payload);
 	});
@@ -844,8 +858,12 @@ sub _get_task {
 
 	Mojo::IOLoop->delay(
 		sub {
-			my $d = shift;
-			$self->pg->db->dollar_only->query(
+			my ($d) = @_;
+			$self->jcpg->queue_query($d->begin(0));
+		},
+		sub {
+			my ($d, $db) = @_;
+			$db->dollar_only->query(
 				q[select * from get_task($1, $2, $3)],
 				$self->{workername},
 				$actionname,
@@ -923,8 +941,12 @@ sub _task_done {
 
 	Mojo::IOLoop->delay(
 		sub {
-			my $d = shift;
-			$self->pg->db->dollar_only->query(
+			my ($d) = @_;
+			$self->jcpg->queue_query($d->begin(0));
+		},
+		sub {
+			my ($d, $db) = @_;
+			$db->dollar_only->query(
 				q[select task_done($1, $2)],
 				$task->{cookie}, $outargs, $d->begin
 			);
@@ -968,14 +990,14 @@ sub withdraw_jc {
 	my $listenstring = delete $self->actions->{$actionname};
 	croak "unannounced action $actionname?" unless $listenstring;
 
-	my ($res) = $self->pg->db->query(
+	my ($res) = $self->jcpg->db->query(
 			q[select withdraw($1, $2)],
 			$self->{workername},
 			$actionname
 		)->array;
 	die "no result" unless $res and @$res;
 	
-	$self->pg->pubsub->unlisten($listenstring);
+	$self->jcpg->pubsub->unlisten($listenstring);
 
 	return 1;
 }
@@ -985,11 +1007,22 @@ sub _ping {
 	my $self = shift;
 	my $worker_id = shift;
 	$self->log->debug("ping($worker_id)!");
-	$self->pg->db->query(
-		q[select ping($1)],
-		$worker_id,
-		sub { 1;} # to make it asynchronous
-	);
+	Mojo::IOLoop->delay(
+		sub {
+			my ($d) = @_;
+			$self->jcpg->queue_query($d->begin(0));
+		},
+		sub {
+			my ($d, $db) = @_;
+			$db->query(
+				q[select ping($1)],
+				$worker_id,
+				$d->begin
+			);
+		},
+	)->catch(sub {
+		 $self->log->error("get_status caught $_[0]");
+	});
 }
 
 # call a method on the rpc switch
