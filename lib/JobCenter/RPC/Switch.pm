@@ -14,7 +14,6 @@ BEGIN {
 use Mojo::Base -base;
 use Mojo::IOLoop;
 use Mojo::Log;
-#use Mojo::Pg;
 
 # standard perl
 use Carp qw(croak);
