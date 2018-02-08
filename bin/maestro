@@ -24,10 +24,10 @@ use Config::Tiny;
 # more mojo
 use Mojo::IOLoop;
 use Mojo::Log;
-use Mojo::Pg;
 
 # JobCenter
 use lib realpath("$FindBin::Bin/../lib");
+use JobCenter::Pg;
 use JobCenter::Util qw(:daemon);
 
 # transaction backoff time
@@ -37,13 +37,13 @@ our $backoff = 0.1;
 our $timer_min = 0.1;
 
 # some handy package globals
-our ($log, $pg, $tmr, $next);
+our ($jcpg, $log, $tmr, $next);
 
 exit main();
 
 sub _calljobtaskproc {
 	my ($db, $proc, $arg, $retries) = @_;
-	$retries //= 1;
+	$retries ||= 1;
 	#$log->debug("select * from $proc($arg)");
 	$db->query("select * from $proc(\$1)", $arg, sub {
 		my ($db, $err, $res) = @_;
@@ -81,47 +81,57 @@ sub _calljobtaskproc {
 }
 
 sub calljobtaskproc {
+	my ($proc, $arg) = @_;
 	local $@;
-	unless ( eval { _calljobtaskproc($pg->db, @_); 1; }) {
+	unless (eval {
+		$jcpg->queue_query( sub {
+			my ($db) = @_;
+			_calljobtaskproc($db, $proc, $arg );
+		});
+		1;
+	}) {
 		my $err = $@;
 		$log->error("calljobtaskproc got $err");
-		if ($err =~ /too many connections/) {
-			$log->debug('todo: implement this');
-		}
+		#if ($err =~ /too many connections/) {
+		#	$log->debug('todo: implement this');
+		#}
 	}
 }
 
 sub do_timeout {
 	my ($loop) = @_;
 	local $@;
-	eval {
-		$tmr = undef;
-		$pg->db->query(q[select do_timeout()], sub {
-			my ($db, $err, $res) = @_;
-			my $sqlstate = $res->sth->state;
-			if ($sqlstate eq '40001' or $sqlstate eq '40P01') {
-				$log->debug("scheduling retry of do_timeout");
-				Mojo::IOLoop->timer($backoff => \&do_timeout);
-			}
-			if ($err) {
+	unless (eval {
+		$jcpg->queue_query( sub {
+			my ($db) = @_;
+			$tmr = undef;
+			$db->query(q[select do_timeout()], sub {
+				my ($db, $err, $res) = @_;
+				my $sqlstate = $res->sth->state;
+				if ($sqlstate eq '40001' or $sqlstate eq '40P01') {
+					$log->debug("scheduling retry of do_timeout");
+					Mojo::IOLoop->timer($backoff => \&do_timeout);
+				}
+				if ($err) {
+					$res->sth->finish;
+					$log->error("do_timeout got errror $err");
+					return;
+				}
+				my $r = $res->array;
 				$res->sth->finish;
-				$log->error("do_timeout got errror $err");
-				return;
-			}
-			my $r = $res->array;
-			$res->sth->finish;
-			if ($r and ref $r eq 'ARRAY' and defined @$r[0]) {
-				my $foo = my $bar = @$r[0] + 0;
-				$foo = .1 if $foo < .1; # fixme: minimum resolution?
-				my $now = time();
-				$next = $now + $foo;
-				$log->debug("do_timeout: timer now $foo ($bar)");
-				Mojo::IOLoop->remove($tmr) if $tmr;
-				$tmr = Mojo::IOLoop->timer($foo => \&do_timeout);
-			}
+				if ($r and ref $r eq 'ARRAY' and defined @$r[0]) {
+					my $foo = my $bar = @$r[0] + 0;
+					$foo = .1 if $foo < .1; # fixme: minimum resolution?
+					my $now = time();
+					$next = $now + $foo;
+					$log->debug("do_timeout: timer now $foo ($bar)");
+					Mojo::IOLoop->remove($tmr) if $tmr;
+					$tmr = Mojo::IOLoop->timer($foo => \&do_timeout);
+				};
+			});
 		});
-	};
-	if ($@) {
+		1;
+	}) {
 		$log->error("do_timeout threw error: $@");
 		$next = time()*2;
 	}
@@ -178,7 +188,7 @@ sub main {
 
 	ensure_pid_file($pid_file, $log);
 
-	$pg = Mojo::Pg->new(
+	$jcpg = JobCenter::Pg->new(
 		'postgresql://'
 		. $cfg->{maestro}->{user}
 		. ':' . $cfg->{maestro}->{pass}
@@ -186,15 +196,15 @@ sub main {
 		. ( ($cfg->{pg}->{port}) ? ':' . $cfg->{pg}->{port} : '' )
 		. '/' . $cfg->{pg}->{db}
 	);
-	$pg->max_connections(5);
+	$jcpg->max_total_connections($cfg->{pg}->{con} // 5);
 
-	$pg->on(connection => sub {
-		my ($e, $dbh) = @_;
-		$log->debug("pg: new connection: $dbh");
+	$jcpg->on(connection => sub {
+		my ($jcpg, $dbh) = @_;
+		$log->debug("jcpg: $jcpg has new connection: $dbh");
 	});
 
 	for my $listen (qw[jobtask jobtaskdone jobtaskerror ping]) {
-		$pg->pubsub->listen($listen => sub {
+		$jcpg->pubsub->listen($listen => sub {
 			my ($pubsub, $payload) = @_;
 			$log->debug("got NOTIFY \"$listen\""
 				. ($payload ? ", '$payload';" : ''));
@@ -203,11 +213,11 @@ sub main {
 	}
 
 	$next = time()-1; # somewhere in the past
-	$pg->pubsub->listen('timer' => \&do_settimer);
+	$jcpg->pubsub->listen('timer' => \&do_settimer);
 
-	$pg->pubsub->listen('timerquery' => sub {
+	$jcpg->pubsub->listen('timerquery' => sub {
 		$log->debug("got timerquery");
-		$pg->pubsub->notify('nexttimer', $next);
+		$jcpg->pubsub->notify('nexttimer', $next);
 	});
 
 	my $mopupper = Mojo::IOLoop->recurring(60 => sub {
