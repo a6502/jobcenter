@@ -76,7 +76,7 @@ sub new {
 		. '/' . $cfg->{jcswitch}->{db}
 	);
 	$jcpg->database_class('JobCenter::Pg::Db');
-	$jcpg->max_total_connections(5); # how much? configurable?
+	$jcpg->max_total_connections($cfg->{jcswitch}->{con} // 5); # sane default?
 	$jcpg->on(connection => sub { my ($e, $dbh) = @_; $log->debug("jcpg: new connection: $dbh"); });
 
 	# this tests the pg connection as well
