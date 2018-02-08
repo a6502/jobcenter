@@ -13,7 +13,6 @@ BEGIN {
 use Mojo::Base -base;
 use Mojo::IOLoop;
 use Mojo::Log;
-use Mojo::Pg;
 
 # standard
 use Cwd qw(realpath);
@@ -34,6 +33,7 @@ use JobCenter::Api::Client;
 use JobCenter::Api::Job;
 use JobCenter::Api::Task;
 use JobCenter::Api::WorkerAction;
+use JobCenter::Pg;
 use JobCenter::Util qw(:daemon);
 
 has [qw(
@@ -44,10 +44,10 @@ has [qw(
 	clients
 	daemon
 	debug
+	jcpg
 	listenstrings
 	log
 	pending
-	pg
 	pid_file
 	ping
 	pqq
@@ -81,7 +81,7 @@ sub new {
 
 	# make our clientname the application_name visible in postgresql
 	$ENV{'PGAPPNAME'} = $apiname;
-	my $pg = Mojo::Pg->new(
+	my $jcpg = JobCenter::Pg->new(
 		'postgresql://'
 		. $cfg->{api}->{user}
 		. ':' . $cfg->{api}->{pass}
@@ -89,8 +89,8 @@ sub new {
 		. ( ($cfg->{pg}->{port}) ? ':' . $cfg->{pg}->{port} : '' )
 		. '/' . $cfg->{pg}->{db}
 	) or die 'no pg?';
-	$pg->max_connections(10);
-	$pg->on(connection => sub { my ($e, $dbh) = @_; $log->debug("pg: new connection: $dbh"); });
+	$jcpg->max_total_connections($cfg->{pg}->{con} // 5); # sane value?
+	$jcpg->on(connection => sub { my ($e, $dbh) = @_; $log->debug("pg: new connection: $dbh"); });
 
 	my $rpc = JSON::RPC2::TwoWay->new(debug => $debug) or die 'no rpc?';
 
@@ -131,7 +131,6 @@ sub new {
 	) or die 'no auth?';
 
 	# keep sorted
-	#$self->cfg($cfg);
 	$self->{actionnames} = {};
 	$self->{apiname} = $apiname;
 	$self->{auth} = $auth;
@@ -139,10 +138,10 @@ sub new {
 	$self->{clients} = {};
 	$self->{daemon} = $daemon;
 	$self->{debug} = $debug;
+	$self->{jcpg} = $jcpg;
 	$self->{listenstrings} = {}; # connected workers, grouped by listenstring
 	$self->{log} = $log;
 	$self->{pending} = {}; # pending tasks flags for listenstrings
-	$self->{pg} = $pg;
 	$self->{pid_file} = $pid_file if $daemon;
 	$self->{ping} = $args{ping} || 60;
 	$self->{pqq} = undef; # ping query queue
@@ -164,7 +163,7 @@ sub work {
 	# set up a connection to test things
 	# this also means that our first pg connection is only used for
 	# notifications.. this seems to save some memory on the pg side
-	$self->pg->pubsub->listen($self->apiname, sub {
+	$self->jcpg->pubsub->listen($self->apiname, sub {
 		say 'ohnoes!';
 		exit(1);
 	});
@@ -274,9 +273,13 @@ sub rpc_create_job {
 	# - inargs not valid
 	Mojo::IOLoop->delay(
 		sub {
-			my $d = shift;
+			my ($d) = @_;
+			$self->jcpg->queue_query($d->begin(0));
+		},
+		sub {
+			my ($d, $db) = @_;
 			#($job_id, $listenstring) = @{
-			$self->pg->db->dollar_only->query(
+			$db->dollar_only->query(
 				q[select * from create_job(wfname := $1, args := $2, tag := $3, impersonate := $4, env := $5)],
 				$wfname,
 				$inargs,
@@ -316,7 +319,7 @@ sub rpc_create_job {
 
 			#$self->pg->pubsub->listen($listenstring, sub {
 			# fixme: 1 central listen?
-			my $lcb = $self->pg->pubsub->listen('job:finished', sub {
+			my $lcb = $self->jcpg->pubsub->listen('job:finished', sub {
 				my ($pubsub, $payload) = @_;
 				return unless $job_id == $payload;
 				local $@;
@@ -328,7 +331,7 @@ sub rpc_create_job {
 			$tmr = Mojo::IOLoop->timer($timeout => sub {
 				# request failed, cleanup
 				#$self->pg->pubsub->unlisten($listenstring);
-				$self->pg->pubsub->unlisten('job:finished' => $lcb);
+				$self->jcpg->pubsub->unlisten('job:finished' => $lcb);
 				# the cb might fail if the connection is gone..
 				eval { &$cb($job_id, {'error' => 'timeout'}); };
 				$job->delete;
@@ -351,8 +354,12 @@ sub _poll_done {
 	my ($self, $job) = @_;
 	Mojo::IOLoop->delay(
 		sub {
-			my $d = shift;
-			$self->pg->db->dollar_only->query(
+			my ($d) = @_;
+			$self->jcpg->queue_query($d->begin(0));
+		},
+		sub {
+			my ($d, $db) = @_;
+			$db->dollar_only->query(
 				q[select * from get_job_status($1)],
 				$job->job_id,
 				$d->begin
@@ -364,7 +371,7 @@ sub _poll_done {
 			my ($outargs) = @{$res->array};
 			return unless $outargs;
 			#$self->pg->pubsub->unlisten($job->listenstring);
-			$self->pg->pubsub->unlisten('job:finished', $job->lcb);
+			$self->jcpg->pubsub->unlisten('job:finished', $job->lcb);
 			Mojo::IOLoop->remove($job->tmr) if $job->tmr;
 			$self->log->debug("calling cb $job->{cb} for job_id $job->{job_id} outargs $outargs");
 			my $outargsp;
@@ -386,8 +393,12 @@ sub rpc_find_jobs {
 	my $filter = $i->{filter} or die 'no job_id?';
 	Mojo::IOLoop->delay(
 		sub {
-			my $d = shift;
-			$self->pg->db->dollar_only->query(
+			my ($d) = @_;
+			$self->jcpg->queue_query($d->begin(0));
+		},
+		sub {
+			my ($d, $db) = @_;
+			$db->dollar_only->query(
 				q[select find_jobs($1)],
 				$filter,
 				$d->begin
@@ -419,8 +430,12 @@ sub rpc_get_job_status {
 	my $job_id = $i->{job_id} or die 'no job_id?';
 	Mojo::IOLoop->delay(
 		sub {
-			my $d = shift;
-			$self->pg->db->dollar_only->query(
+			my ($d) = @_;
+			$self->jcpg->queue_query($d->begin(0));
+		},
+		sub {
+			my ($d, $db) = @_;
+			$db->dollar_only->query(
 				q[select * from get_job_status($1)],
 				$job_id,
 				$d->begin
@@ -466,7 +481,7 @@ sub rpc_announce {
 		# - workername is not unique
 		# - actionname does not exist
 		# - worker has already announced action
-		($worker_id, $listenstring) = @{$self->pg->db->dollar_only->query(
+		($worker_id, $listenstring) = @{$self->jcpg->db->dollar_only->query(
 			q[select * from announce($1, $2, $3, $4)],
 			$workername,
 			$actionname,
@@ -488,7 +503,7 @@ sub rpc_announce {
 	unless ($self->listenstrings->{$listenstring}) {
 		# oooh.. a totally new action
 		$self->log->debug("listen $listenstring");
-		$self->pg->pubsub->listen( $listenstring, sub {
+		$self->jcpg->pubsub->listen( $listenstring, sub {
 			my ($pubsub, $payload) = @_;
 			local $@;
 			eval { $self->_task_ready($listenstring, $payload) };
@@ -553,7 +568,7 @@ sub rpc_withdraw {
 
 	my $listenstring = $wa->listenstring or die "unknown listenstring";
 
-	my ($res) = $self->pg->db->query(
+	my ($res) = $self->jcpg->db->query(
 			q[select withdraw($1, $2)],
 			$client->workername,
 			$actionname
@@ -571,7 +586,7 @@ sub rpc_withdraw {
 		delete $self->actionnames->{$actionname};
 		# not much we can do about pending jobs now..
 		delete $self->pending->{$listenstring};
-		$self->pg->pubsub->unlisten($listenstring);
+		$self->jcpg->pubsub->unlisten($listenstring);
 		$self->log->debug("unlisten $listenstring");
 	}		
 
@@ -589,7 +604,8 @@ sub rpc_withdraw {
 sub _ping {
 	my ($self, $client) = @_;
 	my $tmr;
-	Mojo::IOLoop->delay(sub {
+	Mojo::IOLoop->delay(
+	sub {
 		my $d = shift;
 		my $e = $d->begin;
 		$tmr = Mojo::IOLoop->timer(10 => sub { $e->(@_, 'timeout') } );
@@ -617,7 +633,7 @@ sub _ping {
 			} else {
 				# start queue processing
 				$self->pqq([$client->worker_id]);
-				$self->_ppqq($self->pg->db);
+				$self->_ppqq($self->jcpg->db); # fixme.. queue_query?
 				#$self->_ppqq();
 			}
 		}
@@ -820,8 +836,12 @@ sub rpc_get_task {
 
 	Mojo::IOLoop->delay(
 		sub {
-			my $d = shift;
-			$self->pg->db->dollar_only->query(
+			my ($d) = @_;
+			$self->jcpg->queue_query($d->begin(0));
+		},
+		sub {
+			my ($d, $db) = @_;
+			$db->dollar_only->query(
 				q[select * from get_task($1, $2, $3)],
 				$workername, $actionname, $job_id,
 				$d->begin
@@ -904,8 +924,12 @@ sub rpc_task_done {
 
 	Mojo::IOLoop->delay(
 		sub {
-			my $d = shift;
-			$self->pg->db->dollar_only->query(
+			my ($d) = @_;
+			$self->jcpg->queue_query($d->begin(0));
+		},
+		sub {
+			my ($d, $db) = @_;
+			$db->dollar_only->query(
 				q[select task_done($1, $2)],
 				$cookie, $outargs, $d->begin
 			);
@@ -957,7 +981,7 @@ sub _shutdown {
 	for my $was (values %{$self->listenstrings}) {
 		for my $wa (@$was) {
 			$self->log->debug("withdrawing '$wa->{actionname}' for '$wa->{client}->{workername}'");
-			my ($res) = $self->pg->db->query(
+			my ($res) = $self->jcpg->db->query(
 					q[select withdraw($1, $2)],
 					$wa->client->workername,
 					$wa->actionname
