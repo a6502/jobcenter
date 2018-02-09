@@ -9,6 +9,7 @@ use Cwd qw(realpath);
 use Data::Dumper;
 use FindBin;
 use Getopt::Long;
+use Time::Piece;
 
 # cpan
 use Config::Tiny;
@@ -16,6 +17,7 @@ use DBI;
 use DBD::Pg;
 
 # potentially useful globals
+my $archive;
 my $debug = 0;
 my $pgh;
 
@@ -41,6 +43,14 @@ sub main {
 	my $pguser = $cfg->{admin}->{user};
 	my $pgpass = $cfg->{admin}->{pass};
 
+	if ($cfg->{cleanup}->{archivepath}) {
+		my $t = localtime;
+		my $fn = $cfg->{cleanup}->{archivepath} . '/cleanup.'
+			 . $t->strftime('%F');
+		open $archive, '>>', $fn or
+			die "could not open archive file $fn for writing: $!";
+	}
+
 	# make our clientname the application_name visible in postgresql
 	$ENV{'PGAPPNAME'} = "$0 [$$]";
 
@@ -52,6 +62,7 @@ sub main {
 			PrintError => 1,
 		}
 	) or die "cannot connect to db: $DBI::errstr";
+	#$pgh->{FetchHashKeyName} = 'NAME_lc';
 	$pgh->{pg_placeholder_dollaronly} = 1;
 
 	my $jobsq = $pgh->prepare(<<'EOT');
@@ -116,6 +127,8 @@ delete from
 	jobs_archive
 where
 	job_id = $1
+returning
+	jsonb_pretty(row_to_json(jobs_archive)::jsonb)
 EOT
 
 	my $deljob = $pgh->prepare(<<'EOT');
@@ -123,6 +136,8 @@ delete from
 	jobs
 where
 	job_id = $1
+returning
+	jsonb_pretty(row_to_json(jobs)::jsonb)
 EOT
 
 	my $deltasks = $pgh->prepare(<<'EOT');
@@ -168,7 +183,11 @@ EOT
 			$pgh->begin_work();
 			$deltasks->execute($last_job_id);
 			$deljobarch->execute($last_job_id);
+			my ($job) = $deljobarch->fetchrow_array();
+			$deljobarch->finish();
 			$pgh->commit();
+
+			archprint($job) if $archive;
 		}
 	}
 
@@ -212,7 +231,11 @@ EOT
 			$pgh->begin_work();
 			$deltasks->execute($last_job_id);
 			$deljob->execute($last_job_id);
+			my ($job) = $deljob->fetchrow_array();
+			$deljob->finish();
 			$pgh->commit();
+
+			archprint($job) if $archive;
 		}
 	}
 
@@ -225,5 +248,11 @@ EOT
 	}
 
 	return 0;
+}
+
+sub archprint {
+	use bytes;
+	my $o = shift;
+	printf $archive "%u:\n%s\n\n", length($o)+2, $o;
 }
 
