@@ -95,7 +95,7 @@ sub got_to_flatten {
 #
 sub gotrule {
 	my ($self, $got) = @_;
-	return () unless $got;
+	return () unless defined $got;
 	#print 'gotrule ', $self->{parser}{rule}, ' ', Dumper($got);
 	$got = $$got[0]
 		if ref $got eq 'ARRAY' and scalar @$got == 1;
