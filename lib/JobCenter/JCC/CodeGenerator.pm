@@ -744,7 +744,7 @@ sub make_variable {
 	if (ref $ast eq 'ARRAY') {
 		my @a = @$ast; # a copy
 		die 'empty term?' unless @a;
-		unshift @a, $default if $default and length($a[0]) > 1;
+		unshift @a, $default if $default and (length($a[0]) > 1 or $#a == 0);
 		die "invalid top level $a[0] for $what" unless $a[0] =~ $toplevel; # /^[aeiov]$/;
 		my $perl = '$' . shift @a;
 		$perl .= "{'$_'}" for @a;
