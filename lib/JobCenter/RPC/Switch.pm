@@ -37,7 +37,7 @@ use JobCenter::Util qw(:daemon hdiff);
 
 has [qw(
 	actions address auth cfg cfgpath channels clientid conn daemon debug
-	jcpg jc_worker_id jobs lastping log method methods pending
+	done jcpg jc_worker_id jobs lastping log method methods pending
 	ping_timeout port prefix rpc timeout tasks tls tmr token who
 	workername
 )]; #
@@ -165,6 +165,7 @@ sub new {
 		$ns->on(close => sub {
 			$conn->close;
 			$log->info('connection to rpcswitch closed');
+			$self->{done}++;
 			Mojo::IOLoop->stop;
 		});
 	});
@@ -402,18 +403,18 @@ sub work {
 		$ioloop->stop;
 	}) if $pt > 0;
 
-	my $done = 0;
+	$self->{done} = 0;
 	my $reload = 0;
 
 	local $SIG{TERM} = local $SIG{INT} = local $SIG{HUP} = sub {
 		my $sig = shift;
 		$self->log->info("caught sig$sig.");
-		$done++ unless $sig eq 'HUP';
+		$self->{done}++ unless $sig eq 'HUP';
 		Mojo::IOLoop->stop;
 	};
 
 	$self->log->debug(blessed($self) . ' starting work');
-	while (!$done) {
+	while (!$self->done) {
 		$self->_reconfigure($reload++);
 		Mojo::IOLoop->start;
 	}
