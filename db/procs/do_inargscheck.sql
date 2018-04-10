@@ -31,7 +31,7 @@ BEGIN
 			v_val := v_inargs->v_key;
 			IF v_base THEN
 				v_actual := jsonb_typeof(v_val);
-				IF v_actual IS NULL OR v_actual = 'null' or v_actual = v_type THEN
+				IF v_actual IS NULL OR v_actual = 'null' OR v_actual = v_type THEN
 					NULL;
 				ELSE
 					RAISE EXCEPTION 'input argument "%" has wrong type % (should be %)', v_key, v_actual, v_type;
