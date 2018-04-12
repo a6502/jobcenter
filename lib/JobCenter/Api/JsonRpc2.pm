@@ -200,7 +200,6 @@ sub _disconnect {
 	}
 
 	delete $self->clients->{refaddr($client)};
-	%$client = (); # nuke'm
 }
 
 
