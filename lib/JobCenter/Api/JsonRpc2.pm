@@ -607,7 +607,7 @@ sub _ping {
 	sub {
 		my $d = shift;
 		my $e = $d->begin;
-		$tmr = Mojo::IOLoop->timer(10 => sub { $e->(@_, 'timeout') } );
+		$tmr = Mojo::IOLoop->timer(30 => sub { $e->(@_, 'timeout') } );
 		$client->con->call('ping', {}, sub { $e->($client, @_) });
 	},
 	sub {
