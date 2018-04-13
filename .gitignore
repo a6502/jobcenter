@@ -1,5 +1,7 @@
-*~
 *.bak
-*.old
 *.ffweg
+*.old
+*~
+etc/*
+log/*
 tmp/*
