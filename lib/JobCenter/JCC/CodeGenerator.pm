@@ -43,6 +43,21 @@ use constant {
 	T_SLEEP => -15,
 };
 
+# configuration of allowed configuration for actions and workflows
+our %cfgcfg = (
+	action => {
+		archive => 'duration',
+		filter => 'array',
+		retry => 'object',
+		timeout => 'duration',
+	},
+	workflow => {
+		max_depth => 'number',
+		max_steps => 'number',
+	}
+);
+
+# code
 sub new {
 	my ($class, %args) = @_;
 	my $self = $class->SUPER::new();
@@ -60,7 +75,7 @@ sub generate {
 
 	croak 'no wfast?' unless $args{wfast};
 
-	my ($what, $wf) = $self->get_type($args{wfast});
+	my ($what, $wf) = get_type($args{wfast});
 	croak "don't know how to generate $what" unless $what eq 'action' or $what eq 'workflow';
 	if ($what eq 'workflow') {
 		$self->generate_workflow(%args);
@@ -75,16 +90,15 @@ sub generate_workflow {
 	my $wfsrc = $args{wfsrc};
 	my $wf = $args{wfast}->{workflow};
 	my $labels = $args{labels} // [];	
-	my $tags = $args{tags};
 	
 	# reset codegenerator
-	$self->{wfid} = undef;  # workflow_id
-	$self->{tags} = $tags;	# version tags
-	$self->{oetid} = undef; # current on_error_task_id
-	$self->{locks} = {};	# locks declared in the locks section
+	$self->{wfid} = undef;       # workflow_id
+	$self->{tags} = $args{tags}; # version tags
+	$self->{oetid} = undef;      # current on_error_task_id
+	$self->{locks} = {};	     # locks declared in the locks section
 	$self->{labels} = { map { $_ => undef } @$labels }; # labels to be filled with task_ids
-	$self->{fixup} = [];	# list of tasks that need the next_task set
-				# format: list of task_id, target label
+	$self->{fixup} = [];	     # list of tasks that need the next_task set
+				     # format: list of task_id, target label
 
 	# add the magic end label
 	$self->{labels}->{'!!the end!!'} = undef;
@@ -114,14 +128,17 @@ sub generate_workflow {
 		$role = $roles[0];
 	}
 
-	my $wfenv = to_json({ map { $$_[0] => $$_[1] } @{$wf->{limits}} });
-	say 'wfenv ', $wfenv;
-	$wfenv = undef if $wfenv and ($wfenv eq 'null' or $wfenv eq '{}');
+	my $config = $self->gen_config($wf->{config}, 'workflow');
+
+	my $wfenv = $self->gen_wfenv($wf->{wfenv});
+	#my $wfenv = to_json({ map { $$_[0] => $$_[1] } @{$wf->{env}} });
+	#say 'wfenv ', $wfenv;
+	#$wfenv = undef if $wfenv and ($wfenv eq 'null' or $wfenv eq '{}');
 
 	my $wfid = $self->qs(
-		q|insert into actions (name, type, version, wfenv, rolename, src, srcmd5)
-		  values ($1, 'workflow', $2, $3, $4, $5, $6) returning action_id|,
-		$wf->{workflow_name}, $version, $wfenv, $role, $$wfsrc, md5_hex($$wfsrc)
+		q|insert into actions (name, type, version, wfenv, rolename, config, src, srcmd5)
+		  values ($1, 'workflow', $2, $3, $4, $5, $6, $7) returning action_id|,
+		$wf->{workflow_name}, $version, $wfenv, $role, $config, $$wfsrc, md5_hex($$wfsrc)
 	);
 	$self->{wfid} = $wfid;
 	say "wfid: $wfid";
@@ -159,7 +176,7 @@ sub generate_workflow {
 	$self->set_next($locklast, $first) if $lockfirst; # lock tasks to other tasks
 	my $end = $self->instask(T_END, attributes => # magic end task
 		to_json({
-			wfmapcode => $self->make_perl($wf->{wfomap}, WFOMAP)
+			wfmapcode => make_perl($wf->{wfomap}, WFOMAP)
 		}));
 	$self->set_next($last, $end) if $last; # block to end task
 	# (if the last statement of a block is a goto, $last is undefined)
@@ -215,15 +232,21 @@ sub generate_action {
 		$role = $roles[0];
 	}
 
-	my (%config, $config);
+	#my (%config, $config);
 	#$config{env} = $wf->{env} if $wf->{env} and @{$wf->{env}};
-	$config{filter} = $wf->{filter} if $wf->{filter} and @{$wf->{filter}};
-	$config = to_json(\%config) if %config;
+	#$config{filter} = $wf->{filter} if $wf->{filter} and @{$wf->{filter}};
+	#$config = to_json(\%config) if %config;
+	my $config = $self->gen_config($wf->{config}, $what);
+
+	my $wfenv;
+	#my $wfenv = to_json({ map { $$_[0] => $$_[1] } @{$wf->{env}} });
+	#say 'wfenv ', $wfenv;
+	#$wfenv = undef if $wfenv and ($wfenv eq 'null' or $wfenv eq '{}');
 
 	my $wfid = $self->qs(
-		q|insert into actions (name, type, version, rolename, config, src, srcmd5)
-		  values ($1, $2, $3, $4, $5, $6, $7) returning action_id|,
-		$wf->{workflow_name}, $what,  $version, $role, $config, $$wfsrc, md5_hex($$wfsrc)
+		q|insert into actions (name, type, version, wfenv, rolename, config, src, srcmd5)
+		  values ($1, $2, $3, $4, $5, $6, $7, $8) returning action_id|,
+		$wf->{workflow_name}, $what,  $version, $wfenv, $role, $config, $$wfsrc, md5_hex($$wfsrc)
 	);
 	say "wfid: $wfid";
 
@@ -269,12 +292,75 @@ sub generate_action {
 
 ### top level keyword generators ###
 
+sub gen_config {
+	my ($self, $config, $what) = @_;
+	return unless $config and @$config;
+	die "no type?" unless $what;
+	my $cc = $cfgcfg{$what};
+	die "no configuration configuration for $what" unless $cc;
+	my %cfg;
+
+	for (@$config) {
+		#print 'config: ', Dumper($_);
+		my ($k, $a, $v) = @$_;
+		unless (ref $k eq 'ARRAY' and $#$k == 0
+			 and $a eq '='
+			 and ref $v eq 'ARRAY' and $#$v == 0) {
+			die "invalid config " . Dumper($_);
+		}
+		$k = $k->[0];
+		my $t = $cc->{$k};
+		die "$k is not allowed as config for $what" unless $t;
+		$v = $v->[0];
+		my ($key, $val) = get_type($v);
+		if ($t eq 'array' or $t eq 'object') {
+			$cfg{$k} = from_json($val);
+		} elsif ($t eq 'duration') {
+			# check duration
+			my $dummy = $self->qs(
+				q|select now() + ($1)::interval;|,
+				$val
+			);
+			$cfg{$k} = $val;
+		} else {
+			$cfg{$k} = $val;
+		}
+	}
+
+	return to_json(\%cfg) if %cfg;
+	return;
+}
+
+# meh.. looks too much like get_config
+sub gen_wfenv {
+	my ($self, $wfenv) = @_;
+	return unless $wfenv and @$wfenv;
+	my %w;
+
+	for (@$wfenv) {
+		print 'wfenv: ', Dumper($_);
+		my ($k, $a, $v) = @$_;
+		unless (ref $k eq 'ARRAY' and $#$k == 0
+			 and $a eq '='
+			 and ref $v eq 'ARRAY' and $#$v == 0) {
+			die "invalid wfenv " . Dumper($_);
+		}
+		$k = $k->[0];
+		$v = $v->[0];
+		my ($key, $val) = get_type($v);
+		$w{$k} = $val;
+	}
+
+	return to_json(\%w) if %w;
+	return;
+}
+
 sub gen_do {
 	my ($self, $todo) = @_;
 	my ($first, $cur); # first tid of this block, last tid of this block
 	for my $do (@$todo) {
 		#next unless $do; # skip empty statements (comments?)
-		my ($what, $subtree) = $self->get_type($do);
+		my ($what, $subtree) = get_type($do);
 		$what = "gen_$what";
 		my ($f, $l);
 		if ($self->can($what)) {
@@ -357,8 +443,8 @@ EOF
 
 	die "action $call->{call_name} not found?" unless $aid;
 
-	my $imap = $self->make_perl($call->{imap}, IMAP);
-	my $omap = $self->make_perl($call->{omap}, OMAP);
+	my $imap = make_perl($call->{imap}, IMAP);
+	my $omap = make_perl($call->{omap}, OMAP);
 	my $tid = $self->instask($aid, attributes =>
 			to_json({
 				imapcode => $imap,
@@ -374,7 +460,7 @@ sub gen_case {
 
 	my $casetid = $self->instask(T_SWITCH, attributes => # case
 			to_json({
-				stringcode => $self->make_perl($case->{case_expression}, STRING),
+				stringcode => make_perl($case->{case_expression}, STRING),
 				#_line => $case->{_line},
 			}));
 	my $endcasetid = $self->instask(T_NO_OP); # dummy task to tie things together
@@ -405,7 +491,7 @@ sub gen_if {
 
 	my $iftid = $self->instask(T_BRANCH, attributes => # if
 			to_json({
-				boolcode => $self->make_perl($if->{condition}, BOOL),
+				boolcode => make_perl($if->{condition}, BOOL),
 				#_line => $if->{_line},
 				_stmt => 'if',
 			}));
@@ -433,7 +519,7 @@ sub gen_eval {
 	my ($self, $eval) = @_;
 	my $evaltid = $self->instask(T_EVAL, attributes =>
 			to_json({
-				evalcode => $self->make_perl($eval, OMAP),
+				evalcode => make_perl($eval, OMAP),
 				#_line => $eval->{_line},
 			}));
 	return ($evaltid, $evaltid);
@@ -469,7 +555,7 @@ sub gen_lock {
 	my ($type, $value) = @$lock;	
 	die "unkown lock $type" unless $self->{locks}->{$type};
 	die "lock type $type not declared manual" unless $self->{locks}->{$type}->{manual};
-	$value = $self->make_perl($value, STRING);
+	$value = make_perl($value, STRING);
 	if ( $self->{locks}->{$type}->{value} ne '_' ) {
 		warn "overriding locks value $self->{locks}->{$type}->{value} with $value";
 	}
@@ -488,7 +574,7 @@ sub gen_raise_error {
 	my ($self, $raise) = @_;
 	my $raisetid = $self->instask(T_RAISE_ERROR, attributes =>
 			to_json({
-				imapcode => $self->make_perl($raise, IMAP),
+				imapcode => make_perl($raise, IMAP),
 				#_line => $raise->{_line},
 			}));
 	return ($raisetid, $raisetid);
@@ -498,7 +584,7 @@ sub gen_raise_event {
 	my ($self, $raise) = @_;
 	my $raisetid = $self->instask(T_RAISE_EVENT, attributes =>
 			to_json({
-				imapcode => $self->make_perl($raise, IMAP),
+				imapcode => make_perl($raise, IMAP),
 				#_line => $raise->{_line},
 			}));
 	return ($raisetid, $raisetid);
@@ -509,7 +595,7 @@ sub gen_repeat {
 	my ($bf, $bl) = $self->gen_do($repeat->{block}); # repeat <block> until ...
 	my $untiltid = $self->instask(T_BRANCH, attributes => # until with repeat block as default (else) next_task_id
 			to_json({
-				boolcode => $self->make_perl($repeat->{condition}, BOOL),
+				boolcode => make_perl($repeat->{condition}, BOOL),
 				#_line => $repeat->{_line},
 				_stmt => 'repeat',
 			}), next_task_id => $bf);
@@ -527,7 +613,7 @@ sub gen_sleep {
 	my ($self, $sleep) = @_;
 	my $tid = $self->instask(T_SLEEP, attributes =>
 		to_json({
-			imapcode => $self->make_perl($sleep, IMAP),
+			imapcode => make_perl($sleep, IMAP),
 			 #_line => $sleep->{_line},
 		}));
 	return ($tid, $tid);
@@ -566,7 +652,7 @@ sub gen_subscribe {
 	my ($self, $sub) = @_;
 	my $tid = $self->instask(T_SUBSCRIBE, attributes =>
 		to_json({
-			imapcode => $self->make_perl($sub, IMAP),
+			imapcode => make_perl($sub, IMAP),
 			 _line => $sub->{_line},
 		}));
 	return ($tid, $tid);
@@ -593,7 +679,7 @@ sub gen_unlock {
 	my ($type, $value) = @$unlock;	
 	die "unkown lock $type" unless $self->{locks}->{$type};
 	die "lock type $type not declared manual" unless $self->{locks}->{$type}->{manual};
-	$value = $self->make_perl($value, STRING);
+	$value = make_perl($value, STRING);
 	if ( $self->{locks}->{$type}->{value} ne '_' ) {
 		warn "overriding locks value $self->{locks}->{$type}->{value} with $value";
 	}
@@ -612,7 +698,7 @@ sub gen_unsubscribe {
 	my ($self, $unsub) = @_;
 	my $tid = $self->instask(T_UNSUBSCRIBE, attributes =>
 		to_json({
-			imapcode => $self->make_perl($unsub, IMAP),
+			imapcode => make_perl($unsub, IMAP),
 			#_line => $unsub->{_line},
 		}));
 	return ($tid, $tid);
@@ -622,8 +708,8 @@ sub gen_wait_for_event {
 	my ($self, $wait) = @_;
 	my $tid = $self->instask(T_WAIT_FOR_EVENT, attributes =>
 		to_json({
-			imapcode => $self->make_perl($wait->{imap}, IMAP),
-			omapcode => $self->make_perl($wait->{omap}, OMAP),
+			imapcode => make_perl($wait->{imap}, IMAP),
+			omapcode => make_perl($wait->{omap}, OMAP),
 			#_line => $wait->{_line},
 		}));
 	return ($tid, $tid);
@@ -633,7 +719,7 @@ sub gen_while {
 	my ($self, $while) = @_;
 	my $whiletid = $self->instask(T_BRANCH, attributes => # while test
 		to_json({
-			boolcode => $self->make_perl($while->{condition}, BOOL),
+			boolcode => make_perl($while->{condition}, BOOL),
 			#_line => $while->{_line},
 			_stmt => 'while',
 		}));
@@ -648,8 +734,9 @@ sub gen_while {
 
 ### helpers ###
 
+# note: not a method
 sub get_type {
-	my ($self, $ast) = @_;
+	my ($ast) = @_;
 	print 'get_type ', Dumper($ast);
 	die 'expected a hashref' unless $ast and ref $ast eq 'HASH';
 	die 'more than 1 key in hashref' unless scalar keys %$ast == 1;
@@ -713,8 +800,7 @@ sub make_literal {
 	my ($ast) = @_;
 	return undef unless $ast;
 	say "literal: ", Dumper(\$ast);
-	die 'expected a hashref with 1 key' unless ref $ast eq 'HASH' and keys %$ast == 1;
-	my ($key, $val) = each(%$ast);
+	my ($key, $val) = get_type($ast);
 	if ($key eq 'number'
 	    or $key eq 'boolean'
 	    or $key eq 'null') {
@@ -790,8 +876,9 @@ sub make_func {
 	die "unknown function $name";
 }
 
+# note: not a method
 sub make_perl {
-	my ($self, $ast, $what) = @_;
+	my ($ast, $what) = @_;
 	return '' unless $ast and ref $ast;
 	say "make_perl $what: ", Dumper($ast);
 	if (ref $ast eq 'HASH' and $ast->{perl_block}) {
