@@ -83,11 +83,11 @@ has text =>  <<'EOT';
 jcl: .ignorable* ( +workflow | +action ) .ignorable*
 
 # hack in action support
-action: +action-type +workflow-name colon ( .ignorable | +in | +out | +env | +filter | +role )*
+action: +action-type +workflow-name colon ( .ignorable | +in | +out | +env | +role | +config )*
 
 action-type: / ( 'action' | 'procedure' ) / __
 
-workflow: / 'workflow' __ / +workflow-name colon ( .ignorable | +in | +out | +limits | +role | +locks | +wfomap | +do )*
+workflow: / 'workflow' __ / +workflow-name colon ( .ignorable | +in | +out | +wfenv | +role | +config | +locks | +wfomap | +do )*
 
 workflow-name: identifier
 
@@ -101,17 +101,17 @@ inout: ( iospec | .ignorable )*
 
 iospec: block-ondent identifier __ identifier (__ / ('optional') / | __ literal)? / _ SEMI? _ /
 
-#env: / 'env' <colon> / block-indent ( idlist | .ignorable )* block-undent
-
 idlist: block-ondent identifier
 
-filter: / 'filter' <colon> / block-indent ( idlist | .ignorable )* block-undent
+#filter: / 'filter' <colon> / block-indent ( idlist | .ignorable )* block-undent
 
 #filterspec: block-ondent identifier ( __ identifier )*
 
-limits: / 'limits' <colon> / block-indent ( limitspec | .ignorable )* block-undent
+config: / 'config' <colon> / assignments
 
-limitspec: block-ondent / ( 'max_depth' | 'max_steps' ) __ EQUAL __ / unsigned-integer
+wfenv: / 'wfenv' <colon> / assignments
+
+#limitspec: block-ondent / ( 'max_depth' | 'max_steps' ) __ EQUAL __ / unsigned-integer
 
 locks: / 'locks' <colon> / block-indent ( lockspec | .ignorable )* block-undent
 
