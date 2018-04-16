@@ -14,6 +14,7 @@ AS $function$DECLARE
 	v_val jsonb;
 	v_inargs jsonb;
 	v_env jsonb;
+	v_config jsonb;
 	v_tags text[] DEFAULT ARRAY['default'];
 	v_have_role text;
 	v_should_role text;
@@ -25,8 +26,8 @@ BEGIN
 
 	-- find the worklow by name
 	SELECT
-		action_id, COALESCE(wfenv, '{}'::jsonb), rolename INTO
-		v_workflow_id, v_env, v_should_role
+		action_id, COALESCE(wfenv, '{}'::jsonb), rolename, COALESCE(config, '{}'::jsonb) INTO
+		v_workflow_id, v_env, v_should_role, v_config
 	FROM 
 		actions
 		LEFT JOIN action_version_tags AS avt USING (action_id)
@@ -57,7 +58,8 @@ BEGIN
 
 		v_have_role := a_impersonate;
 		v_via_role := session_user;
-		RAISE NOTICE 'v_env before: %; a_env: %', v_env, a_env;
+		--RAISE NOTICE 'v_env before: %; a_env: %', v_env, a_env;
+		-- the impersonator is allowed to add 'trusted' information to the env
 		v_env := COALESCE(a_env, '{}'::jsonb) || v_env; -- wfenv overwrites a_env
 	ELSE
 		v_have_role := session_user;
@@ -90,6 +92,11 @@ BEGIN
 	IF v_via_role IS NOT NULL THEN
 		v_env := jsonb_set(v_env, '{via}', to_jsonb(v_via_role));
 	END IF;
+	-- copy the max_depth config into the environment so that child jobs inherit this value
+	-- maybe max_depth should move back to wfenv?
+	IF v_config->'max_depth' IS NOT NULL THEN
+		v_env := jsonb_set(v_env, '{max_depth}', v_config->'max_depth');
+	END IF;
 
 	-- now create the new job and mark the start task 'done'
 	INSERT INTO jobcenter.jobs
@@ -98,7 +105,7 @@ BEGIN
 		 task_started, task_completed)
 	VALUES
 		(v_workflow_id, v_task_id, 'done', v_inargs,
-		 v_env, COALESCE((v_env->>'max_steps')::integer, 99), 1, now(),
+		 v_env, COALESCE((v_config->>'max_steps')::integer, 99), 1, now(),
 		 now(), now())
 	RETURNING
 		job_id INTO o_job_id;
