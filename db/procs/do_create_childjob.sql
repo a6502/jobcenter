@@ -11,6 +11,7 @@ AS $function$DECLARE
 	v_parent_env JSONB;
 	v_jcenv JSONB;
 	v_env JSONB;
+	v_config JSONB;
 	v_vars JSONB;
 	v_inargs JSONB;
 	v_curdepth integer;
@@ -67,7 +68,13 @@ BEGIN
 
 	-- setup childjob env: copy parent env but overwrite with the per workflow
 	-- and global env (in that order)
-	SELECT COALESCE(wfenv, '{}'::jsonb) INTO v_env FROM actions WHERE action_id = v_workflow_id;
+	SELECT
+		COALESCE(wfenv, '{}'::jsonb), COALESCE(config, '{}'::jsonb)
+		INTO v_env, v_config
+	FROM
+		actions
+	WHERE
+		action_id = v_workflow_id;
 	SELECT jcenv FROM jc_env INTO STRICT v_jcenv;
 	v_env := v_parent_env || v_env || v_jcenv;
 	-- jcenv overwrites wfenv overwrites parent_env
@@ -82,7 +89,7 @@ BEGIN
 		 job_state)
 	VALUES
 		(v_workflow_id, v_task_id, a_parentjobtask.job_id, 'done', v_inargs, v_env,
-		 COALESCE((v_env->>'max_steps')::integer, 99), v_curdepth + 1, now(), now(), now(),
+		 COALESCE((v_config->>'max_steps')::integer, 99), v_curdepth + 1, now(), now(), now(),
 		 jsonb_build_object('parenttask_id', a_parentjobtask.task_id, 'parentwait', v_wait))
 	RETURNING
 		job_id INTO v_job_id;
