@@ -78,8 +78,8 @@ sub new {
 	$jcpg->max_total_connections($cfg->{jcswitch}->{con} // 5); # sane default?
 	$jcpg->on(connection => sub { my ($e, $dbh) = @_; $log->debug("jcpg: new connection: $dbh"); });
 
+	# set up 1 central listen
 	# this tests the pg connection as well
-	#$pg->pubsub->listen($workername, sub { say 'ohnoes!'; exit(1) });
 	$self->{jobs} = {}; # jobs we are waiting for
 	$jcpg->pubsub->listen('job:finished', sub {
 		my ($pubsub, $payload) = @_;
@@ -603,6 +603,7 @@ sub _create_job {
 				return;
 			}
 			my ($job_id, $listenstring) = @{$res->array};
+			$res->finish; # free up db con..
 			unless ($job_id) {
 				$cb1->(RES_ERROR, "no result from call to create_job");
 				return;
@@ -638,7 +639,7 @@ sub _create_job {
 
 sub _poll_done {
 	my ($self, $job) = @_;
-	Mojo::IOLoop->delay->steps(
+	Mojo::IOLoop->delay(
 		sub {
 			my ($d) = @_;
 			$self->jcpg->queue_query($d->begin(0));
@@ -656,7 +657,6 @@ sub _poll_done {
 			die $err if $err;
 			my ($outargs) = @{$res->array};
 			return unless $outargs; # job not finished
-			#$self->pg->pubsub->unlisten('job:finished', $job->{lcb});
 			delete $self->{jobs}->{$job->{job_id}};
 			delete $self->{channels}->{$job->{vci}}->{$job->{job_id}} if $self->{channels}->{$job->{vci}};
 			$self->log->debug("calling cb $job->{cb} for job_id $job->{job_id} outargs $outargs");
