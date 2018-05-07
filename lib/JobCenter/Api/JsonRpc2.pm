@@ -45,6 +45,7 @@ has [qw(
 	daemon
 	debug
 	jcpg
+	jobs
 	listenstrings
 	log
 	pending
@@ -91,6 +92,20 @@ sub new {
 	) or die 'no pg?';
 	$jcpg->max_total_connections($cfg->{pg}->{con} // 5); # sane value?
 	$jcpg->on(connection => sub { my ($e, $dbh) = @_; $log->debug("pg: new connection: $dbh"); });
+
+	# set up 1 central listen
+	# this tests the pg connection as well
+	$self->{jobs} = {}; # jobs we are waiting for
+	$jcpg->pubsub->listen('job:finished', sub {
+		my ($pubsub, $payload) = @_;
+		$self->log->debug("notify job:finished $payload");
+		#print 'jobs: ', Dumper($self->{jobs});
+		my $job = $self->{jobs}->{$payload};
+		return unless $job;
+		local $@;
+		eval { $job->{lcb}->($self, $job); };
+		$self->log->debug("pubsub cb $@") if $@;
+	});
 
 	my $rpc = JSON::RPC2::TwoWay->new(debug => $debug) or die 'no rpc?';
 
@@ -159,14 +174,6 @@ sub work {
 	if ($self->daemon) {
 		daemonize();
 	}
-
-	# set up a connection to test things
-	# this also means that our first pg connection is only used for
-	# notifications.. this seems to save some memory on the pg side
-	$self->jcpg->pubsub->listen($self->apiname, sub {
-		say 'ohnoes!';
-		exit(1);
-	});
 
 	local $SIG{TERM} = local $SIG{INT} = sub {
 		$self->_shutdown(@_);
@@ -296,6 +303,7 @@ sub rpc_create_job {
 				return;
 			}
 			my ($job_id, $listenstring) = @{$res->array};
+			$res->finish; # free up db con..
 			unless ($job_id) {
 				$rpccb->(undef, "no result from call to create_job");
 				return;
@@ -316,28 +324,20 @@ sub rpc_create_job {
 				wfname => $wfname,
 			);
 
-			#$self->pg->pubsub->listen($listenstring, sub {
-			# fixme: 1 central listen?
-			my $lcb = $self->jcpg->pubsub->listen('job:finished', sub {
-				my ($pubsub, $payload) = @_;
-				return unless $job_id == $payload;
-				local $@;
-				eval { $self->_poll_done($job); };
-				$self->log->debug("pubsub cb $@") if $@;
-			});
+			# register for the central job finished listen
+			$self->{jobs}->{$job_id} = $job;
 
 			my $tmr;
 			$tmr = Mojo::IOLoop->timer($timeout => sub {
 				# request failed, cleanup
-				#$self->pg->pubsub->unlisten($listenstring);
-				$self->jcpg->pubsub->unlisten('job:finished' => $lcb);
+				delete $self->{jobs}->{$job_id};
 				# the cb might fail if the connection is gone..
 				eval { &$cb($job_id, {'error' => 'timeout'}); };
 				$job->delete;
 			}) if $timeout > 0;
 			#$self->log->debug("setting tmr: $tmr") if $tmr;
 
-			$job->update(tmr => $tmr, lcb => $lcb);
+			$job->update(tmr => $tmr, lcb => \&_poll_done);
 
 			# do one poll first..
 			$self->_poll_done($job);
@@ -369,8 +369,7 @@ sub _poll_done {
 			die $err if $err;
 			my ($outargs) = @{$res->array};
 			return unless $outargs;
-			#$self->pg->pubsub->unlisten($job->listenstring);
-			$self->jcpg->pubsub->unlisten('job:finished', $job->lcb);
+			delete $self->{jobs}->{$job->{job_id}};
 			Mojo::IOLoop->remove($job->tmr) if $job->tmr;
 			$self->log->debug("calling cb $job->{cb} for job_id $job->{job_id} outargs $outargs");
 			my $outargsp;
