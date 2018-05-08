@@ -889,7 +889,7 @@ sub rpc_get_task {
 				 . "$task->{workeraction}->{client}->{worker_id} used $task->{workeraction}->{used} "
 				 . "cookie $cookie inargs $inargsj");
 
-			$rpccb->($job_id, $cookie, $inargs, $env);
+			$rpccb->($job_id2, $cookie, $inargs, $env);
 		}
 	)->catch(sub {
 		 $self->log->error("rpc_get_task caught $_[0]");
@@ -1005,11 +1005,13 @@ sub rpc_get_api_status {
 		for my $c (values %{$self->clients}) {
 			next unless $c;
 			my %actions;
-			$actions{$_->actionname} = {
-				filter => $_->filter,
-				slots => $_->slots,
-				used => $_->used,
-			} for values %{$c->actions};
+			if ($c->actions) {
+				$actions{$_->actionname} = {
+					filter => $_->filter,
+					slots => $_->slots,
+					used => $_->used,
+				} for values %{$c->actions};
+			}
 			push @out, {
 				actions => \%actions,
 				from => $c->from,
