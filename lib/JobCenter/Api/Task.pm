@@ -1,7 +1,8 @@
 package JobCenter::Api::Task;
 use Mojo::Base -base;
 
-has [qw(actionname client cookie inargs job_id listenstring outargs tmr workeraction)];
+has [qw(actionname client cookie inargs job_id listenstring outargs tmr
+	workers  workeraction)];
 
 sub update {
 	my ($self, %attr) = @_;
