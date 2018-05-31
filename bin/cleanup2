@@ -1,5 +1,17 @@
 #!/usr/bin/perl
 
+#
+# jobcenter cleanup
+# (file based version)
+#
+# archives old jobs in a file after:
+# - 1 month for jobs_archive
+# - 3 monhts for jobs (this keeps full error information around a bit longer)
+# - or longer if any of the called actions has a archive policy
+#
+# the job_task_log for archived jobs is deleted
+#
+
 use strict;
 use warnings;
 use 5.10.0;
