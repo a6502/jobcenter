@@ -3,11 +3,11 @@
 create a jc_archive database with a jobs_archive table
 give the jc_admin user full rights on that table
 
-*/
-
 create database jc_archive;
 grant all on database jc_archive to jc_admin;
 revoke all on database jc_archive from public;
+
+*/
 
 
 -- Type: job_state
@@ -80,3 +80,4 @@ CREATE INDEX jobs_archive_arguments_idx
   USING gin
   (arguments jsonb_path_ops);
 
+commit;
