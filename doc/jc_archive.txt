@@ -1,0 +1,82 @@
+/*
+
+create a jc_archive database with a jobs_archive table
+give the jc_admin user full rights on that table
+
+*/
+
+create database jc_archive;
+grant all on database jc_archive to jc_admin;
+revoke all on database jc_archive from public;
+
+
+-- Type: job_state
+
+-- DROP TYPE job_state;
+
+CREATE TYPE job_state AS ENUM
+   ('ready',
+    'working',
+    'eventwait',
+    'childwait',
+    'sleeping',
+    'done',
+    'plotting',
+    'zombie',
+    'finished',
+    'error',
+    'retrywait',
+    'lockwait');
+ALTER TYPE job_state
+  OWNER TO jc_admin;
+COMMENT ON TYPE job_state
+  IS 'ready: waiting for a worker to pick this jobtask
+working: waiting for a worker to finish this jobtask
+eventwait: waiting for some external event or timeout
+childwait: waiting for a subjob to finish
+sleeping: waiting for time to pass
+done: waiting for the maestro to start plotting
+plotting: waiting for the maestro to decide
+zombie: waiting for a parent job to wait for us
+finished: done waiting
+error: too much waiting?
+retrywait: waiting until it is time to retry this jobtask
+lockwait: waiting for a lock to be unlocked
+';
+
+
+
+-- Table: jobs_archive
+
+-- DROP TABLE jobs_archive;
+
+CREATE TABLE jobs_archive
+(
+  job_id bigint NOT NULL,
+  workflow_id integer NOT NULL,
+  parentjob_id bigint,
+  state job_state,
+  arguments jsonb,
+  job_created timestamp with time zone NOT NULL,
+  job_finished timestamp with time zone NOT NULL,
+  stepcounter integer NOT NULL DEFAULT 0,
+  out_args jsonb,
+  environment jsonb,
+  max_steps integer NOT NULL DEFAULT 100,
+  current_depth integer,
+  CONSTRAINT job_history_pkey PRIMARY KEY (job_id)
+);
+ALTER TABLE jobs_archive
+  OWNER TO jc_admin;
+GRANT ALL ON TABLE jobs_archive TO jc_admin;
+GRANT SELECT, UPDATE, INSERT, TRUNCATE, DELETE ON TABLE jobs_archive TO jc_system;
+
+-- Index: jobs_archive_arguments_idx
+
+-- DROP INDEX jobs_archive_arguments_idx;
+
+CREATE INDEX jobs_archive_arguments_idx
+  ON jobs_archive
+  USING gin
+  (arguments jsonb_path_ops);
+
