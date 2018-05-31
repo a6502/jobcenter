@@ -1,0 +1,298 @@
+#!/usr/bin/perl
+
+#
+# jobcenter cleanup
+#
+# archives old jobs in a seperate archive_db after:
+# - 1 month for jobs_archive
+# - 3 monhts for jobs (this keeps full error information around a bit longer)
+# - or longer if any of the called actions has a archive policy
+#
+# the job_task_log for archived jobs is deleted
+#
+
+
+use strict;
+use warnings;
+use 5.10.0;
+
+# standard modules
+use Cwd qw(realpath);
+use Data::Dumper;
+use FindBin;
+use Getopt::Long;
+use Time::Piece;
+
+# cpan
+use Config::Tiny;
+use DBI;
+use DBD::Pg;
+
+# potentially useful globals
+my $debug = 0;
+my $jdb; # jobcenter db
+my $adb; # archive db
+
+exit main(@ARGV);
+
+sub main {
+	my $cfgpath = realpath("$FindBin::Bin/../etc/jobcenter.conf");
+	my $count = 1;
+
+	GetOptions(
+		'config=s' => \$cfgpath,
+		'count!' => \$count,
+		'debug!', => \$debug,
+	) or die "Error in command line arguments\n";
+	#my ($job_id) = @_;
+
+	my $cfg = Config::Tiny->read($cfgpath);
+	die 'failed to read config ' . $cfgpath . ': ' . Config::Tiny->errstr unless $cfg;
+
+	# make our clientname the application_name visible in postgresql
+	$ENV{'PGAPPNAME'} = "$0 [$$]";
+
+	my ($pgdsn, $pguser, $pgpass);
+
+	$pgdsn = 'dbi:Pg:dbname=' . $cfg->{cleanup}->{archive_db}
+		. (($cfg->{cleanup}->{archive_host}) ? ';host=' . $cfg->{cleanup}->{archive_host} : '')
+		. (($cfg->{cleanup}->{archive_port}) ? ';port=' . $cfg->{cleanup}->{archive_port} : '');
+	$pguser = $cfg->{cleanup}->{archive_user};
+	$pgpass = $cfg->{cleanup}->{archive_pass};
+
+
+	$adb = DBI->connect(
+		$pgdsn, $pguser, $pgpass,
+		{
+			AutoCommit => 1,
+			RaiseError => 1,
+			PrintError => 1,
+		}
+	) or die "cannot connect to archvive db: $DBI::errstr";
+	$adb->{pg_placeholder_dollaronly} = 1;
+
+	$pgdsn = 'dbi:Pg:dbname=' . $cfg->{pg}->{db}
+		. (($cfg->{pg}->{host}) ? ';host=' . $cfg->{pg}->{host} : '')
+		. (($cfg->{pg}->{port}) ? ';port=' . $cfg->{pg}->{port} : '');
+	$pguser = $cfg->{admin}->{user};
+	$pgpass = $cfg->{admin}->{pass};
+
+	$jdb = DBI->connect(
+		$pgdsn, $pguser, $pgpass,
+		{
+			AutoCommit => 1,
+			RaiseError => 1,
+			PrintError => 1,
+		}
+	) or die "cannot connect to jobcenter db: $DBI::errstr";
+	$jdb->{pg_placeholder_dollaronly} = 1;
+
+	my $jobsq = $jdb->prepare(<<'EOT');
+select
+	job_id, job_finished
+from
+	jobs p
+where
+	job_id > $1
+	and job_finished < now() - interval '3 months'
+	and not exists (
+		select
+			true
+		from
+			jobs c
+		where
+			c.parentjob_id=p.job_id
+		limit 1
+	)
+order by
+	job_id
+limit
+	1000
+EOT
+
+	my $jobsarchiveq = $jdb->prepare(<<'EOT');
+select
+	job_id, job_finished
+from
+	jobs_archive p
+where
+	job_id > $1
+	and job_finished < now() - interval '1 months'
+order by
+	job_id
+limit
+	1000
+EOT
+
+	my $purgeq = $jdb->prepare(<<'EOT');
+-- $1 job_id
+-- $2 job_finished
+select
+	-- return a perlish true or false
+	case when $2::date < now()
+		- max( coalesce( (actions.config ->> 'archive'), '1 month' )::interval )
+	then
+		1
+	else
+		0
+	end as purge
+from
+	job_task_log
+	join tasks using (workflow_id, task_id)
+	join actions using (action_id)
+where
+	job_id = $1
+EOT
+
+	my $deljobarch = $jdb->prepare(<<'EOT');
+delete from
+	jobs_archive
+where
+	job_id = $1
+returning
+	row_to_json(jobs_archive)
+EOT
+
+	my $deljob = $jdb->prepare(<<'EOT');
+with r as (
+	delete from
+		jobs
+	where
+		job_id = $1
+	returning
+		job_id,
+		workflow_id,
+		parentjob_id,
+		state,
+		arguments,
+		job_created,
+		job_finished,
+		stepcounter,
+		out_args,
+		environment,
+		max_steps,
+		current_depth
+)
+select row_to_json(r) from r;
+EOT
+
+	my $deltasks = $jdb->prepare(<<'EOT');
+delete from
+	job_task_log
+where
+	job_id = $1
+EOT
+
+	my $insjobarch = $adb->prepare(<<'EOT');
+insert into
+	jobs_archive
+select
+	*
+from
+	json_populate_record(null::jobs_archive, $1)
+EOT
+
+
+	my ($last_job_id, $j);
+	my ($jap, $jak, $jp, $jk) = (0, 0, 0, 0);
+
+	say 'cleaning up jobs_archive table';
+
+	$last_job_id = 0;
+
+	while (1) {
+		say "batch starting at: $last_job_id" if $debug;
+
+		$jobsarchiveq->execute($last_job_id);
+		my $jobs = $jobsarchiveq->fetchall_arrayref();
+
+		last unless $jobs and @$jobs;
+
+		for my $j (@$jobs) {
+			($last_job_id) = @$j;
+
+			#say "last_job_id: $last_job_id";
+
+			$purgeq->execute(@$j);
+			my ($purge) = $purgeq->fetchrow_array();
+
+			#next unless $purge;
+			unless ($purge) {
+				say "skipping $last_job_id" if $debug;
+				$jak++;
+				next;
+			}
+
+			say "need to purge $last_job_id" if $debug;
+			$jap++;
+			
+			$jdb->begin_work();
+			$deltasks->execute($last_job_id);
+			$deljobarch->execute($last_job_id);
+			my ($job) = $deljobarch->fetchrow_array();
+			$deljobarch->finish();
+			$insjobarch->execute($job);
+			$jdb->commit();
+		}
+	}
+
+	if ($count) {
+		say "purged from jobs_archive: $jap";
+		say "    kept in jobs_archive: $jak";
+	}
+
+	say 'cleaning up jobs table';
+
+	$last_job_id = 0;
+
+	while (1) {
+		say "batch starting at: $last_job_id" if $debug;
+
+		$jobsq->execute($last_job_id);
+		my $jobs = $jobsq->fetchall_arrayref();
+
+		last unless $jobs and @$jobs;
+
+		for my $j (@$jobs) {
+			($last_job_id) = @$j;
+
+			#say "last_job_id: $last_job_id";
+
+			$purgeq->execute(@$j);
+			my ($purge) = $purgeq->fetchrow_array();
+
+			#next unless $purge;
+			unless ($purge) {
+				say "skipping $last_job_id" if $debug;
+				$jk++;
+				next;
+			}
+
+			say "need to purge $last_job_id" if $debug;
+			$jp++;
+			
+			$jdb->begin_work();
+			$deltasks->execute($last_job_id);
+			$deljob->execute($last_job_id);
+			my ($job) = $deljob->fetchrow_array();
+			$deljob->finish();
+			$insjobarch->execute($job);
+			$jdb->commit();
+		}
+	}
+
+	# reclaim space
+	$jdb->do('vacuum analyze jobs_archive');
+	$jdb->do('vacuum analyze jobs');
+	$jdb->do('vacuum analyze job_task_log');
+	# no space to reclaim, but analyze might help
+	$adb->do('analyze jobs_archive');
+
+	if ($count) {
+		say "        purged from jobs: $jp";
+		say "            kept in jobs: $jk";
+	}
+
+	return 0;
+}
+
