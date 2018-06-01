@@ -115,6 +115,8 @@ sub __jcpg_dequeue {
 
 	$self->log->debug("__jcpg_dequeue: $self->{__jcpg_concount} total connections");
 
+	$dbh->{private_jcpg_max_reuse} = $self->max_connection_reuse
+		- int(rand($self->max_connection_reuse / 10));
 	$dbh->{private_jcpg_times_used}++;
 
 	return $dbh;
@@ -161,7 +163,8 @@ sub __jcpg_enqueue {
 
 	# if we really have no work for this dbh (i.e. queryqueue empty) see if it
 	# has been overused
-	if ( ($dbh->{private_jcpg_times_used} // 0) > $self->max_connection_reuse) {
+	if ( ($dbh->{private_jcpg_times_used} // 0) >
+		 ($dbh->{private_jcpg_max_reuse} // $self->max_connection_reuse)) {
 		$self->log->debug("__jcpg_enqueue: freeing dbh $dbh after being used " . 
 			"$dbh->{private_jcpg_times_used} times");
 		$self->{__jcpg_concount}--;
