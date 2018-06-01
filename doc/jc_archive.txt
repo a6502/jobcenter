@@ -6,6 +6,12 @@ give the jc_admin user full rights on that table
 create database jc_archive;
 grant all on database jc_archive to jc_admin;
 revoke all on database jc_archive from public;
+-- \connect jc_archive
+create schema jc_archive;
+revoke all privileges on schema public from public;
+grant all on schema jc_archive to jc_admin;
+revoke all privileges on schema jc_archive from public;
+alter database jc_archive set search_path to jc_archive, pg_catalog, pg_temp;
 
 */
 
@@ -69,7 +75,6 @@ CREATE TABLE jobs_archive
 ALTER TABLE jobs_archive
   OWNER TO jc_admin;
 GRANT ALL ON TABLE jobs_archive TO jc_admin;
-GRANT SELECT, UPDATE, INSERT, TRUNCATE, DELETE ON TABLE jobs_archive TO jc_system;
 
 -- Index: jobs_archive_arguments_idx
 
