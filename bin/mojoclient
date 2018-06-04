@@ -6,6 +6,7 @@ use Mojo::JSON qw(decode_json encode_json);
 # standard modules
 use Cwd qw(realpath);
 use Data::Dumper;
+use Encode qw(encode_utf8 decode_utf8);
 use FindBin;
 use Getopt::Long;
 
@@ -44,11 +45,19 @@ sub main {
 		wfname => $wfname,
 		inargs => $inargs,
 	); };
-	say "error: $@" if $@;
+	if ($@) {
+		say "error: $@";
+		return 1;
+	}
 
-	say "job_id: $job_id, outargs: $outargs";
+	if ($job_id) {
+		say "job_id: $job_id, outargs: ", decode_utf8($outargs);
+	} else {
+		say "job not created? $outargs";
+	}
 
 	#say "the end is nigh!";
+	return 0;
 }
 
 1;

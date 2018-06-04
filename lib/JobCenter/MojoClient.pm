@@ -18,6 +18,7 @@ use Mojo::Pg;
 # standard
 use Cwd qw(realpath);
 use Data::Dumper;
+use Encode qw(encode_utf8 decode_utf8);
 use File::Basename;
 use FindBin;
 use IO::Pipe;
@@ -92,7 +93,7 @@ sub _poll_done_old {
 
 sub _poll_done {
 	my ($self, $job) = @_;
-	Mojo::IOLoop->delay->steps(
+	Mojo::IOLoop->delay(
 		sub {
 			my $d = shift;
 			$self->pg->db->dollar_only->query(
@@ -110,23 +111,29 @@ sub _poll_done {
 			$self->pg->pubsub->unlisten('job:finished', $job->lcb);
 			Mojo::IOLoop->remove($job->tmr) if $job->tmr;
 			$self->log->debug("calling cb $job->{cb} for job_id $job->{job_id} outargs $outargs");
-			my $outargsp;
 			local $@;
-			eval { $outargsp = decode_json(encode_utf8($outargs)); };
-			$outargsp = { error => 'error decoding json: ' . $outargs } if $@;
-			eval { $job->cb->($job->{job_id}, $outargsp); };
+			unless ($self->{json}) {
+				eval { $outargs = decode_json(encode_utf8($outargs)); };
+				$outargs = { error => "error $@ decoding json: " . $outargs } if $@;
+			}
+			eval { $job->cb->($job->{job_id}, $outargs); };
 			$self->log->debug("got $@ calling callback") if $@;
 			$job->delete;
 		}
-	);
+	)->catch(sub {
+		my ($err) = @_;
+		$self->log->error($err);
+	});
 }
 
 sub call {
 	my ($self, %args) = @_;
 	my ($done, $job_id, $outargs);
-	$args{waitcb} = sub{ say 'foo';};
+	$args{waitcb} = sub {
+		#say 'foo';
+	};
 	$args{resultcb} = sub {
-		say 'bar', Dumper(\@_);
+		#say 'bar', Dumper(\@_);
 		($job_id, $outargs) = @_;
 		$done++;
 	};
@@ -237,7 +244,7 @@ sub call_nb {
 	# create_job throws an error when:
 	# - wfname does not exist
 	# - inargs not valid
-	Mojo::IOLoop->delay->steps(
+	Mojo::IOLoop->delay(
 		sub {
 			my $d = shift;
 			#($job_id, $listenstring) = @{
@@ -270,7 +277,7 @@ sub call_nb {
 			$self->log->debug("created job_id $job_id listenstring $listenstring");
 			$waitcb->($job_id, undef);
 
-			my $job = JobCenter::Api::Job->new(
+			my $job = JobCenter::MojoClient::Job->new(
 				cb => $resultcb,
 				job_id => $job_id,
 				inargs => $inargs,
@@ -307,7 +314,7 @@ sub call_nb {
 			$self->_poll_done($job);
 		}
 	)->catch(sub {
-		my ($delay, $err) = @_;
+		my ($err) = @_;
 		$resultcb->(undef, $err);
 	});
 }
