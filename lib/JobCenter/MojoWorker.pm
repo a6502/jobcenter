@@ -167,6 +167,9 @@ sub _ping {
 sub _get_task {
 	my ($self, $cb, $upvals, $workername, $actionname, $job_id) = @_;
 	$self->log->debug("get_task: workername $workername, actioname $actionname, job_id $job_id");
+	# in the stored-procedure low-level api a null value means poll
+	# (yeah it's a hack)
+	$job_id = undef if $job_id !~ /^\d+/;
 	local $SIG{__WARN__} = sub {
 		$self->log->debug($_[0]);
 	};

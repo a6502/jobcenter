@@ -159,6 +159,9 @@ sub get_task {
 	my $pgh = $self->{pgh};
 	say "get_task: workername $self->{workername}, actionname $action->{actionname}, job_id $job_id"
 		if $self->{debug};
+	# in the stored-procedure low-level api a null value means poll
+	# (yeah it's a hack)
+	$job_id = undef if $job_id !~ /^\d+/;
 	my ($cookie, $inargs);
 	($job_id, $cookie, $inargs) = $pgh->selectrow_array(q[select * from get_task($1, $2, $3)], {},
 					$self->{workername}, $action->{actionname}, $job_id);
