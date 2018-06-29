@@ -934,6 +934,14 @@ sub _task_done {
 		}
 	} 
 
+	# in the jobcenter world outargs is always a object
+	# so we need to wrap other result types
+	if (ref $outargs eq 'ARRAY') {
+		$outargs = {array => $outargs};
+	} elsif (not ref $outargs) { 
+		# do we want to distinguish string/number here?
+		$outargs = {scalar => $outargs};
+	}
 	# should work as it came in via json rpc
 	$outargs = encode_json($outargs);
 
