@@ -1,6 +1,7 @@
 #!/usr/bin/perl -CSDAL
 
 no lib '.';
+use feature 'say';
 
 # mojo
 use Mojo::Base -base;
@@ -17,6 +18,7 @@ use Time::HiRes qw(time);
 
 # cpan
 use Config::Tiny;
+use Text::Table::Tiny 'generate_table';
 use Pegex::Input;
 use Pegex::Parser;
 
@@ -25,6 +27,7 @@ use lib realpath("$FindBin::Bin/../lib");
 use JobCenter::JCC::CodeGenerator;
 use JobCenter::JCC::Grammar;
 use JobCenter::JCC::Receiver;
+use JobCenter::JCC::VersionChecker;
 use JobCenter::Util qw(slurp);
 
 exit main(@ARGV);
@@ -104,7 +107,42 @@ sub main {
 		tags => $tags,
 	);
 
+	reference_version_check($pg, $wfast);
+
 	say "the end is nigh!";
 	return 0;
+}
+
+# check the versions of references to newly compiled
+sub reference_version_check {
+	my ($pg, $wfast) = @_;
+
+	# extract the workflow details
+	my ($wf) = values %$wfast;
+
+	my $jvc = JobCenter::JCC::VersionChecker->new(db => $pg->db);
+
+	# find workflows referencing this out of date action / workflow
+	my $res = $jvc->out_of_date(actions => [$wf->{workflow_name}]);
+
+	if ($res->rows) {
+
+		my @cols = qw/
+			workflow_name 
+			workflow_id 
+			action_id 
+			version 
+			latest_action_id 
+			latest_version
+		/;
+
+		my $body = $res->hashes->map(sub { [ @{$_}{@cols} ] });
+		my $rows = [ \@cols, @{$body->to_array} ];
+
+		say "";
+		say "stale references found for \"$wf->{workflow_name}\":";
+		say generate_table(rows => $rows, header_row => 1);
+		say "";
+	}
 }
 

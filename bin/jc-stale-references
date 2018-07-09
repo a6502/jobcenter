@@ -1,0 +1,77 @@
+#!/usr/bin/env perl
+#
+use strict;
+use warnings;
+
+no lib '.';
+use feature 'say';
+
+# mojo
+use Mojo::Pg;
+
+# stdperl
+use FindBin;
+
+# cpan
+use Config::Tiny;
+use Text::Table::Tiny 'generate_table';
+
+# JobCenter
+use lib "$FindBin::Bin/../lib";
+use JobCenter::JCC::VersionChecker;
+
+
+# return help string
+sub help {
+	return <<END
+Usage: $FindBin::Script [Worklows]
+
+Look for stale references in workflows that need updating.
+
+    Workflows   Limit results to one or more workflows
+END
+}
+
+exit main(@ARGV);
+
+sub main {
+
+	for (@ARGV) {
+		if ($_ eq '-h' || $_ eq '--help') {
+			print help();
+			return 0;
+		}
+	}
+
+	my $cfg = Config::Tiny->read("$FindBin::Bin/../etc/jobcenter.conf");
+	die 'Config Errror: ' . Config::Tiny->errstr() unless $cfg;
+
+	my $pg = Mojo::Pg->new(
+		'postgresql://'
+		. $cfg->{admin}->{user}
+		. ':' . $cfg->{admin}->{pass}
+		. '@' . ( $cfg->{pg}->{host} // '' )
+		. ( ($cfg->{pg}->{port}) ? ':' . $cfg->{pg}->{port} : '' )
+		. '/' . $cfg->{pg}->{db}
+	);
+
+	my $jvc = JobCenter::JCC::VersionChecker->new(db => $pg->db);
+
+	# find out of date references in workflows or all
+	my $res = $jvc->out_of_date(workflows => \@ARGV);
+
+	if ($res->rows) {
+
+		my $rows = [ $res->columns, @{$res->arrays->to_array} ];
+
+		say "stale references found:";
+
+		say generate_table(rows => $rows, header_row => 1);
+
+	} else {
+
+		say "no stale references found:";
+	}
+
+	return 0;
+}
