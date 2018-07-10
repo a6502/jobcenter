@@ -1,7 +1,6 @@
 #!/usr/bin/perl -CSDAL
 
 no lib '.';
-use feature 'say';
 
 # mojo
 use Mojo::Base -base;
@@ -18,9 +17,9 @@ use Time::HiRes qw(time);
 
 # cpan
 use Config::Tiny;
-use Text::Table::Tiny 'generate_table';
 use Pegex::Input;
 use Pegex::Parser;
+use Text::Table::Tiny 'generate_table';
 
 # JobCenter
 use lib realpath("$FindBin::Bin/../lib");

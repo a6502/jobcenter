@@ -1,8 +1,5 @@
 package JobCenter::JCC::VersionChecker;
 
-use strict;
-use warnings;
-
 # mojo
 use Mojo::Base -base;
 
