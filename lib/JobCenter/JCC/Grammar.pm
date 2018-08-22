@@ -17,7 +17,7 @@ my $NOTHING = qr//;
 # based on https://metacpan.org/source/INGY/YAML-Pegex-0.0.17/lib/YAML/Pegex/Grammar.pm
 
 # check that the indentation level increases by one step but do not consume
-sub rule_block_indent {
+sub rule_block_indent_real {
 	my ($self, $parser, $buffer, $pos) = @_;
 	return if $pos >= length($$buffer);
 	my $indents = $self->{indent};
@@ -78,16 +78,16 @@ sub rule_block_undent {
 
 has text =>  <<'EOT';
 %grammar wfl
-%version 0.0.1
+%version 0.0.2
 
 jcl: .ignorable* ( +workflow | +action ) .ignorable*
 
 # hack in action support
-action: +action-type +workflow-name colon ( .ignorable | +in | +out | +env | +role | +config )*
+action: +action-type +workflow-name colon ( .ignorable | +in | +out | +env | +role | +config )+
 
-action-type: / ( 'action' | 'procedure' ) / __
+action-type: / ( 'action' | 'procedure' ) / +
 
-workflow: / 'workflow' __ / +workflow-name colon ( .ignorable | +in | +out | +wfenv | +role | +config | +locks | +wfomap | +do )*
+workflow: / 'workflow' + / +workflow-name colon ( .ignorable | +in | +out | +wfenv | +role | +config | +locks | +wfomap | +do )+
 
 workflow-name: identifier
 
@@ -99,23 +99,17 @@ out: / 'out' <colon> / block-indent inout block-undent
 
 inout: ( iospec | .ignorable )*
 
-iospec: block-ondent identifier __ identifier (__ / ('optional') / | __ literal)? / _ SEMI? _ /
+iospec: block-ondent identifier + identifier (+ / ('optional') / | + literal)? / - SEMI? - /
 
 idlist: block-ondent identifier
-
-#filter: / 'filter' <colon> / block-indent ( idlist | .ignorable )* block-undent
-
-#filterspec: block-ondent identifier ( __ identifier )*
 
 config: / 'config' <colon> / assignments
 
 wfenv: / 'wfenv' <colon> / assignments
 
-#limitspec: block-ondent / ( 'max_depth' | 'max_steps' ) __ EQUAL __ / unsigned-integer
-
 locks: / 'locks' <colon> / block-indent ( lockspec | .ignorable )* block-undent
 
-lockspec: block-ondent identifier  __ ( identifier | / ( UNDER ) / ) (__ / ( 'inherit' | 'manual') / )*
+lockspec: block-ondent identifier  + ( identifier | / ( UNDER ) / ) (+ / ( 'inherit' | 'manual') / )*
 
 role: / 'role' <colon> / block-indent ( idlist | .ignorable )* block-undent
 
@@ -123,12 +117,14 @@ wfomap: / 'wfomap' <colon> / assignments
 
 do: / 'do' <colon> / block
 
+# accept a comment where we expect a block-indent
+block-indent: .ignorable* block-indent-real
+
 block: block-indent block-body block-undent
 
 block-body: (block-ondent statement | .ignorable)*
 
 statement: 
-#	.ignorable
 	| +call
 	| +case
 	| +eval
@@ -150,18 +146,7 @@ statement:
 	| +wait_for_event
 	| +while
 
-#call: / 'call' __ / +call-name colon block-indent call-body block-undent
-
-#call-name: identifier
-
-#call-body:  (+imap | +omap | .ignorable )*
-
-#imap: block-ondent / 'imap' <colon> / assignments
-
-#omap: block-ondent / 'omap' <colon> / assignments
-
-call:
-	/ 'call' __ / +call-name colon call-body
+call: / 'call' + / +call-name colon call-body
 
 call-name: identifier
 
@@ -175,7 +160,7 @@ assignments: perl-block | native-assignments
 
 native-assignments: block-indent ( assignment | magic-assignment | .ignorable )* block-undent
 
-assignment: block-ondent lhs _ assignment-operator _ rhs / _ SEMI? _ /
+assignment: block-ondent lhs - assignment-operator - rhs / - SEMI? - /
 
 magic-assignment: block-ondent / LANGLE / identifier / RANGLE /
 
@@ -191,56 +176,53 @@ unop-term: unary-operator plain-term
 
 plain-term: +functioncall | literal | +variable | +parented
 
-parented: / LPAREN _ / rhs / _ RPAREN /
+parented: / LPAREN - / rhs / - RPAREN /
 
-# fixme: do and/or belong in here?
-#rhs-operator: / _ ( STAR STAR | STAR | SLASH | PERCENT | ' x ' | PLUS | DASH | DOT | AMP AMP | PIPE PIPE | SLASH SLASH | ' and ' | ' or ' ) _ / 
-
-rhs-operator: / _ ( STAR STAR | STAR | SLASH SLASH | SLASH | PERCENT | 'x' | PLUS | DASH | DOT
+rhs-operator: / - ( STAR STAR | STAR | SLASH SLASH | SLASH | PERCENT | 'x' | PLUS | DASH | DOT
 	| LANGLE EQUAL | RANGLE EQUAL | LANGLE | RANGLE | 'lt'
 	| 'gt' | 'le' | 'ge' | EQUAL EQUAL | BANG EQUAL | 'eq' | 'ne'
-	| AMP AMP | PIPE PIPE | 'and' | 'or' ) _ /
+	| AMP AMP | PIPE PIPE | 'and' | 'or' ) - /
 
 
 unary-operator: / ( BANG | DASH | PLUS | 'not ' ) /
 
-functioncall: identifier / LPAREN _ / ( funcarg ) / _ RPAREN /
+functioncall: identifier / LPAREN - / ( funcarg ) / - RPAREN /
 
-funcarg: rhs ( _ ( COMMA | COLON ) _ rhs )*
+funcarg: rhs ( - ( COMMA | COLON ) - rhs )*
 
-case: / 'case' __ / +case-expression colon (+when | .ignorable)* case-else?
+case: / 'case' + / +case-expression colon (+when | .ignorable)* case-else?
 
 case-expression: ( perl-block | rhs )
 
-when: block-ondent / 'when' __  / +case-label colon +block
+when: block-ondent / 'when' +  / +case-label colon +block
 
-case-label: identifier ( _ COMMA _ identifier )*
+case-label: identifier ( - COMMA - identifier )*
 
 case-else: block-ondent +else
 
 eval: / 'eval' <colon> / assignments
 
-goto: / 'goto' __ / identifier
+goto: / 'goto' + / identifier
 
-label: / 'label' __ / identifier
+label: / 'label' + / identifier
 
-if: / 'if' _ / +condition colon +then elses?
+if: / 'if' - / +condition colon +then elses?
 
 then: block
 
 elses: block-ondent ( +elsif | +else )
 
-elsif: / 'elsif' __ / +condition colon +then elses?
+elsif: / 'elsif' + / +condition colon +then elses?
 
 else: / 'else' <colon> / block
 
-lock: / 'lock' __ / identifier __ ( perl_block | rhs )
+lock: / 'lock' + / identifier + ( perl_block | rhs )
 
 raise_error: / 'raise_error' <colon> / assignments
 
 raise_event: / 'raise_event' <colon> / assignments
 
-repeat: / 'repeat' colon / +block / __ 'until' __ / +condition
+repeat: / 'repeat' colon / +block / + 'until' + / +condition
 
 return: / ('return') /
 
@@ -248,7 +230,7 @@ sleep: / 'sleep' <colon> / assignments
 
 split: / 'split' / colon block-indent callflow+ block-undent
 
-callflow: block-ondent / 'callflow' __ / +call-name colon call-body
+callflow: block-ondent / 'callflow' + / +call-name colon call-body
 
 subscribe: / 'subscribe' <colon> / assignments
 
@@ -258,22 +240,15 @@ try-block: block
 
 catch-block: block
 
-unlock: / 'unlock' __ / identifier __ ( perl_block | rhs )
+unlock: / 'unlock' + / identifier + ( perl_block | rhs )
 
 unsubscribe: / 'unsubscribe' <colon> / assignments
 
 wait_for_event: / 'wait_for_event' / colon call-body
 
-while: / 'while' __ / +condition colon +block
+while: / 'while' + / +condition colon +block
 
 condition: perl-block | rhs
-#condition: perl-block | boolean-expression
-
-#boolean-expression: term ( boolean-operator term )*
-
-#boolean-operator: / _ ( LANGLE EQUAL | RANGLE EQUAL | LANGLE | RANGLE | ' lt '|
-#	' gt ' | ' le ' | ' ge ' | EQUAL EQUAL | BANG EQUAL | ' eq ' | ' ne '
-#	| AMP AMP | PIPE PIPE | SLASH SLASH | ' and ' | ' or ' ) _ /
 
 variable: / ( ALPHA ) DOT / varpart ( / DOT / varpart )*
 
@@ -288,9 +263,9 @@ number: / ( (:'0'[xX] HEX+) | (:'-'? DIGIT* DOT DIGIT+) | (:'-'? DIGIT+) ) /
 boolean: / ('TRUE'|'FALSE'|'true'|'false') /
 
 ignorable: blank-line | multi-line-comment | single-line-comment
-blank-line: / _ EOL /
-multi-line-comment: / _ HASH LSQUARE ( ANY*? ) LSQUARE ALL*? HASH RSQUARE \1 RSQUARE /
-single-line-comment: / _ HASH ANY* EOL /
+blank-line: / - EOL /
+multi-line-comment: / - HASH LSQUARE ( ANY*? ) LSQUARE ALL*? HASH RSQUARE \1 RSQUARE /
+single-line-comment: / - HASH ANY* EOL /
 
 identifier: bare-identifier | string
 
@@ -323,17 +298,19 @@ double_quoted_string:
 
 escape: / [0nt] /
 
-perl-block: / _ LSQUARE ( ANY *? ) LSQUARE ( (?: (?! RSQUARE RSQUARE ) ALL )*? ) RSQUARE \1 RSQUARE EOL? /
+perl-block: / - LSQUARE ( ANY *? ) LSQUARE ( (?: (?! RSQUARE RSQUARE ) ALL )*? ) RSQUARE \1 RSQUARE EOL? /
 
 integer: / ( DASH? DIGIT+ ) /
 
 unsigned-integer: / ( DIGIT+ ) /
 
-colon: / _ COLON _ EOL /
+colon: / - COLON - EOL /
 
 # normally _ and __ matches newlines to, we don't want that?
-_: / BLANK* /
-__: / BLANK+ /
+#_: / BLANK* /
+#__: / BLANK+ /
+# because ingy says so:
+ws: / BLANK /
 
 EOT
 
