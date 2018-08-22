@@ -83,19 +83,26 @@ has text =>  <<'EOT';
 jcl: .ignorable* ( +workflow | +action ) .ignorable*
 
 # hack in action support
-action: +action-type +workflow-name colon ( .ignorable | +in | +out | +env | +role | +config )+
+action: +action-type +workflow-name colon (
+	( .ignorable | +in | +out | +env | +role | +config )+
+	| `syntax error: action [name]\n:<action>` )
 
 action-type: / ( 'action' | 'procedure' ) / +
 
-workflow: / 'workflow' + / +workflow-name colon ( .ignorable | +in | +out | +wfenv | +role | +config | +locks | +wfomap | +do )+
+workflow: / 'workflow' + / +workflow-name colon (
+	( .ignorable | +in | +out | +wfenv | +role | +config | +locks | +wfomap | +do )+
+	| `syntax error: workflow [name]\n:<workflow>` )
 
 workflow-name: identifier
 
-in: / 'in' <colon> / block-indent inout block-undent
+in: / 'in' <colon> / ( block-indent inout block-undent
+	| `syntax error: in:\n<inout>` )
 
-env: / 'env' <colon> / block-indent inout block-undent
+env: / 'env' <colon> / ( block-indent inout block-undent
+	| `syntax error: env:\n<inout>` )
 
-out: / 'out' <colon> / block-indent inout block-undent
+out: / 'out' <colon> / ( block-indent inout block-undent
+	| `syntax error: out:\n<inout>` )
 
 inout: ( iospec | .ignorable )*
 
@@ -103,19 +110,23 @@ iospec: block-ondent identifier + identifier (+ / ('optional') / | + literal)? /
 
 idlist: block-ondent identifier
 
-config: / 'config' <colon> / assignments
+config: / 'config' <colon> / ( assignments | `syntax error: config:\n<assignments>` )
 
-wfenv: / 'wfenv' <colon> / assignments
+wfenv: / 'wfenv' <colon> / ( assignments | `syntax error: wfenv:\n<assignments>` )
 
-locks: / 'locks' <colon> / block-indent ( lockspec | .ignorable )* block-undent
+locks: / 'locks' <colon> / (
+	block-indent ( lockspec | .ignorable )* block-undent
+	| `syntax error: locks:\n<lockspec>` )
 
 lockspec: block-ondent identifier  + ( identifier | / ( UNDER ) / ) (+ / ( 'inherit' | 'manual') / )*
 
-role: / 'role' <colon> / block-indent ( idlist | .ignorable )* block-undent
+role: / 'role' <colon> / (
+	block-indent ( idlist | .ignorable )* block-undent
+	| `syntax error: role:\n<idlist>` )
 
-wfomap: / 'wfomap' <colon> / assignments
+wfomap: / 'wfomap' <colon> / ( assignments | `syntax error: wfomap:\n<assignments>` )
 
-do: / 'do' <colon> / block
+do: / 'do' <colon> / ( block | `syntax error: do:\n<block>` )
 
 # accept a comment where we expect a block-indent
 block-indent: .ignorable* block-indent-real
@@ -146,7 +157,7 @@ statement:
 	| +wait_for_event
 	| +while
 
-call: / 'call' + / +call-name colon call-body
+call: / 'call' + / +call-name colon ( call-body | `syntax error: call [name]:\n<call-body>` )
 
 call-name: identifier
 
@@ -200,13 +211,13 @@ case-label: identifier ( - COMMA - identifier )*
 
 case-else: block-ondent +else
 
-eval: / 'eval' <colon> / assignments
+eval: / 'eval' <colon> / ( assignments | `syntax error: eval:\n<assignments>` )
 
 goto: / 'goto' + / identifier
 
 label: / 'label' + / identifier
 
-if: / 'if' - / +condition colon +then elses?
+if: / 'if' - / ( +condition colon +then elses? | `syntax error: if <condition>:\n<if>` )
 
 then: block
 
