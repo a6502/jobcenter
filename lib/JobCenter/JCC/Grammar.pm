@@ -4,9 +4,11 @@ use Pegex::Base;
 use base 'Pegex::Base';
 extends 'Pegex::Grammar';
 
+use constant file => 'share/jjc.pgx';
+
 has indent => [];
 has tabwidth => 8;
- 
+
 my $EOL = qr/\r?\n/;
 my $EOD = qr/(?:$EOL)?(?=\z|\.\.\.\r?\n|\-\-\-\r?\n)/;
 my $SPACE = qr/ /;
@@ -35,7 +37,7 @@ sub rule_block_indent_real {
 	say "indents now ", join(', ', @$indents);
 	return $parser->match_rule($pos);
 }
- 
+
 # consume indentation and check that the indentation level is still the same
 sub rule_block_ondent {
 	my ($self, $parser, $buffer, $pos) = @_;
@@ -75,255 +77,1476 @@ sub rule_block_undent {
 	return $parser->match_rule($pos);
 }
 
-
-has text =>  <<'EOT';
-%grammar wfl
-%version 0.0.2
-
-jcl: .ignorable* ( +workflow | +action ) .ignorable*
-
-# hack in action support
-action: +action-type +workflow-name colon (
-	( .ignorable | +in | +out | +env | +role | +config )+
-	| `syntax error: action [name]\n:<action>` )
-
-action-type: / ( 'action' | 'procedure' ) / +
-
-workflow: / 'workflow' + / +workflow-name colon (
-	( .ignorable | +in | +out | +wfenv | +role | +config | +locks | +wfomap | +do )+
-	| `syntax error: workflow [name]\n:<workflow>` )
-
-workflow-name: identifier
-
-in: / 'in' <colon> / ( block-indent inout block-undent
-	| `syntax error: in:\n<inout>` )
-
-env: / 'env' <colon> / ( block-indent inout block-undent
-	| `syntax error: env:\n<inout>` )
-
-out: / 'out' <colon> / ( block-indent inout block-undent
-	| `syntax error: out:\n<inout>` )
-
-inout: ( iospec | .ignorable )*
-
-iospec: block-ondent identifier + identifier (+ / ('optional') / | + literal)? / - SEMI? - /
-
-idlist: block-ondent identifier
-
-config: / 'config' <colon> / ( assignments | `syntax error: config:\n<assignments>` )
-
-wfenv: / 'wfenv' <colon> / ( assignments | `syntax error: wfenv:\n<assignments>` )
-
-locks: / 'locks' <colon> / (
-	block-indent ( lockspec | .ignorable )* block-undent
-	| `syntax error: locks:\n<lockspec>` )
-
-lockspec: block-ondent identifier  + ( identifier | / ( UNDER ) / ) (+ / ( 'inherit' | 'manual') / )*
-
-role: / 'role' <colon> / (
-	block-indent ( idlist | .ignorable )* block-undent
-	| `syntax error: role:\n<idlist>` )
-
-wfomap: / 'wfomap' <colon> / ( assignments | `syntax error: wfomap:\n<assignments>` )
-
-do: / 'do' <colon> / ( block | `syntax error: do:\n<block>` )
-
-# accept a comment where we expect a block-indent
-block-indent: .ignorable* block-indent-real
-
-block: block-indent block-body block-undent
-
-block-body: (block-ondent statement | .ignorable)*
-
-statement: 
-	| +call
-	| +case
-	| +eval
-	| +goto
-	| +if
-	| +label
-	| +lock
-	| +raise_error
-	| +raise_event
-	| +repeat
-	| +return
-	| +sleep
-	| +split
-	| +subscribe
-	| +try
-	| +unlock
-	| +unsubscribe
-#	| wait_for_child
-	| +wait_for_event
-	| +while
-
-call: / 'call' + / +call-name colon ( call-body | `syntax error: call [name]:\n<call-body>` )
-
-call-name: identifier
-
-call-body: +imap block-ondent / 'into' <colon> / +omap
-
-imap: assignments
-
-omap: assignments
-
-assignments: perl-block | native-assignments
-
-native-assignments: block-indent ( assignment | magic-assignment | .ignorable )* block-undent
-
-assignment: block-ondent lhs - assignment-operator - rhs / - SEMI? - /
-
-magic-assignment: block-ondent / LANGLE / identifier / RANGLE /
-
-lhs: ( / (ALPHA) DOT / )? varpart ( / DOT / varpart )*
-
-assignment-operator: / ( EQUAL | DOT EQUAL | PLUS EQUAL | DASH EQUAL ) /
-
-rhs: term ( rhs-operator term )*
-
-term: +unop-term | plain-term
-
-unop-term: unary-operator plain-term
-
-plain-term: +functioncall | literal | +variable | +parented
-
-parented: / LPAREN - / rhs / - RPAREN /
-
-rhs-operator: / - ( STAR STAR | STAR | SLASH SLASH | SLASH | PERCENT | 'x' | PLUS | DASH | DOT
-	| LANGLE EQUAL | RANGLE EQUAL | LANGLE | RANGLE | 'lt'
-	| 'gt' | 'le' | 'ge' | EQUAL EQUAL | BANG EQUAL | 'eq' | 'ne'
-	| AMP AMP | PIPE PIPE | 'and' | 'or' ) - /
-
-
-unary-operator: / ( BANG | DASH | PLUS | 'not ' ) /
-
-functioncall: identifier / LPAREN - / ( funcarg ) / - RPAREN /
-
-funcarg: rhs ( - ( COMMA | COLON ) - rhs )*
-
-case: / 'case' + / +case-expression colon (+when | .ignorable)* case-else?
-
-case-expression: ( perl-block | rhs )
-
-when: block-ondent / 'when' +  / +case-label colon +block
-
-case-label: identifier ( - COMMA - identifier )*
-
-case-else: block-ondent +else
-
-eval: / 'eval' <colon> / ( assignments | `syntax error: eval:\n<assignments>` )
-
-goto: / 'goto' + / identifier
-
-label: / 'label' + / identifier
-
-if: / 'if' - / ( +condition colon +then elses? | `syntax error: if <condition>:\n<if>` )
-
-then: block
-
-elses: block-ondent ( +elsif | +else )
-
-elsif: / 'elsif' + / +condition colon +then elses?
-
-else: / 'else' <colon> / block
-
-lock: / 'lock' + / identifier + ( perl_block | rhs )
-
-raise_error: / 'raise_error' <colon> / assignments
-
-raise_event: / 'raise_event' <colon> / assignments
-
-repeat: / 'repeat' colon / +block / + 'until' + / +condition
-
-return: / ('return') /
-
-sleep: / 'sleep' <colon> / assignments
-
-split: / 'split' / colon block-indent callflow+ block-undent
-
-callflow: block-ondent / 'callflow' + / +call-name colon call-body
-
-subscribe: / 'subscribe' <colon> / assignments
-
-try: / 'try' / colon +try-block block-ondent / 'catch' / colon +catch-block
-
-try-block: block
-
-catch-block: block
-
-unlock: / 'unlock' + / identifier + ( perl_block | rhs )
-
-unsubscribe: / 'unsubscribe' <colon> / assignments
-
-wait_for_event: / 'wait_for_event' / colon call-body
-
-while: / 'while' + / +condition colon +block
-
-condition: perl-block | rhs
-
-variable: / ( ALPHA ) DOT / varpart ( / DOT / varpart )*
-
-varpart: identifier ( / LSQUARE <integer> LSQUARE / )?
-
-literal: +number | +boolean | +single-quoted-string | +double-quoted-string | +null
-
-null: / ('NULL'|'null') /
-
-number: / ( (:'0'[xX] HEX+) | (:'-'? DIGIT* DOT DIGIT+) | (:'-'? DIGIT+) ) /
-
-boolean: / ('TRUE'|'FALSE'|'true'|'false') /
-
-ignorable: blank-line | multi-line-comment | single-line-comment
-blank-line: / - EOL /
-multi-line-comment: / - HASH LSQUARE ( ANY*? ) LSQUARE ALL*? HASH RSQUARE \1 RSQUARE /
-single-line-comment: / - HASH ANY* EOL /
-
-identifier: bare-identifier | string
-
-bare-identifier: /( ALPHA WORD* )/
-
-string: single-quoted-string | double-quoted-string
-
-single_quoted_string:
-    /(:
-        SINGLE
-        ((:
-            [^ BREAK BACK SINGLE] |
-            BACK SINGLE |
-            BACK BACK
-        )*?)
-        SINGLE
-    )/
-
-double_quoted_string:
-    /(:
-        DOUBLE
-        ((:
-            [^ BREAK BACK DOUBLE] |
-            BACK DOUBLE |
-            BACK BACK |
-            BACK escape
-        )*?)
-        DOUBLE
-    )/
-
-escape: / [0nt] /
-
-perl-block: / - LSQUARE ( ANY *? ) LSQUARE ( (?: (?! RSQUARE RSQUARE ) ALL )*? ) RSQUARE \1 RSQUARE EOL? /
-
-integer: / ( DASH? DIGIT+ ) /
-
-unsigned-integer: / ( DIGIT+ ) /
-
-colon: / - COLON - EOL /
-
-# normally _ and __ matches newlines to, we don't want that?
-#_: / BLANK* /
-#__: / BLANK+ /
-# because ingy says so:
-ws: / BLANK /
-
-EOT
+# NOTE: To recompile this after changing the jjc.pgx file, run:
+#
+#   perl -Ilib -MJobCenter::JCC::Grammar=compile
+
+sub make_tree {   # Generated/Inlined by Pegex::Grammar (0.64)
+  {
+    '+grammar' => 'wfl',
+    '+toprule' => 'jcl',
+    '+version' => '0.0.2',
+    'COLON' => {
+      '.rgx' => qr/\G:/
+    },
+    'COMMA' => {
+      '.rgx' => qr/\G,/
+    },
+    '_' => {
+      '.rgx' => qr/\G[\ \t]*/
+    },
+    '__' => {
+      '.rgx' => qr/\G[\ \t]+/
+    },
+    'action' => {
+      '.all' => [
+        {
+          '-wrap' => 1,
+          '.ref' => 'action_type'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'workflow_name'
+        },
+        {
+          '.ref' => 'colon'
+        },
+        {
+          '.any' => [
+            {
+              '+min' => 1,
+              '.any' => [
+                {
+                  '-skip' => 1,
+                  '.ref' => 'ignorable'
+                },
+                {
+                  '-wrap' => 1,
+                  '.ref' => 'in'
+                },
+                {
+                  '-wrap' => 1,
+                  '.ref' => 'out'
+                },
+                {
+                  '-wrap' => 1,
+                  '.ref' => 'env'
+                },
+                {
+                  '-wrap' => 1,
+                  '.ref' => 'role'
+                },
+                {
+                  '-wrap' => 1,
+                  '.ref' => 'config'
+                }
+              ]
+            },
+            {
+              '.err' => 'syntax error: action [name]\\n:<action>'
+            }
+          ]
+        }
+      ]
+    },
+    'action_type' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\G(action|procedure)/
+        },
+        {
+          '.ref' => '__'
+        }
+      ]
+    },
+    'assignment' => {
+      '.all' => [
+        {
+          '.ref' => 'block_ondent'
+        },
+        {
+          '.ref' => 'lhs'
+        },
+        {
+          '.ref' => '_'
+        },
+        {
+          '.ref' => 'assignment_operator'
+        },
+        {
+          '.ref' => '_'
+        },
+        {
+          '.ref' => 'rhs'
+        },
+        {
+          '.rgx' => qr/\G[\ \t]*;?[\ \t]*/
+        }
+      ]
+    },
+    'assignment_operator' => {
+      '.rgx' => qr/\G(=|\.=|\+=|\-=)/
+    },
+    'assignments' => {
+      '.any' => [
+        {
+          '.ref' => 'perl_block'
+        },
+        {
+          '.ref' => 'native_assignments'
+        }
+      ]
+    },
+    'bare_identifier' => {
+      '.rgx' => qr/\G([a-zA-Z]\w*)/
+    },
+    'blank_line' => {
+      '.rgx' => qr/\G[\ \t]*\r?\n/
+    },
+    'block' => {
+      '.all' => [
+        {
+          '.ref' => 'block_indent'
+        },
+        {
+          '.ref' => 'block_body'
+        },
+        {
+          '.ref' => 'block_undent'
+        }
+      ]
+    },
+    'block_body' => {
+      '+min' => 0,
+      '.any' => [
+        {
+          '.all' => [
+            {
+              '.ref' => 'block_ondent'
+            },
+            {
+              '.ref' => 'statement'
+            }
+          ]
+        },
+        {
+          '-skip' => 1,
+          '.ref' => 'ignorable'
+        }
+      ]
+    },
+    'block_indent' => {
+      '.all' => [
+        {
+          '+min' => 0,
+          '-skip' => 1,
+          '.ref' => 'ignorable'
+        },
+        {
+          '.ref' => 'block_indent_real'
+        }
+      ]
+    },
+    'boolean' => {
+      '.rgx' => qr/\G(TRUE|FALSE|true|false)/
+    },
+    'call' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gcall[\ \t]+/
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'call_name'
+        },
+        {
+          '.ref' => 'colon'
+        },
+        {
+          '.any' => [
+            {
+              '.ref' => 'call_body'
+            },
+            {
+              '.err' => 'syntax error: call [name]:\\n<call-body>'
+            }
+          ]
+        }
+      ]
+    },
+    'call_body' => {
+      '.all' => [
+        {
+          '-wrap' => 1,
+          '.ref' => 'imap'
+        },
+        {
+          '.ref' => 'block_ondent'
+        },
+        {
+          '.rgx' => qr/\Ginto[\ \t]*:[\ \t]*\r?\n/
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'omap'
+        }
+      ]
+    },
+    'call_name' => {
+      '.ref' => 'identifier'
+    },
+    'callflow' => {
+      '.all' => [
+        {
+          '.ref' => 'block_ondent'
+        },
+        {
+          '.rgx' => qr/\Gcallflow[\ \t]+/
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'call_name'
+        },
+        {
+          '.ref' => 'colon'
+        },
+        {
+          '.ref' => 'call_body'
+        }
+      ]
+    },
+    'case' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gcase[\ \t]+/
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'case_expression'
+        },
+        {
+          '.ref' => 'colon'
+        },
+        {
+          '+min' => 0,
+          '.any' => [
+            {
+              '-wrap' => 1,
+              '.ref' => 'when'
+            },
+            {
+              '-skip' => 1,
+              '.ref' => 'ignorable'
+            }
+          ]
+        },
+        {
+          '+max' => 1,
+          '.ref' => 'case_else'
+        }
+      ]
+    },
+    'case_else' => {
+      '.all' => [
+        {
+          '.ref' => 'block_ondent'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'else'
+        }
+      ]
+    },
+    'case_expression' => {
+      '.any' => [
+        {
+          '.ref' => 'perl_block'
+        },
+        {
+          '.ref' => 'rhs'
+        }
+      ]
+    },
+    'case_label' => {
+      '.all' => [
+        {
+          '.ref' => 'identifier'
+        },
+        {
+          '+min' => 0,
+          '.all' => [
+            {
+              '.ref' => '_'
+            },
+            {
+              '.ref' => 'COMMA'
+            },
+            {
+              '.ref' => '_'
+            },
+            {
+              '.ref' => 'identifier'
+            }
+          ]
+        }
+      ]
+    },
+    'catch_block' => {
+      '.ref' => 'block'
+    },
+    'colon' => {
+      '.rgx' => qr/\G[\ \t]*:[\ \t]*\r?\n/
+    },
+    'condition' => {
+      '.any' => [
+        {
+          '.ref' => 'perl_block'
+        },
+        {
+          '.ref' => 'rhs'
+        }
+      ]
+    },
+    'config' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gconfig[\ \t]*:[\ \t]*\r?\n/
+        },
+        {
+          '.any' => [
+            {
+              '.ref' => 'assignments'
+            },
+            {
+              '.err' => 'syntax error: config:\\n<assignments>'
+            }
+          ]
+        }
+      ]
+    },
+    'do' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gdo[\ \t]*:[\ \t]*\r?\n/
+        },
+        {
+          '.any' => [
+            {
+              '.ref' => 'block'
+            },
+            {
+              '.err' => 'syntax error: do:\\n<block>'
+            }
+          ]
+        }
+      ]
+    },
+    'double_quoted_string' => {
+      '.rgx' => qr/\G(?:"((?:[^\n\\"]|\\"|\\\\|\\[0nt])*?)")/
+    },
+    'else' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gelse[\ \t]*:[\ \t]*\r?\n/
+        },
+        {
+          '.ref' => 'block'
+        }
+      ]
+    },
+    'elses' => {
+      '.all' => [
+        {
+          '.ref' => 'block_ondent'
+        },
+        {
+          '.any' => [
+            {
+              '-wrap' => 1,
+              '.ref' => 'elsif'
+            },
+            {
+              '-wrap' => 1,
+              '.ref' => 'else'
+            }
+          ]
+        }
+      ]
+    },
+    'elsif' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gelsif[\ \t]+/
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'condition'
+        },
+        {
+          '.ref' => 'colon'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'then'
+        },
+        {
+          '+max' => 1,
+          '.ref' => 'elses'
+        }
+      ]
+    },
+    'env' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Genv[\ \t]*:[\ \t]*\r?\n/
+        },
+        {
+          '.any' => [
+            {
+              '.all' => [
+                {
+                  '.ref' => 'block_indent'
+                },
+                {
+                  '.ref' => 'inout'
+                },
+                {
+                  '.ref' => 'block_undent'
+                }
+              ]
+            },
+            {
+              '.err' => 'syntax error: env:\\n<inout>'
+            }
+          ]
+        }
+      ]
+    },
+    'eval' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Geval[\ \t]*:[\ \t]*\r?\n/
+        },
+        {
+          '.any' => [
+            {
+              '.ref' => 'assignments'
+            },
+            {
+              '.err' => 'syntax error: eval:\\n<assignments>'
+            }
+          ]
+        }
+      ]
+    },
+    'funcarg' => {
+      '.all' => [
+        {
+          '.ref' => 'rhs'
+        },
+        {
+          '+min' => 0,
+          '.all' => [
+            {
+              '.ref' => '_'
+            },
+            {
+              '.any' => [
+                {
+                  '.ref' => 'COMMA'
+                },
+                {
+                  '.ref' => 'COLON'
+                }
+              ]
+            },
+            {
+              '.ref' => '_'
+            },
+            {
+              '.ref' => 'rhs'
+            }
+          ]
+        }
+      ]
+    },
+    'functioncall' => {
+      '.all' => [
+        {
+          '.ref' => 'identifier'
+        },
+        {
+          '.rgx' => qr/\G\([\ \t]*/
+        },
+        {
+          '.ref' => 'funcarg'
+        },
+        {
+          '.rgx' => qr/\G[\ \t]*\)/
+        }
+      ]
+    },
+    'goto' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Ggoto[\ \t]+/
+        },
+        {
+          '.ref' => 'identifier'
+        }
+      ]
+    },
+    'identifier' => {
+      '.any' => [
+        {
+          '.ref' => 'bare_identifier'
+        },
+        {
+          '.ref' => 'string'
+        }
+      ]
+    },
+    'idlist' => {
+      '.all' => [
+        {
+          '.ref' => 'block_ondent'
+        },
+        {
+          '.ref' => 'identifier'
+        }
+      ]
+    },
+    'if' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gif[\ \t]*/
+        },
+        {
+          '.any' => [
+            {
+              '.all' => [
+                {
+                  '-wrap' => 1,
+                  '.ref' => 'condition'
+                },
+                {
+                  '.ref' => 'colon'
+                },
+                {
+                  '-wrap' => 1,
+                  '.ref' => 'then'
+                },
+                {
+                  '+max' => 1,
+                  '.ref' => 'elses'
+                }
+              ]
+            },
+            {
+              '.err' => 'syntax error: if <condition>:\\n<if>'
+            }
+          ]
+        }
+      ]
+    },
+    'ignorable' => {
+      '.any' => [
+        {
+          '.ref' => 'blank_line'
+        },
+        {
+          '.ref' => 'multi_line_comment'
+        },
+        {
+          '.ref' => 'single_line_comment'
+        }
+      ]
+    },
+    'imap' => {
+      '.ref' => 'assignments'
+    },
+    'in' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gin[\ \t]*:[\ \t]*\r?\n/
+        },
+        {
+          '.any' => [
+            {
+              '.all' => [
+                {
+                  '.ref' => 'block_indent'
+                },
+                {
+                  '.ref' => 'inout'
+                },
+                {
+                  '.ref' => 'block_undent'
+                }
+              ]
+            },
+            {
+              '.err' => 'syntax error: in:\\n<inout>'
+            }
+          ]
+        }
+      ]
+    },
+    'inout' => {
+      '+min' => 0,
+      '.any' => [
+        {
+          '.ref' => 'iospec'
+        },
+        {
+          '-skip' => 1,
+          '.ref' => 'ignorable'
+        }
+      ]
+    },
+    'iospec' => {
+      '.all' => [
+        {
+          '.ref' => 'block_ondent'
+        },
+        {
+          '.ref' => 'identifier'
+        },
+        {
+          '.ref' => '__'
+        },
+        {
+          '.ref' => 'identifier'
+        },
+        {
+          '+max' => 1,
+          '.any' => [
+            {
+              '.all' => [
+                {
+                  '.ref' => '__'
+                },
+                {
+                  '.rgx' => qr/\G(optional)/
+                }
+              ]
+            },
+            {
+              '.all' => [
+                {
+                  '.ref' => '__'
+                },
+                {
+                  '.ref' => 'literal'
+                }
+              ]
+            }
+          ]
+        },
+        {
+          '.rgx' => qr/\G[\ \t]*;?[\ \t]*/
+        }
+      ]
+    },
+    'jcl' => {
+      '.all' => [
+        {
+          '+min' => 0,
+          '-skip' => 1,
+          '.ref' => 'ignorable'
+        },
+        {
+          '.any' => [
+            {
+              '-wrap' => 1,
+              '.ref' => 'workflow'
+            },
+            {
+              '-wrap' => 1,
+              '.ref' => 'action'
+            }
+          ]
+        },
+        {
+          '+min' => 0,
+          '-skip' => 1,
+          '.ref' => 'ignorable'
+        }
+      ]
+    },
+    'label' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Glabel[\ \t]+/
+        },
+        {
+          '.ref' => 'identifier'
+        }
+      ]
+    },
+    'lhs' => {
+      '.all' => [
+        {
+          '+max' => 1,
+          '.rgx' => qr/\G(ALPHA)\./
+        },
+        {
+          '.ref' => 'varpart'
+        },
+        {
+          '+min' => 0,
+          '.all' => [
+            {
+              '.rgx' => qr/\G\./
+            },
+            {
+              '.ref' => 'varpart'
+            }
+          ]
+        }
+      ]
+    },
+    'literal' => {
+      '.any' => [
+        {
+          '-wrap' => 1,
+          '.ref' => 'number'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'boolean'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'single_quoted_string'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'double_quoted_string'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'null'
+        }
+      ]
+    },
+    'lock' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Glock[\ \t]+/
+        },
+        {
+          '.ref' => 'identifier'
+        },
+        {
+          '.ref' => '__'
+        },
+        {
+          '.any' => [
+            {
+              '.ref' => 'perl_block'
+            },
+            {
+              '.ref' => 'rhs'
+            }
+          ]
+        }
+      ]
+    },
+    'locks' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Glocks[\ \t]*:[\ \t]*\r?\n/
+        },
+        {
+          '.any' => [
+            {
+              '.all' => [
+                {
+                  '.ref' => 'block_indent'
+                },
+                {
+                  '+min' => 0,
+                  '.any' => [
+                    {
+                      '.ref' => 'lockspec'
+                    },
+                    {
+                      '-skip' => 1,
+                      '.ref' => 'ignorable'
+                    }
+                  ]
+                },
+                {
+                  '.ref' => 'block_undent'
+                }
+              ]
+            },
+            {
+              '.err' => 'syntax error: locks:\\n<lockspec>'
+            }
+          ]
+        }
+      ]
+    },
+    'lockspec' => {
+      '.all' => [
+        {
+          '.ref' => 'block_ondent'
+        },
+        {
+          '.ref' => 'identifier'
+        },
+        {
+          '.ref' => '__'
+        },
+        {
+          '.any' => [
+            {
+              '.ref' => 'identifier'
+            },
+            {
+              '.rgx' => qr/\G(_)/
+            }
+          ]
+        },
+        {
+          '+min' => 0,
+          '.all' => [
+            {
+              '.ref' => '__'
+            },
+            {
+              '.rgx' => qr/\G(inherit|manual)/
+            }
+          ]
+        }
+      ]
+    },
+    'magic_assignment' => {
+      '.all' => [
+        {
+          '.ref' => 'block_ondent'
+        },
+        {
+          '.rgx' => qr/\G</
+        },
+        {
+          '.ref' => 'identifier'
+        },
+        {
+          '.rgx' => qr/\G\>/
+        }
+      ]
+    },
+    'multi_line_comment' => {
+      '.rgx' => qr/\G[\ \t]*\#\[(.*?)\[[\s\S]*?\#\]\1\]/
+    },
+    'native_assignments' => {
+      '.all' => [
+        {
+          '.ref' => 'block_indent'
+        },
+        {
+          '+min' => 0,
+          '.any' => [
+            {
+              '.ref' => 'assignment'
+            },
+            {
+              '.ref' => 'magic_assignment'
+            },
+            {
+              '-skip' => 1,
+              '.ref' => 'ignorable'
+            }
+          ]
+        },
+        {
+          '.ref' => 'block_undent'
+        }
+      ]
+    },
+    'null' => {
+      '.rgx' => qr/\G(NULL|null)/
+    },
+    'number' => {
+      '.rgx' => qr/\G((?:0[xX][0-9a-fA-F]+)|(?:\-?[0-9]*\.[0-9]+)|(?:\-?[0-9]+))/
+    },
+    'omap' => {
+      '.ref' => 'assignments'
+    },
+    'out' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gout[\ \t]*:[\ \t]*\r?\n/
+        },
+        {
+          '.any' => [
+            {
+              '.all' => [
+                {
+                  '.ref' => 'block_indent'
+                },
+                {
+                  '.ref' => 'inout'
+                },
+                {
+                  '.ref' => 'block_undent'
+                }
+              ]
+            },
+            {
+              '.err' => 'syntax error: out:\\n<inout>'
+            }
+          ]
+        }
+      ]
+    },
+    'parented' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\G\([\ \t]*/
+        },
+        {
+          '.ref' => 'rhs'
+        },
+        {
+          '.rgx' => qr/\G[\ \t]*\)/
+        }
+      ]
+    },
+    'perl_block' => {
+      '.rgx' => qr/\G[\ \t]*\[(.*?)\[((?:(?!\]\])[\s\S])*?)\]\1\]\r?\n?/
+    },
+    'plain_term' => {
+      '.any' => [
+        {
+          '-wrap' => 1,
+          '.ref' => 'functioncall'
+        },
+        {
+          '.ref' => 'literal'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'variable'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'parented'
+        }
+      ]
+    },
+    'raise_error' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Graise_error[\ \t]*:[\ \t]*\r?\n/
+        },
+        {
+          '.ref' => 'assignments'
+        }
+      ]
+    },
+    'raise_event' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Graise_event[\ \t]*:[\ \t]*\r?\n/
+        },
+        {
+          '.ref' => 'assignments'
+        }
+      ]
+    },
+    'repeat' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Grepeat[\ \t]*:[\ \t]*\r?\n/
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'block'
+        },
+        {
+          '.rgx' => qr/\G[\ \t]+until[\ \t]+/
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'condition'
+        }
+      ]
+    },
+    'return' => {
+      '.rgx' => qr/\G(return)/
+    },
+    'rhs' => {
+      '.all' => [
+        {
+          '.ref' => 'term'
+        },
+        {
+          '+min' => 0,
+          '.all' => [
+            {
+              '.ref' => 'rhs_operator'
+            },
+            {
+              '.ref' => 'term'
+            }
+          ]
+        }
+      ]
+    },
+    'rhs_operator' => {
+      '.rgx' => qr/\G[\ \t]*(\*\*|\*|\/\/|\/|%|x|\+|\-|\.|<=|\>=|<|\>|lt|gt|le|ge|==|!=|eq|ne|&&|\|\||and|or)[\ \t]*/
+    },
+    'role' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Grole[\ \t]*:[\ \t]*\r?\n/
+        },
+        {
+          '.any' => [
+            {
+              '.all' => [
+                {
+                  '.ref' => 'block_indent'
+                },
+                {
+                  '+min' => 0,
+                  '.any' => [
+                    {
+                      '.ref' => 'idlist'
+                    },
+                    {
+                      '-skip' => 1,
+                      '.ref' => 'ignorable'
+                    }
+                  ]
+                },
+                {
+                  '.ref' => 'block_undent'
+                }
+              ]
+            },
+            {
+              '.err' => 'syntax error: role:\\n<idlist>'
+            }
+          ]
+        }
+      ]
+    },
+    'single_line_comment' => {
+      '.rgx' => qr/\G[\ \t]*\#.*\r?\n/
+    },
+    'single_quoted_string' => {
+      '.rgx' => qr/\G(?:'((?:[^\n\\']|\\'|\\\\)*?)')/
+    },
+    'sleep' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gsleep[\ \t]*:[\ \t]*\r?\n/
+        },
+        {
+          '.ref' => 'assignments'
+        }
+      ]
+    },
+    'split' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gsplit/
+        },
+        {
+          '.ref' => 'colon'
+        },
+        {
+          '.ref' => 'block_indent'
+        },
+        {
+          '+min' => 1,
+          '.ref' => 'callflow'
+        },
+        {
+          '.ref' => 'block_undent'
+        }
+      ]
+    },
+    'statement' => {
+      '.any' => [
+        {
+          '-wrap' => 1,
+          '.ref' => 'call'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'case'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'eval'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'goto'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'if'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'label'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'lock'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'raise_error'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'raise_event'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'repeat'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'return'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'sleep'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'split'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'subscribe'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'try'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'unlock'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'unsubscribe'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'wait_for_event'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'while'
+        }
+      ]
+    },
+    'string' => {
+      '.any' => [
+        {
+          '.ref' => 'single_quoted_string'
+        },
+        {
+          '.ref' => 'double_quoted_string'
+        }
+      ]
+    },
+    'subscribe' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gsubscribe[\ \t]*:[\ \t]*\r?\n/
+        },
+        {
+          '.ref' => 'assignments'
+        }
+      ]
+    },
+    'term' => {
+      '.any' => [
+        {
+          '-wrap' => 1,
+          '.ref' => 'unop_term'
+        },
+        {
+          '.ref' => 'plain_term'
+        }
+      ]
+    },
+    'then' => {
+      '.ref' => 'block'
+    },
+    'try' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gtry/
+        },
+        {
+          '.ref' => 'colon'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'try_block'
+        },
+        {
+          '.ref' => 'block_ondent'
+        },
+        {
+          '.rgx' => qr/\Gcatch/
+        },
+        {
+          '.ref' => 'colon'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'catch_block'
+        }
+      ]
+    },
+    'try_block' => {
+      '.ref' => 'block'
+    },
+    'unary_operator' => {
+      '.rgx' => qr/\G(!|\-|\+|not\ )/
+    },
+    'unlock' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gunlock[\ \t]+/
+        },
+        {
+          '.ref' => 'identifier'
+        },
+        {
+          '.ref' => '__'
+        },
+        {
+          '.any' => [
+            {
+              '.ref' => 'perl_block'
+            },
+            {
+              '.ref' => 'rhs'
+            }
+          ]
+        }
+      ]
+    },
+    'unop_term' => {
+      '.all' => [
+        {
+          '.ref' => 'unary_operator'
+        },
+        {
+          '.ref' => 'plain_term'
+        }
+      ]
+    },
+    'unsubscribe' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gunsubscribe[\ \t]*:[\ \t]*\r?\n/
+        },
+        {
+          '.ref' => 'assignments'
+        }
+      ]
+    },
+    'variable' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\G([a-zA-Z])\./
+        },
+        {
+          '.ref' => 'varpart'
+        },
+        {
+          '+min' => 0,
+          '.all' => [
+            {
+              '.rgx' => qr/\G\./
+            },
+            {
+              '.ref' => 'varpart'
+            }
+          ]
+        }
+      ]
+    },
+    'varpart' => {
+      '.all' => [
+        {
+          '.ref' => 'identifier'
+        },
+        {
+          '+max' => 1,
+          '.rgx' => qr/\G\[(\-?[0-9]+)\[/
+        }
+      ]
+    },
+    'wait_for_event' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gwait_for_event/
+        },
+        {
+          '.ref' => 'colon'
+        },
+        {
+          '.ref' => 'call_body'
+        }
+      ]
+    },
+    'wfenv' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gwfenv[\ \t]*:[\ \t]*\r?\n/
+        },
+        {
+          '.any' => [
+            {
+              '.ref' => 'assignments'
+            },
+            {
+              '.err' => 'syntax error: wfenv:\\n<assignments>'
+            }
+          ]
+        }
+      ]
+    },
+    'wfomap' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gwfomap[\ \t]*:[\ \t]*\r?\n/
+        },
+        {
+          '.any' => [
+            {
+              '.ref' => 'assignments'
+            },
+            {
+              '.err' => 'syntax error: wfomap:\\n<assignments>'
+            }
+          ]
+        }
+      ]
+    },
+    'when' => {
+      '.all' => [
+        {
+          '.ref' => 'block_ondent'
+        },
+        {
+          '.rgx' => qr/\Gwhen[\ \t]+/
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'case_label'
+        },
+        {
+          '.ref' => 'colon'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'block'
+        }
+      ]
+    },
+    'while' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gwhile[\ \t]+/
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'condition'
+        },
+        {
+          '.ref' => 'colon'
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'block'
+        }
+      ]
+    },
+    'workflow' => {
+      '.all' => [
+        {
+          '.rgx' => qr/\Gworkflow[\ \t]+/
+        },
+        {
+          '-wrap' => 1,
+          '.ref' => 'workflow_name'
+        },
+        {
+          '.ref' => 'colon'
+        },
+        {
+          '.any' => [
+            {
+              '+min' => 1,
+              '.any' => [
+                {
+                  '-skip' => 1,
+                  '.ref' => 'ignorable'
+                },
+                {
+                  '-wrap' => 1,
+                  '.ref' => 'in'
+                },
+                {
+                  '-wrap' => 1,
+                  '.ref' => 'out'
+                },
+                {
+                  '-wrap' => 1,
+                  '.ref' => 'wfenv'
+                },
+                {
+                  '-wrap' => 1,
+                  '.ref' => 'role'
+                },
+                {
+                  '-wrap' => 1,
+                  '.ref' => 'config'
+                },
+                {
+                  '-wrap' => 1,
+                  '.ref' => 'locks'
+                },
+                {
+                  '-wrap' => 1,
+                  '.ref' => 'wfomap'
+                },
+                {
+                  '-wrap' => 1,
+                  '.ref' => 'do'
+                }
+              ]
+            },
+            {
+              '.err' => 'syntax error: workflow [name]\\n:<workflow>'
+            }
+          ]
+        }
+      ]
+    },
+    'workflow_name' => {
+      '.ref' => 'identifier'
+    }
+  }
+}
 
 sub foo {
 	say 'foo!';
