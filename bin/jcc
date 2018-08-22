@@ -34,6 +34,7 @@ exit main(@ARGV);
 sub main {
 	my $config = realpath("$FindBin::Bin/../etc/jobcenter.conf");
 	my $debug = 1;
+	my $help = 0;
 	my $parseonly = 0;
 	my $tags;
 
@@ -41,16 +42,15 @@ sub main {
 	Getopt::Long::GetOptionsFromArray(
 		\@_,
 		'config=s' => \$config,
-		'debug' => \$debug,
+		'debug|d' => \$debug,
+		'help|h' => \$help,
 		'parseonly|p' => \$parseonly,
 		'tags=s' => \$tags
-	) or die "Error in command line arguments\n";
+	) or return usage();
+	return usage() if $help;
 
 	my $wff = shift;
-
-	unless ($wff) {
-		die "usage: $0 [--tags <tag1[:tagN]>] <filename>";
-	}
+	return usage() unless $wff;
 	
 	my $wfsrc = decode('UTF-8', slurp($wff));
 	
@@ -143,5 +143,16 @@ sub reference_version_check {
 		say generate_table(rows => $rows, header_row => 1);
 		say "";
 	}
+}
+
+sub usage {
+	print <<'EOT';
+jcc [options] <filename>
+	--config=<file>	specify config file
+-d	--debug		enable debugging
+-p	--parseonly	stop after parsing
+	--tags		':' seperated version tags
+EOT
+	return 1;
 }
 
