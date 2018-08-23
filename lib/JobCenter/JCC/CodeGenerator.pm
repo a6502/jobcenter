@@ -144,14 +144,14 @@ sub generate_workflow {
 	say "wfid: $wfid";
 
 	# use a fake returning clause to we can reuse our qs function	
-	for my $in (@{$wf->{in}}) {
+	for my $in (@{$wf->{in}[0]}) {
 		$self->qs(
 			q|insert into action_inputs (action_id, name, type, optional, "default") values ($1, $2, $3, $4, $5) returning action_id|,
 			$wfid, $$in[0], $$in[1], ($$in[2] ? 'true' : 'false'), make_literal($$in[2])
 		);
 	}
 
-	for my $out (@{$wf->{out}}) {
+	for my $out (@{$wf->{out}[0]}) {
 		$self->qs(
 			q|insert into action_outputs (action_id, name, type, optional) values ($1, $2, $3, $4) returning action_id|,
 			$wfid, $$out[0], $$out[1], (($$out[2] && $$out[2] eq 'optional') ? 'true' : 'false')
