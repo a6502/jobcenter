@@ -1,8 +1,10 @@
-CREATE OR REPLACE FUNCTION jobcenter.do_outargsmap(a_jobtask jobtask, a_outargs jsonb)
- RETURNS TABLE(vars_changed boolean, newvars jsonb)
+CREATE OR REPLACE FUNCTION jobcenter.do_outargsmap(a_jobtask jobtask, a_outargs jsonb, OUT vars_changed boolean, OUT newvars jsonb)
+ RETURNS record
  LANGUAGE plpgsql
  SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$DECLARE
+	o_vars_changed ALIAS FOR $3;
+	o_newvars ALIAS FOR $4;
 	v_action_id integer;
 	v_oldvars jsonb;
 	v_args jsonb;
@@ -60,10 +62,9 @@ BEGIN
 	v_env = do_populate_env(a_jobtask, v_env);
 
 	-- now run the mapping code
-	newvars := do_omap(v_code, v_args, v_env, v_oldvars, a_outargs);
+	o_newvars := do_omap(v_code, v_args, v_env, v_oldvars, a_outargs);
 
-	vars_changed := v_oldvars IS DISTINCT FROM newvars;
+	o_vars_changed := v_oldvars IS DISTINCT FROM newvars;
 
-	RETURN NEXT;
 	RETURN;
 END$function$
