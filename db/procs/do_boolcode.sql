@@ -1,5 +1,5 @@
-CREATE OR REPLACE FUNCTION jobcenter.do_boolcode(code text, args jsonb, env jsonb, vars jsonb)
- RETURNS boolean
+CREATE OR REPLACE FUNCTION jobcenter.do_boolcode(code text, args jsonb, env jsonb, vars jsonb, OUT branch boolean, OUT newvars jsonb)
+ RETURNS record
  LANGUAGE plperl
  SECURITY DEFINER
  SET search_path TO jobcenter, pg_catalog, pg_temp
@@ -9,7 +9,7 @@ use strict;
 use warnings;
 #use plperl.on_init instead
 #use lib '/home/wieger/src/jobcenter/lib';
-use JSON::MaybeXS qw(from_json to_json);
+use JSON::MaybeXS qw(from_json to_json JSON);
 use JobCenter::Safe;
 
 my $safe = new JobCenter::Safe;
@@ -30,6 +30,6 @@ my $res = $safe->reval($code, 1);
 
 die "$@" if $@;
 
-return $res ? 1 : 0;
+return {branch => $res ? 1 : 0, newvars => to_json(\%v)};
 
 $function$

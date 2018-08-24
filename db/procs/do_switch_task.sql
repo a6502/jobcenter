@@ -8,6 +8,8 @@ AS $function$DECLARE
 	v_vars jsonb;
 	v_stringcode text;
 	v_when text;
+	v_newvars jsonb;
+	v_changed boolean;
 	v_nexttask_id integer;
 	v_targettask_id integer;
 BEGIN
@@ -33,7 +35,7 @@ BEGIN
 	END IF;
 
 	BEGIN
-		v_when := do_stringcode(v_stringcode, v_args, v_env, v_vars);
+		SELECT * INTO v_when, v_newvars	FROM do_stringcode(v_stringcode, v_args, v_env, v_vars);
 	EXCEPTION WHEN OTHERS THEN
 		RETURN do_raise_error(a_jobtask, format('caught exception in do_stringcode sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;
@@ -57,14 +59,17 @@ BEGIN
 
 	RAISE NOTICE 'switch targettask_id: %', v_targettask_id;
 
+	v_changed := v_vars IS DISTINCT FROM v_newvars;
+
 	-- custom task epilogue because of custom nextjobttask
 	UPDATE jobs SET
 		state = 'plotting',
+		variables = CASE WHEN v_changed THEN v_newvars ELSE variables END,
 		task_started = now(),
 		task_completed = now()
 	WHERE
 		job_id = a_jobtask.job_id;
-	PERFORM do_log(a_jobtask.job_id, false, null, to_jsonb(v_when));
+	PERFORM do_log(a_jobtask.job_id, v_changed, null, to_jsonb(v_when));
 	
 	RETURN (false, (a_jobtask.workflow_id, v_targettask_id, a_jobtask.job_id)::jobtask)::nextjobtask;
 END;$function$
