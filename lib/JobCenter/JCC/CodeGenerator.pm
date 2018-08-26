@@ -294,8 +294,13 @@ sub generate_action {
 		}
 	}
 
-	say "commit";
-	$tx->commit;
+	if ($self->dry_run) {
+		say "rollback";
+		# just let $tx go out of scope..
+	} else {
+		say "commit";
+		$tx->commit;
+	}
 }
 
 
