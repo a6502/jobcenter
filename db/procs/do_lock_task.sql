@@ -9,6 +9,7 @@ AS $function$DECLARE
 	v_action_id int;
 	v_locktype text;
 	v_lockvalue text;
+	v_newvars jsonb;
 	v_lockinherit boolean;
 	v_stringcode text;
 	v_contended integer;
@@ -44,7 +45,10 @@ BEGIN
 
 	IF v_lockvalue IS NULL AND v_stringcode IS NOT NULL THEN
 		BEGIN
-			v_lockvalue := do_stringcode(v_stringcode, v_args, v_env, v_vars);
+			SELECT
+				 * INTO v_lockvalue, v_newvars
+			FROM
+				 do_stringcode(v_stringcode, v_args, v_env, v_vars);
 		EXCEPTION WHEN OTHERS THEN
 			RETURN do_raise_error(a_jobtask,
 				format('caught exception in do_stringcode sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));

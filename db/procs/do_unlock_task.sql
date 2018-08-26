@@ -10,6 +10,7 @@ AS $function$DECLARE
 	v_parentjob_id bigint;
 	v_locktype text;
 	v_lockvalue text;
+	v_newvars jsonb;
 	v_stringcode text;
 	v_contended integer;
 	v_top_level_job_id bigint;
@@ -38,7 +39,10 @@ BEGIN
 
 	IF v_lockvalue IS NULL THEN
 		BEGIN
-			v_lockvalue := do_stringcode(v_stringcode, v_args, v_env, v_vars);
+			SELECT
+				 * INTO v_lockvalue, v_newvars
+			FROM
+				 do_stringcode(v_stringcode, v_args, v_env, v_vars);
 		EXCEPTION WHEN OTHERS THEN
 			RETURN do_raise_error(a_jobtask,
 				format('caught exception in do_stringcode sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
