@@ -28,80 +28,113 @@ sub got_label {
 }
 
 #
-# flatten down to 1 array
+# unnest and wrap
 #
-sub got_to_unwrap {
+sub got_to_unnest {
 	my ($self, $got) = @_;
+	return $got unless defined $got;
 
-	$self->flatten($got) if ref $got eq 'ARRAY';
-	$got = [ $got ] unless ref $got eq 'ARRAY';
+	$got = $$got[0]
+		while ref $got eq 'ARRAY' and scalar @$got == 1;
 
-	return {$self->{parser}{rule} => $got}
-		if $self->{parser}{parent}{-wrap};
+	return {
+		$self->{parser}{rule} => $got,
+		} if $self->{parser}{parent}{-wrap};
 	return $got;
 }
 
-*got_block = \&got_to_unwrap;
-*got_catch_block = \&got_to_unwrap;
-*got_do = \&got_to_unwrap;
-*got_else = \&got_to_unwrap;
-*got_split = \&got_to_unwrap;
-*got_then = \&got_to_unwrap;
-*got_try_block = \&got_to_unwrap;
+*got_action_type = \&got_to_unnest;
+*got_goto = \&got_to_unnest;
 
 #
-# don't mangle
-#
-sub got_to_keep_order {
-	my ($self, $got) = @_;
-	#print 'got_to_keep_order1 ', $self->{parser}{rule}, ' ', Dumper($got);
-	return {$self->{parser}{rule} => $got}
-		if $self->{parser}{parent}{-wrap};
-	return $got;
-}
-
-*got_imap = \&got_to_keep_order;
-*got_omap = \&got_to_keep_order;
-*got_native_assignments = \&got_to_keep_order;
-*got_inout = \&got_to_keep_order;
-*got_case_expression = \&got_to_keep_order;
-
-#
-# flatten lhs,, iospec. etc. to a single level
+# flatten to a single level
+# wrap if wanted
 #
 sub got_to_flatten {
 	my ($self, $got) = @_;
 	#print 'got_to_flatten ', $self->{parser}{rule}, ' ', Dumper($got);
 	$self->flatten($got) if ref $got eq 'ARRAY';
+	return {
+		$self->{parser}{rule} => $got,
+		} if $self->{parser}{parent}{-wrap};
+	return $got;
+}
+
+*got_block = \&got_to_flatten;
+*got_case_label = \&got_to_flatten;
+*got_config = \&got_to_flatten;
+*got_condition = \&got_to_flatten;
+*got_do = \&got_to_flatten;
+*got_env = \&got_to_flatten;
+*got_else = \&got_to_flatten;
+*got_elses = \&got_to_flatten;
+*got_eval = \&got_to_flatten;
+*got_funcarg = \&got_to_flatten;
+*got_funcname = \&got_to_flatten;
+*got_imap = \&got_to_flatten;
+*got_in = \&got_to_flatten;
+*got_iospec = \&got_to_flatten;
+*got_lhs = \&got_to_flatten;
+*got_locks = \&got_to_flatten;
+*got_lockspec = \&got_to_flatten;
+*got_omap = \&got_to_flatten;
+*got_out = \&got_to_flatten;
+*got_parented = \&got_to_flatten;
+*got_raise_error = \&got_to_flatten;
+*got_raise_event = \&got_to_flatten;
+*got_rhs = \&got_to_flatten;
+*got_role = \&got_to_flatten;
+*got_split = \&got_to_flatten;
+*got_subscribe = \&got_to_flatten;
+*got_then = \&got_to_flatten;
+*got_unsubscribe = \&got_to_flatten;
+*got_variable = \&got_to_flatten;
+*got_wfenv = \&got_to_flatten;
+*got_wfomap = \&got_to_flatten;
+
+#
+# flatten, hashify and maybe wrap
+#
+sub got_to_hashify {
+	my ($self, $got) = @_;
+	return () unless defined $got;
+	#print 'gotrule ', $self->{parser}{rule}, ' ', Dumper($got);
+	$self->flatten($got) if ref $got eq 'ARRAY';
+
+	$got = $self->hashify($got)
+		if ref $got eq 'ARRAY';
+
 	return {$self->{parser}{rule} => $got}
 		if $self->{parser}{parent}{-wrap};
 	return $got;
 }
 
-*got_case_label = \&got_to_flatten;
-*got_filter =\&got_to_flatten;
-*got_iospec =\&got_to_flatten;
-*got_lockspec =\&got_to_flatten;
-*got_parented = \&got_to_flatten;
-*got_lhs = \&got_to_flatten;
-*got_rhs = \&got_to_flatten;
-*got_funcarg = \&got_to_flatten;
-*got_role = \&got_to_flatten;
-*got_term = \&got_to_flatten;
-*got_variable = \&got_to_flatten;
+*got_action = \&got_to_hashify;
+*got_assignment = \&got_to_hashify;
+*got_call = \&got_to_hashify;
+*got_callflow = \&got_to_hashify;
+*got_case = \&got_to_hashify;
+*got_elsif = \&got_to_hashify;
+*got_event = \&got_to_hashify;
+*got_functioncall = \&got_to_hashify;
+*got_if = \&got_to_hashify;
+*got_lock = \&got_to_hashify;
+*got_repeat = \&got_to_hashify;
+*got_sleep = \&got_to_hashify;
+*got_try = \&got_to_hashify;
+*got_wait_for_event = \&got_to_hashify;
+*got_when = \&got_to_hashify;
+*got_while = \&got_to_hashify;
+*got_workflow = \&got_to_hashify;
 
 #
-# default behaviour: flatten with care, hashify when possible
+# only wrap if wanted
 #
 sub gotrule {
 	my ($self, $got) = @_;
 	return () unless defined $got;
 	#print 'gotrule ', $self->{parser}{rule}, ' ', Dumper($got);
-	$got = $$got[0]
-		if ref $got eq 'ARRAY' and scalar @$got == 1;
 
-	$got = $self->hashify($got)
-		if ref $got eq 'ARRAY';
 	return {$self->{parser}{rule} => $got}
 		if $self->{parser}{parent}{-wrap};
 	return $got;
@@ -110,7 +143,8 @@ sub gotrule {
 sub final {
 	my $self = shift;
 	return(shift) if @_;
-	return [];
+	#return [];
+	die 'nothing parsed?';
 }
 
 # group wrapped matches together

@@ -104,7 +104,7 @@ env: / 'env' <colon> / ( block-indent inout block-undent
 out: / 'out' <colon> / ( block-indent inout block-undent
 	| `syntax error: out:\n<inout>` )
 
-inout: ( iospec | .ignorable )*
+inout: ( +iospec | .ignorable )*
 
 iospec: block-ondent identifier + identifier (+ / ('optional') / | + literal)? / - SEMI? - /
 
@@ -115,7 +115,7 @@ config: / 'config' <colon> / ( assignments | `syntax error: config:\n<assignment
 wfenv: / 'wfenv' <colon> / ( assignments | `syntax error: wfenv:\n<assignments>` )
 
 locks: / 'locks' <colon> / (
-	block-indent ( lockspec | .ignorable )* block-undent
+	block-indent ( +lockspec | .ignorable )* block-undent
 	| `syntax error: locks:\n<lockspec>` )
 
 lockspec: block-ondent identifier  + ( identifier | / ( UNDER ) / ) (+ / ( 'inherit' | 'manual') / )*
@@ -167,11 +167,11 @@ imap: assignments
 
 omap: assignments
 
-assignments: perl-block | native-assignments
+assignments: +perl-block | native-assignments
 
-native-assignments: block-indent ( assignment | magic-assignment | .ignorable )* block-undent
+native-assignments: block-indent ( +assignment | +magic-assignment | .ignorable )* block-undent
 
-assignment: block-ondent lhs - assignment-operator - rhs / - SEMI? - /
+assignment: block-ondent +lhs - +assignment-operator - +rhs / - SEMI? - /
 
 magic-assignment: block-ondent / LANGLE / identifier / RANGLE /
 
@@ -179,7 +179,7 @@ lhs: ( / (ALPHA) DOT / )? varpart ( / DOT / varpart )*
 
 assignment-operator: / ( EQUAL | DOT EQUAL | PLUS EQUAL | DASH EQUAL ) /
 
-rhs: term ( rhs-operator term )*
+rhs: term ( +rhs-operator term )*
 
 term: +unop-term | plain-term
 
@@ -197,7 +197,9 @@ rhs-operator: / - ( STAR STAR | STAR | SLASH SLASH | SLASH | PERCENT | 'x' | PLU
 
 unary-operator: / ( BANG | DASH | PLUS | 'not ' ) /
 
-functioncall: identifier / LPAREN - / ( funcarg ) / - RPAREN /
+functioncall: +funcname / LPAREN - / ( +funcarg ) / - RPAREN /
+
+funcname: identifier
 
 funcarg: rhs ( - ( COMMA | COLON ) - rhs )*
 
@@ -223,11 +225,16 @@ then: block
 
 elses: block-ondent ( +elsif | +else )
 
-elsif: / 'elsif' + / +condition colon +then elses?
+elsif: / 'elsif' + / ( +condition colon +then elses? | `syntax error: elsif <condition>:\n<if>` )
 
 else: / 'else' <colon> / block
 
-lock: / 'lock' + / identifier + ( perl_block | rhs )
+lock: / 'lock' + / ( +locktype + +lockvalue
+	| `syntax error: lock locktype lockvalue` )
+
+locktype: identifier
+
+lockvalue: ( perl_block | rhs )
 
 raise_error: / 'raise_error' <colon> / assignments
 
@@ -239,7 +246,7 @@ return: / ('return') /
 
 sleep: / 'sleep' <colon> / assignments
 
-split: / 'split' / colon block-indent callflow+ block-undent
+split: / 'split' / colon block-indent +callflow+ block-undent
 
 callflow: block-ondent / 'callflow' + / +call-name colon call-body
 

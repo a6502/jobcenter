@@ -144,14 +144,16 @@ sub generate_workflow {
 	say "wfid: $wfid";
 
 	# use a fake returning clause to we can reuse our qs function	
-	for my $in (@{$wf->{in}[0]}) {
+	for my $in (@{$wf->{in}}) {
+		$in = $in->{iospec} or die 'not an iospec';
 		$self->qs(
 			q|insert into action_inputs (action_id, name, type, optional, "default") values ($1, $2, $3, $4, $5) returning action_id|,
 			$wfid, $$in[0], $$in[1], ($$in[2] ? 'true' : 'false'), make_literal($$in[2])
 		);
 	}
 
-	for my $out (@{$wf->{out}[0]}) {
+	for my $out (@{$wf->{out}}) {
+		$out = $out->{iospec} or die 'not an iospec';;
 		$self->qs(
 			q|insert into action_outputs (action_id, name, type, optional) values ($1, $2, $3, $4) returning action_id|,
 			$wfid, $$out[0], $$out[1], (($$out[2] && $$out[2] eq 'optional') ? 'true' : 'false')
@@ -252,6 +254,7 @@ sub generate_action {
 
 	# use a fake returning clause to we can reuse our qs function	
 	for my $in (@{$wf->{in}}) {
+		$in = $in->{iospec} or die 'not an iospec';
 		$self->qs(
 			q|insert into action_inputs (action_id, name, type, optional, "default") values ($1, $2, $3, $4, $5) returning action_id|,
 			$wfid, $$in[0], $$in[1], ($$in[2] ? 'true' : 'false'), make_literal($$in[2])
@@ -259,6 +262,7 @@ sub generate_action {
 	}
 
 	for my $env (@{$wf->{env}}) {
+		$env = $env->{iospec} or die 'not an iospec';
 		$self->qs(
 			q|insert into action_inputs
 				(action_id, name, type, optional, "default", destination)
@@ -270,6 +274,7 @@ sub generate_action {
 	}
 
 	for my $out (@{$wf->{out}}) {
+		$out = $out->{iospec} or die 'not an iospec';
 		$self->qs(
 			q|insert into action_outputs (action_id, name, type, optional) values ($1, $2, $3, $4) returning action_id|,
 			$wfid, $$out[0], $$out[1], (($$out[2] && $$out[2] eq 'optional') ? 'true' : 'false')
@@ -302,7 +307,11 @@ sub gen_config {
 
 	for (@$config) {
 		#print 'config: ', Dumper($_);
-		my ($k, $a, $v) = @$_;
+		my ($at, $av) = get_type($_);
+		die 'not an assignment' unless $at eq 'assignment';
+		#die "assignment_operator $av->{assignment_operator} does not make sense here"
+		#	unless $av->{assignment_operator} eq '=';
+		my ($k, $a, $v) = @{$av}{qw(lhs assignment_operator rhs)};
 		unless (ref $k eq 'ARRAY' and $#$k == 0
 			 and $a eq '='
 			 and ref $v eq 'ARRAY' and $#$v == 0) {
@@ -331,15 +340,17 @@ sub gen_config {
 	return;
 }
 
-# meh.. looks too much like get_config
+# meh.. looks too much like gen_config
 sub gen_wfenv {
 	my ($self, $wfenv) = @_;
 	return unless $wfenv and @$wfenv;
 	my %w;
 
 	for (@$wfenv) {
-		print 'wfenv: ', Dumper($_);
-		my ($k, $a, $v) = @$_;
+		#print 'wfenv: ', Dumper($_);
+		my ($at, $av) = get_type($_);
+		die 'not an assignment' unless $at eq 'assignment';
+		my ($k, $a, $v) = @{$av}{qw(lhs assignment_operator rhs)};
 		unless (ref $k eq 'ARRAY' and $#$k == 0
 			 and $a eq '='
 			 and ref $v eq 'ARRAY' and $#$v == 0) {
@@ -383,6 +394,7 @@ sub gen_locks {
 	my ($self, $locks) = @_;
 	my ($first, $cur); # first tid of this block, last tid of this block
 	for my $lock (@$locks) {
+		$lock = $lock->{lockspec} or die 'not a lockspec';
 		my ($locktype, $lockvalue, @lockopts) = @$lock;
 		# check all locktypes first
 		unless ($self->qs(q|select exists (select 1 from locktypes where locktype=$1)|, $locktype)) {
@@ -427,6 +439,8 @@ sub gen_call {
 		push @tags, 'default';
 		$tags = '{' . join(',', @tags) . '}';
 	}
+
+	die 'no call_name' unless $call->{call_name};
 
 	my $aid = $self->qs( <<'EOF', $call->{call_name}, $types, $tags);
 SELECT
@@ -552,7 +566,7 @@ sub gen_label {
 sub gen_lock {
 	my ($self, $lock) = @_;
 	my $tid;
-	my ($type, $value) = @$lock;	
+	my ($type, $value) = @{$lock}{qw(locktype lockvalue)};
 	die "unkown lock $type" unless $self->{locks}->{$type};
 	die "lock type $type not declared manual" unless $self->{locks}->{$type}->{manual};
 	$value = make_perl($value, STRING);
@@ -613,7 +627,7 @@ sub gen_sleep {
 	my ($self, $sleep) = @_;
 	my $tid = $self->instask(T_SLEEP, attributes =>
 		to_json({
-			imapcode => make_perl($sleep, IMAP),
+			imapcode => make_perl([$sleep], IMAP),
 			 #_line => $sleep->{_line},
 		}));
 	return ($tid, $tid);
@@ -624,6 +638,7 @@ sub gen_split {
 	my (@childtids, $firsttid, $lasttid);
 	# first start all childflows in order, with wait = false
 	for my $flow (@$split) {
+		$flow = $flow->{callflow} or die 'not callflow';
 		say 'flow: ', Dumper($flow);
 		my $tid = $self->gen_call($flow, 1); # give gen_call some extra magic
 		push @childtids, $tid;
@@ -653,7 +668,7 @@ sub gen_subscribe {
 	my $tid = $self->instask(T_SUBSCRIBE, attributes =>
 		to_json({
 			imapcode => make_perl($sub, IMAP),
-			 _line => $sub->{_line},
+			 #_line => $sub->{_line},
 		}));
 	return ($tid, $tid);
 }
@@ -757,6 +772,7 @@ sub make_rhs {
 		my ($term, $op) = splice(@rhs, 0, 2);
 		$perl .= make_term($term);
 		last unless $op;
+		$op = $op->{rhs_operator} or die 'not a rhs_operator?';
 		die "cannot do op $op yet" unless
 			any { $op eq $_ }
 				qw( ** * / % x + - . && || // and or < <= == >= > != lt le eq ge gt ne);
@@ -786,7 +802,7 @@ sub make_term {
 		$val =~ s/'/\\'/g;
 		return "'" . $val . "'";
 	} elsif ($key eq 'functioncall') {
-		my ($name, $arg) = @$val;
+		my ($name, $arg) = @{$val}{qw(funcname funcarg)};
 		return make_func($name, $arg);
 	} else {
 		die "dunno how to make perl from $key";
@@ -834,6 +850,7 @@ sub make_variable {
 		die "invalid top level $a[0] for $what" unless $a[0] =~ $toplevel; # /^[aeiov]$/;
 		my $perl = '$' . shift @a;
 		$perl .= "{'$_'}" for @a;
+		say "make_variable: $perl";
 		return $perl;
 	} else {
 		die "huh?";
@@ -891,27 +908,32 @@ sub make_perl {
 	#$default = '' unless $default;
 	if (any { $what eq $_ } qw( imap omap wfomap )) {
 		die 'no arrayref' unless ref $ast eq 'ARRAY';
+		#die 'not (magic_)assignment' unless ref $ast eq 'HASH'
+		#	and ( $ast->{assignment} or $ast->{magic_assignment} );
 		my @perl;
+
 		for my $a (@$ast) {
-			say 'assignment: ', Dumper($a);
-			if (not ref $a) {
+			#say 'assignment: ', Dumper($a);
+			my ($at, $av) = get_type($a);
+			if ($at eq 'perl_block') {
+				# force a copy of $av
+				push @perl, make_perl($a, $what);
+				next;
+			} elsif ($at eq 'magic_assignment') {
 				# hack for the magic assignment
 				my $t = {imap => 'i', omap => 'v', wfomap => 'o'}->{$what};
 				my $f = {imap => 'v', omap => 'o', wfomap => 'v'}->{$what};
+				my $a = $av->[0];
 				push @perl,  '$' . $t . '{' . $a . '} = $' . $f . '{' . $a . '};';
 				next;
 			}
-			die 'no assignemnt?' unless ref $a eq 'ARRAY' and scalar @$a == 3;
-			my ($lhs, $op, $rhs) = @$a;
+			die 'not assigment?' unless $at eq 'assignment';
+			my ($lhs, $op, $rhs) = @{$av}{qw(lhs assignment_operator rhs)};
 			die "cannot do op $op yet" unless any { $op eq $_ } qw( = .= += -= );
 			push @perl, make_variable($lhs, $what) . " $op " . make_rhs($rhs) . ';';
 		}
+		say "perl for $what: ", join(' ', @perl);
 		return '' . join("\n", @perl);
-	#} elsif ($what eq BOOL) {
-	#	die 'no bool' unless ref $ast eq 'ARRAY' and scalar @$ast == 3;
-	#	my ($lhs, $op, $rhs) = @$ast;
-	#	die "cannot do op $op yet" unless any { $op eq $_ } qw( < <= == >= > != lt le eq ge gt ne );
-	#	return (make_term($lhs) . " $op " . make_term($rhs) . ';');
 	} elsif (any { $what eq $_ } qw( bool string )) {
 		return make_rhs($ast) . ';';
 	}
@@ -940,7 +962,7 @@ sub qs {
 	my $as = join(',', map { $_ // '' } @a);
 	print "query: $q [$as]";
 	my $res = $self->{db}->dollar_only->query($q, @a)->array;
-	die "query $q [$as] failed" unless $res and @$res and @$res[0];
+	die "query $q [$as] failed\n" unless $res and @$res and @$res[0];
 	say " => @$res[0]";
 	return @$res[0];
 }
