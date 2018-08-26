@@ -12,7 +12,7 @@ use Digest::MD5 qw(md5_hex);
 use List::Util qw( any );
 #use Scalar::Util qw(blessed);
 
-has [qw(db fixup labels locks oetid tags wfid)];
+has [qw(db debug dry_run fixup labels locks oetid tags wfid)];
 
 # perl block types
 use constant {
@@ -62,10 +62,9 @@ sub new {
 	my ($class, %args) = @_;
 	my $self = $class->SUPER::new();
 
-	my $db = $args{db} or croak 'no db?';
-	my $debug = $args{debug} // 1; # or 1?
-	$self->{db} = $db;	# db connection to use
-	$self->{debug} = $debug;
+	$self->{db} = $args{db} or croak 'no db?';
+	$self->{debug} = $args{debug} // 0; # or 1?
+	$self->{dry_run} = $args{dry_run};
 
 	return $self;
 }
@@ -197,8 +196,13 @@ sub generate_workflow {
 	# maybe move this to a deferred trigger on actions?
 	$self->qs(q|select do_sanity_check_workflow($1)|, $wfid);
 
-	say "commit";
-	$tx->commit;
+	if ($self->dry_run) {
+		say "rollback";
+		# just let $tx go out of scope..
+	} else {
+		say "commit";
+		$tx->commit;
+	}
 }
 
 sub generate_action {

@@ -34,6 +34,7 @@ exit main(@ARGV);
 sub main {
 	my $config = realpath("$FindBin::Bin/../etc/jobcenter.conf");
 	my $debug = 1;
+	my $dry_run = 0;
 	my $help = 0;
 	my $parseonly = 0;
 	my $tags;
@@ -43,6 +44,7 @@ sub main {
 		\@_,
 		'config=s' => \$config,
 		'debug|d' => \$debug,
+		'dry-run|n' => \$dry_run,
 		'help|h' => \$help,
 		'parseonly|p' => \$parseonly,
 		'tags=s' => \$tags
@@ -97,6 +99,7 @@ sub main {
 	my $jcg = JobCenter::JCC::CodeGenerator->new(
 		db => $pg->db,
 		debug => $debug,
+		dry_run => $dry_run,
 	);
 
 	$jcg->generate(
@@ -150,6 +153,7 @@ sub usage {
 jcc [options] <filename>
 	--config=<file>	specify config file
 -d	--debug		enable debugging
+-n	--dry-run       do not commit
 -p	--parseonly	stop after parsing
 	--tags		':' seperated version tags
 EOT
