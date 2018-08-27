@@ -12,6 +12,7 @@ use FindBin;
 use Data::Dumper;
 
 # other
+#use Algorithm::Diff;
 use Config::Tiny;
 
 # JobCenter
@@ -23,6 +24,7 @@ exit main(@ARGV);
 
 # ugly but handy globals
 our ($cfg, $pg, $allprocsq, $procsrcq, $reposchema, $dbschema, %maestro);
+#our (%db_src, %file_src);
 
 sub main {
 	my %actions = (
@@ -395,19 +397,19 @@ sub compprocs {
 	foreach my $fn (@filefuncs) {
 		#say "fn: $fn";
 		my ($f) = $fn =~ m|^procs/(.*)\.sql$|;
-		my $dbmd5 = dbmd5($f);
+		my $dbmd5 = db_md5($f);
 		unless ($dbmd5) {
 			#warn "no proc $f in the db?";
 			$diffs++;
 			next
 		}
-		my $procmd5 = procmd5($f);
+		my $procmd5 = proc_md5($f);
 		unless ($procmd5) {
 			#warn "no proc $f in the procs table?";
 			$diffs++;
 			next;
 		}
-		my $filemd5 = md5sum($fn);
+		my $filemd5 = file_md5($fn);
 		if ($procmd5 ne $dbmd5 and $dbmd5 ne $filemd5 and $filemd5 ne $procmd5) {
 			say "proc $f differs between db and procs table and file";
 			$diffs += 3;
@@ -419,6 +421,7 @@ sub compprocs {
 			$diffs++;
 		} elsif ($filemd5 ne $dbmd5) {
 			say "proc $f differs between db and file";
+			#diff($file_src{$fn}, $db_src{$f});
 			$diffs++;
 		} else {
 			#say " (did $f)";
@@ -446,9 +449,9 @@ sub updateprocs {
 	foreach my $fn (@filefuncs) {
 		#say "fn: $fn";
 		my ($f) = $fn =~ m|^procs/(.*)\.sql$|;
-		my $dbmd5 = dbmd5($f);
-		my $procmd5 = procmd5($f);
-		my $filemd5 = md5sum($fn);
+		my $dbmd5 = db_md5($f);
+		my $procmd5 = proc_md5($f);
+		my $filemd5 = file_md5($fn);
 		if (not $dbmd5 and not $procmd5) {
 			say "loading new proc $f";
 			loadproc($f);
@@ -494,14 +497,14 @@ sub loadproc {
 	$proc = $1 if $proc =~ m|(?:procs/)?(.*)\.sql$|;
 	die "$proc not found in procs dir" unless -f "procs/$proc.sql";
 
-	my $procmd5 = procmd5($proc);
+	my $procmd5 = proc_md5($proc);
 
 	# get the proc src
 	my $dbprocsrc = $pg->db->dollar_only->query($procsrcq, $proc)->array;
 	$dbprocsrc = ($dbprocsrc and @$dbprocsrc and $$dbprocsrc[0]) ? $$dbprocsrc[0] : undef;
-	my $dbmd5 = ($dbprocsrc) ? md5_hex($dbprocsrc) : undef;
+	my $dbmd5 = ($dbprocsrc) ? md5_hex(mangle_proc_src($dbprocsrc)) : undef;
 	my $procsrc = slurp("procs/$proc.sql");
-	my $filemd5 = md5_hex($procsrc);
+	my $filemd5 = md5_hex(mangle_proc_src($procsrc));
 
 	die "proc $proc exists in db and not in proc table, refusing to load" if $dbmd5 and not $procmd5;
 	die "proc $proc was changed in the db, refusing to load" if $dbmd5 and $procmd5 and $procmd5 ne $dbmd5 and $dbmd5 ne $filemd5;
@@ -619,17 +622,19 @@ sub saveproc {
 	}
 }
 
-sub dbmd5 {
+sub db_md5 {
 	my $proc = shift;
 	my $dbmd5 = $pg->db->dollar_only->query($procsrcq, $proc)->array;
-	if ($dbmd5 and @$dbmd5 and $$dbmd5[0]) {
-		return md5_hex($$dbmd5[0]);
+	if ($dbmd5 and @$dbmd5 and $dbmd5->[0]) {
+		my $src = mangle_proc_src($dbmd5->[0]);
+		#$db_src{$proc} = $src;
+		return md5_hex($src);
 	}
 	warn "no proc $proc in the db?";
 	return undef;
 }
 
-sub procmd5 {
+sub proc_md5 {
 	my $proc = shift;
 	my $procmd5 = $pg->db->dollar_only->query(q|SELECT md5 FROM _procs WHERE "name" = $1|, $proc)->array;
 	if ($procmd5 and @$procmd5 and $$procmd5[0]) {
@@ -639,13 +644,21 @@ sub procmd5 {
 	return undef;
 }
 
-sub md5sum {
+sub file_md5 {
 	my $f = shift;
-	open my $fh, '<', $f or die "Cannot open $f for md5summing: $!";
-	binmode $fh;
-	my $md5sum = Digest::MD5->new->addfile($fh)->hexdigest;
-	close $fh;
-	return $md5sum;
+	my $procsrc = slurp($f) or die "Cannot open $f for md5summing: $!";
+	$procsrc = mangle_proc_src($procsrc);
+	#$file_src{$f} = $procsrc;
+	return md5_hex($procsrc);
+}
+
+# do horrible things here..
+sub mangle_proc_src {
+	my ($procsrc) = @_;
+	if ($procsrc =~ s/\n SET search_path TO 'jobcenter', 'pg_catalog', 'pg_temp'\n/\n SET search_path TO jobcenter, pg_catalog, pg_temp\n/ms) {
+		#say 'did some mangling!';
+	}
+	return $procsrc;
 }
 
 sub _seccheck {
@@ -746,6 +759,34 @@ sub secfix {
 	my $res = execsql( [ $sql ], 0 );
 	die "secfix failed!" if $res;
 }
+
+=pod
+sub diff {
+	my ($a, $b) = @_;
+	my @a = split /\n/, $a;
+	my @b = split /\n/, $b;
+	my $diff = Algorithm::Diff->new( \@a, \@b );
+	$diff->Base(1);
+	while(  $diff->Next()  ) {
+		next if  $diff->Same();
+		my $sep = '';
+		if( ! $diff->Items(2) ) {
+			printf "%d,%dd%d\n",
+				$diff->Get(qw( Min1 Max1 Max2 ));
+		} elsif( ! $diff->Items(1)  ) {
+			printf "%da%d,%d\n",
+			$diff->Get(qw( Max1 Min2 Max2 ));
+		} else {
+			$sep = "---\n";
+			printf "%d,%dc%d,%d\n",
+			$diff->Get(qw( Min1 Max1 Min2 Max2 ));
+		}
+		print "< $_\n"   for  $diff->Items(1);
+		print $sep;
+		print "> $_\n"   for  $diff->Items(2);
+	}
+}
+=cut
 
 # some queries
 BEGIN {
