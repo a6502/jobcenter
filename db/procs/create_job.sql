@@ -41,6 +41,10 @@ BEGIN
 		RAISE EXCEPTION 'no workflow named %', a_wfname;
 	END IF;
 
+	IF v_config -> 'disabled' = 'true'::jsonb THEN
+		RAISE EXCEPTION 'workflow % is disabled', a_wfname;
+	END IF;
+
 	-- check session user because we are in a security definer stored procedure
 	IF a_impersonate IS NOT NULL THEN
 		-- check if the postgresql session user is allowed to impersonate role a_impersonate
