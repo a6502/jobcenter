@@ -16,7 +16,7 @@ exit main();
 
 sub main {
 	my $config = realpath("$FindBin::Bin/../etc/jobcenter.conf");
-	my $daemonize = 1;
+	my $daemonize = 0;
 	my $debug = 0;
 
 	GetOptions(

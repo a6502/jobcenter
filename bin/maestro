@@ -164,7 +164,7 @@ sub do_settimer {
 
 sub main {
 	my $config = realpath("$FindBin::Bin/../etc/jobcenter.conf");
-	my $daemon = 1;
+	my $daemon = 0;
 	my $debug = 0;
 
 	GetOptions(
