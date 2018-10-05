@@ -341,14 +341,16 @@ sub rpc_channel_gone {
 	$self->log->info("got channel_gone for channel $ch");
 	my $wl = delete $self->{channels}->{$ch};
 	return unless $wl;
-	for my $superpos (values %$wl) {
-		if (ref $superpos eq 'CODE') {
-			$superpos->(RES_ERROR, 'channel gone');
+	for my $obj (values %$wl) {
+		if (ref $obj eq 'CODE') {
+			# obj = rescb
+			$obj->(RES_ERROR, 'channel gone');
 		} else {
-			$self->log->debug("unlisten for $superpos->{job_id}");
-			delete $self->{jobs}->{$superpos->{job_id}};
-			#$self->pg->pubsub->unlisten('job:finished', $superpos->{lcb});
-			%$superpos = (); # nuke
+			# obj = job
+			$self->log->debug("unlisten for $obj->{job_id}");
+			delete $self->{jobs}->{$obj->{job_id}};
+			#$self->pg->pubsub->unlisten('job:finished', $obj->{lcb});
+			%$obj = (); # nuke
 		}
 	}
 	return;
