@@ -6,6 +6,13 @@ CREATE OR REPLACE FUNCTION jobcenter.do_withdraw(a_workername text, a_actionname
 AS $function$DECLARE
 	v_worker_id bigint;
 	v_action_id int;
+	v_config jsonb;
+	v_error jsonb;
+	v_jobtask jobtask;
+	v_job_id bigint;
+	v_task_id int;
+	v_workflow_id int;
+	v_state job_state;
 BEGIN
 	SELECT
 		worker_id, action_id, config
@@ -45,9 +52,10 @@ BEGIN
 	-- set jobs belonging to worker to retry state
 	IF disconnecting AND NOT (v_config->>'persistent')::bool THEN
 
-		v_error   := '{"error":{"class": "soft", "msg": "worker disconnected"}'::jsonb;
+		v_error   := '{"error":{"class": "soft", "msg": "worker disconnected"}}'::jsonb;
 
-		FOR v_job_id, v_task_id, v_workflow_id, v_state IN SELECT job_id, task_id, workflow_id, state
+		FOR v_job_id, v_task_id, v_workflow_id, v_state IN 
+			SELECT job_id, task_id, workflow_id, state
 			FROM jobs 
 			WHERE (task_state->>'worker_id')::bigint = v_worker_id AND state = 'working' 
 		LOOP
