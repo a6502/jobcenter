@@ -7,7 +7,6 @@ AS $function$DECLARE
 	v_config jsonb;
 	v_tries integer;
 	v_maxtries integer;
-	v_retryable boolean;
 	v_timeout timestamptz;
 BEGIN
 	--RAISE NOTICE 'in do_task_error!';
@@ -29,9 +28,8 @@ BEGIN
 
 		v_tries = COALESCE((v_task_state->>'tries')::integer,1);
 		v_maxtries = COALESCE((v_config#>>'{retry,tries}')::integer,0);
-		v_retryable = COALESCE((v_config->>'retryable')::boolean, FALSE);
 
-		IF v_retryable THEN
+		IF v_config ? 'retry' THEN
 
 			-- if there is no retry policy tries will be > maxtries
 
