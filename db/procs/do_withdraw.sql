@@ -50,14 +50,15 @@ BEGIN
 		);
 	
 	-- set jobs belonging to worker to retry state
-	IF disconnecting AND NOT (v_config->>'persistent')::bool THEN
+	IF disconnecting AND NOT COALESCE((v_config->>'persistent')::bool, FALSE) THEN
 
-		v_error   := '{"error":{"class": "soft", "msg": "worker disconnected"}}'::jsonb;
+		v_error := '{"error":{"class": "soft", "msg": "worker disconnected"}}'::jsonb;
 
 		FOR v_job_id, v_task_id, v_workflow_id, v_state IN 
 			SELECT job_id, task_id, workflow_id, state
 			FROM jobs 
-			WHERE (task_state->>'worker_id')::bigint = v_worker_id AND state = 'working' 
+			WHERE state = 'working'
+			      AND (task_state->>'worker_id')::bigint = v_worker_id 
 		LOOP
 
 			v_jobtask := (v_workflow_id, v_task_id, v_job_id)::jobtask;

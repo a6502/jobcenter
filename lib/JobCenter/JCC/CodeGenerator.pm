@@ -50,6 +50,8 @@ our %cfgcfg = (
 		filter => 'array',
 		retry => 'object',
 		timeout => 'duration',
+		persistent  => 'boolean',
+		retryable => 'boolean',
 	},
 	workflow => {
 		max_depth => 'number',

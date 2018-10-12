@@ -7,6 +7,7 @@ AS $function$DECLARE
 	v_config jsonb;
 	v_tries integer;
 	v_maxtries integer;
+	v_retryable boolean;
 	v_timeout timestamptz;
 BEGIN
 	--RAISE NOTICE 'in do_task_error!';
@@ -28,40 +29,44 @@ BEGIN
 
 		v_tries = COALESCE((v_task_state->>'tries')::integer,1);
 		v_maxtries = COALESCE((v_config#>>'{retry,tries}')::integer,0);
+		v_retryable = COALESCE((v_config->>'retryable')::boolean, FALSE);
 
-		-- if there is no retry policy tries will be > maxtries
+		IF v_retryable THEN
 
-		RAISE NOTICE 'do_task_error tries % max_tries %', v_tries, v_maxtries;
+			-- if there is no retry policy tries will be > maxtries
 
-		IF v_tries < v_maxtries THEN
-			-- interval exists?
-			BEGIN
-				v_timeout = now() + (v_config#>>'{retry,interval}')::interval;
+			RAISE NOTICE 'do_task_error tries % max_tries %', v_tries, v_maxtries;
 
-				RAISE NOTICE 'do_task_error timeout %', v_timeout;
+			IF v_tries < v_maxtries THEN
+				-- interval exists?
+				BEGIN
+					v_timeout = now() + (v_config#>>'{retry,interval}')::interval;
 
-				UPDATE jobs SET
-					state = 'retrywait',
-					cookie = NULL,
-					timeout = v_timeout,
-					-- save soft error in task_state
-					task_state = COALESCE(task_state, '{}'::jsonb) || a_outargs
-				WHERE
-					job_id = a_jobtask.job_id
-					AND task_id = a_jobtask.task_id
-					AND workflow_id = a_jobtask.workflow_id;
+					RAISE NOTICE 'do_task_error timeout %', v_timeout;
 
-				RETURN;
-			EXCEPTION WHEN OTHERS THEN -- or just catch invalid_datetime_format?
-				a_outargs = jsonb_build_object(
-					'error', jsonb_build_object(
-						'msg',  format('error calculating retry timeout sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM),
-						'class', 'normal',
-						'olderror', a_outargs
-					)
-				);
-			END;
+					UPDATE jobs SET
+						state = 'retrywait',
+						cookie = NULL,
+						timeout = v_timeout,
+						-- save soft error in task_state
+						task_state = COALESCE(task_state, '{}'::jsonb) || a_outargs
+					WHERE
+						job_id = a_jobtask.job_id
+						AND task_id = a_jobtask.task_id
+						AND workflow_id = a_jobtask.workflow_id;
 
+					RETURN;
+				EXCEPTION WHEN OTHERS THEN -- or just catch invalid_datetime_format?
+					a_outargs = jsonb_build_object(
+						'error', jsonb_build_object(
+							'msg',  format('error calculating retry timeout sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM),
+							'class', 'normal',
+							'olderror', a_outargs
+						)
+					);
+				END;
+
+			END IF;
 		END IF;
 	END IF;
 
