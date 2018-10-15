@@ -189,10 +189,10 @@ plain-term: +functioncall | literal | +variable | +parented
 
 parented: / LPAREN - / rhs / - RPAREN /
 
-rhs-operator: / - ( STAR STAR | STAR | SLASH SLASH | SLASH | PERCENT | 'x' | PLUS | DASH | DOT
+rhs-operator: / - ( STAR STAR | STAR | SLASH SLASH | SLASH | PERCENT | PLUS | DASH | DOT
 	| LANGLE EQUAL | RANGLE EQUAL | LANGLE | RANGLE | 'lt'
 	| 'gt' | 'le' | 'ge' | EQUAL EQUAL | BANG EQUAL | 'eq' | 'ne'
-	| AMP AMP | PIPE PIPE | 'and' | 'or' ) - /
+	| AMP AMP | PIPE PIPE | 'and' | 'or' | 'xor' | 'x' ) - /
 
 
 unary-operator: / ( BANG | DASH | PLUS | 'not ' ) /

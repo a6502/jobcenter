@@ -784,7 +784,7 @@ sub make_rhs {
 		$op = $op->{rhs_operator} or die 'not a rhs_operator?';
 		die "cannot do op $op yet" unless
 			any { $op eq $_ }
-				qw( ** * / % x + - . && || // and or < <= == >= > != lt le eq ge gt ne);
+				qw( ** * / % x + - . && || // and or xor < <= == >= > != lt le eq ge gt ne);
 		$perl .= " $op ";
 	}			
 	return $perl;
