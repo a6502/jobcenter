@@ -161,7 +161,7 @@ call: / 'call' + / +call-name colon ( call-body | `syntax error: call [name]:\n<
 
 call-name: identifier
 
-call-body: +imap block-ondent / 'into' <colon> / +omap
+call-body: +imap ( block-ondent / 'into' <colon> / +omap )?
 
 imap: assignments
 
