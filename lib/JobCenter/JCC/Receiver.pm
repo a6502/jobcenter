@@ -84,6 +84,7 @@ sub got_to_flatten {
 *got_raise_error = \&got_to_flatten;
 *got_raise_event = \&got_to_flatten;
 *got_rhs = \&got_to_flatten;
+*got_rhs_body = \&got_to_flatten;
 *got_role = \&got_to_flatten;
 *got_split = \&got_to_flatten;
 *got_subscribe = \&got_to_flatten;
@@ -112,6 +113,7 @@ sub got_to_hashify {
 
 *got_action = \&got_to_hashify;
 *got_assignment = \&got_to_hashify;
+*got_assert = \&got_to_hashify;
 *got_call = \&got_to_hashify;
 *got_callflow = \&got_to_hashify;
 *got_case = \&got_to_hashify;

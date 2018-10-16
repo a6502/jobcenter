@@ -428,6 +428,22 @@ sub gen_locks {
 	return ($first, $cur);
 }
 
+sub gen_assert {
+	my ($self, $assert) = @_;
+	# generate a ast for a if with a raise_error
+	my $if = {
+                    'then' => [
+                                {
+                                  'raise_error' => $assert->{'rhs_body'},
+                                }
+                              ],
+                    'condition' => $assert->{'condition'},
+        };
+
+	# and generate that..
+	return $self->gen_if($if);
+}
+
 sub gen_call {
 	# only get_split calls us with a third argument for some extra magic
 	my ($self, $call, $magic) = @_;
@@ -597,7 +613,7 @@ sub gen_raise_error {
 	my ($self, $raise) = @_;
 	my $raisetid = $self->instask(T_RAISE_ERROR, attributes =>
 			to_json({
-				imapcode => make_perl($raise, IMAP),
+				imapcode => '$i{\'msg\'} = ' . make_rhs($raise, IMAP) . ';',
 				#_line => $raise->{_line},
 			}));
 	return ($raisetid, $raisetid);

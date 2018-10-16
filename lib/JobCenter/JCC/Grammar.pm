@@ -136,6 +136,7 @@ block: block-indent block-body block-undent
 block-body: (block-ondent statement | .ignorable)*
 
 statement: 
+	| +assert
 	| +call
 	| +case
 	| +eval
@@ -156,6 +157,12 @@ statement:
 #	| wait_for_child
 	| +wait_for_event
 	| +while
+
+assert: / 'assert' - / ( +condition colon +rhs-body | `syntax error: assert <condition>:\n<string-body>` )
+
+rhs-body: block-indent ( indented-rhs | .ignorable )* block-undent
+
+indented-rhs: block-ondent rhs
 
 call: / 'call' + / +call-name colon ( call-body | `syntax error: call [name]:\n<call-body>` )
 
@@ -236,7 +243,7 @@ locktype: identifier
 
 lockvalue: ( perl_block | rhs )
 
-raise_error: / 'raise_error' <colon> / assignments
+raise_error: / 'raise_error' <colon> / rhs-body
 
 raise_event: / 'raise_event' <colon> / assignments
 
