@@ -173,7 +173,7 @@ native-assignments: block-indent ( +assignment | +magic-assignment | .ignorable 
 
 assignment: block-ondent +lhs - +assignment-operator - +rhs / - SEMI? - /
 
-magic-assignment: block-ondent / LANGLE / identifier / RANGLE /
+magic-assignment: block-ondent / LANGLE / ( /( STAR )/ | identifier ( / COMMA / identifier )* ) / RANGLE /
 
 lhs: ( / (ALPHA) DOT / )? varpart ( / DOT / varpart )*
 

@@ -77,6 +77,7 @@ sub got_to_flatten {
 *got_lhs = \&got_to_flatten;
 *got_locks = \&got_to_flatten;
 *got_lockspec = \&got_to_flatten;
+*got_magic_assignment = \&got_to_flatten;
 *got_omap = \&got_to_flatten;
 *got_out = \&got_to_flatten;
 *got_parented = \&got_to_flatten;

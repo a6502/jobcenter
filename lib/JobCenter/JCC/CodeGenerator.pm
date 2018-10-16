@@ -932,8 +932,11 @@ sub make_perl {
 				# hack for the magic assignment
 				my $t = {imap => 'i', omap => 'v', wfomap => 'o'}->{$what};
 				my $f = {imap => 'v', omap => 'o', wfomap => 'v'}->{$what};
-				my $a = $av->[0];
-				push @perl,  '$' . $t . '{' . $a . '} = $' . $f . '{' . $a . '};';
+				if ($av->[0] eq '*') {
+					push @perl,  '%' . $t . ' = %' . $f . ';';
+				} else {
+					push @perl,  '$' . $t . '{' . $_ . '} = $' . $f . '{' . $_ . '};' for @$av;
+				}
 				next;
 			}
 			die 'not assigment?' unless $at eq 'assignment';
