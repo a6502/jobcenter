@@ -93,7 +93,7 @@ workflow: / 'workflow' + / +workflow-name colon (
 	( .ignorable | +in | +out | +wfenv | +role | +config | +locks | +wfomap | +do )+
 	| `syntax error: workflow [name]\n:<workflow>` )
 
-workflow-name: identifier
+workflow-name: /( ALPHA [ WORDS DOT ]* )/ | string
 
 in: / 'in' <colon> / ( block-indent inout block-undent
 	| `syntax error: in:\n<inout>` )
@@ -159,7 +159,7 @@ statement:
 
 call: / 'call' + / +call-name colon ( call-body | `syntax error: call [name]:\n<call-body>` )
 
-call-name: identifier
+call-name: workflow-name
 
 call-body: +imap ( block-ondent / 'into' <colon> / +omap )?
 
