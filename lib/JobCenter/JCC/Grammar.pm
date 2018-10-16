@@ -251,7 +251,7 @@ repeat: / 'repeat' colon / +block / + 'until' + / +condition
 
 return: / ('return') /
 
-sleep: / 'sleep' <colon> / assignments
+sleep: / 'sleep' <colon> / rhs-body
 
 split: / 'split' / colon block-indent +callflow+ block-undent
 

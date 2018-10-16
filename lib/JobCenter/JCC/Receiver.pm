@@ -86,6 +86,7 @@ sub got_to_flatten {
 *got_rhs = \&got_to_flatten;
 *got_rhs_body = \&got_to_flatten;
 *got_role = \&got_to_flatten;
+*got_sleep = \&got_to_flatten;
 *got_split = \&got_to_flatten;
 *got_subscribe = \&got_to_flatten;
 *got_then = \&got_to_flatten;
@@ -123,7 +124,6 @@ sub got_to_hashify {
 *got_if = \&got_to_hashify;
 *got_lock = \&got_to_hashify;
 *got_repeat = \&got_to_hashify;
-*got_sleep = \&got_to_hashify;
 *got_try = \&got_to_hashify;
 *got_wait_for_event = \&got_to_hashify;
 *got_when = \&got_to_hashify;

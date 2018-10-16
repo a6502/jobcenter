@@ -613,7 +613,7 @@ sub gen_raise_error {
 	my ($self, $raise) = @_;
 	my $raisetid = $self->instask(T_RAISE_ERROR, attributes =>
 			to_json({
-				imapcode => '$i{\'msg\'} = ' . make_rhs($raise, IMAP) . ';',
+				imapcode => '$i{\'msg\'} = ' . make_rhs($raise) . ';',
 				#_line => $raise->{_line},
 			}));
 	return ($raisetid, $raisetid);
@@ -652,8 +652,8 @@ sub gen_sleep {
 	my ($self, $sleep) = @_;
 	my $tid = $self->instask(T_SLEEP, attributes =>
 		to_json({
-			imapcode => make_perl([$sleep], IMAP),
-			 #_line => $sleep->{_line},
+			imapcode => '$i{\'timeout\'} = ' . make_rhs($sleep) . ';',
+			#_line => $sleep->{_line},
 		}));
 	return ($tid, $tid);
 }
