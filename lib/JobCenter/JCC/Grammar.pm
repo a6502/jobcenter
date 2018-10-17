@@ -243,7 +243,7 @@ locktype: identifier
 
 lockvalue: ( perl_block | rhs )
 
-raise_error: / 'raise_error' <colon> / rhs-body
+raise_error: / 'raise_error' + / ( perl_block | rhs )
 
 raise_event: / 'raise_event' <colon> / assignments
 
@@ -251,7 +251,7 @@ repeat: / 'repeat' colon / +block / + 'until' + / +condition
 
 return: / ('return') /
 
-sleep: / 'sleep' <colon> / rhs-body
+sleep: / 'sleep' + / ( perl_block | rhs )
 
 split: / 'split' / colon block-indent +callflow+ block-undent
 
