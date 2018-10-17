@@ -186,7 +186,7 @@ lhs: ( / (ALPHA) DOT / )? varpart ( / DOT / varpart )*
 
 assignment-operator: / ( EQUAL | DOT EQUAL | PLUS EQUAL | DASH EQUAL ) /
 
-rhs: term ( +rhs-operator term )*
+rhs: term ( +rhs-operator term | +regexmatch )*
 
 term: +unop-term | plain-term
 
@@ -209,6 +209,8 @@ functioncall: +funcname / LPAREN - / ( +funcarg ) / - RPAREN /
 funcname: identifier
 
 funcarg: rhs ( - ( COMMA | COLON ) - rhs )*
+
+regexmatch: / - TILDE - SLASH (.+) SLASH /
 
 case: / 'case' + / +case-expression colon (+when | .ignorable)* case-else?
 

@@ -797,6 +797,12 @@ sub make_rhs {
 		my ($term, $op) = splice(@rhs, 0, 2);
 		$perl .= make_term($term);
 		last unless $op;
+		if (defined $op->{regexmatch}) {
+			$op = $op->{regexmatch};
+			$perl .= " =~ /$op/ ";
+			$op = shift(@rhs);
+			last unless $op;
+		}
 		$op = $op->{rhs_operator} or die 'not a rhs_operator?';
 		die "cannot do op $op yet" unless
 			any { $op eq $_ }
