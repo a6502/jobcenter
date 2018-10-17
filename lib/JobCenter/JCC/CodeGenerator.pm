@@ -434,10 +434,19 @@ sub gen_assert {
 	my $if = {
                     'then' => [
                                 {
-                                  'raise_error' => $assert->{'rhs_body'},
+                                   'raise_error' => $assert->{'rhs_body'},
                                 }
                               ],
-                    'condition' => $assert->{'condition'},
+                    'condition' => [
+					{
+					   'unop_term' => [
+							      'not ',
+							      {
+								  'parented' => $assert->{'condition'},
+							      }
+							  ],
+					},
+				   ],
         };
 
 	# and generate that..
