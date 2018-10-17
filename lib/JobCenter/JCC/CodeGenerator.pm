@@ -888,9 +888,12 @@ sub make_func {
 	my ($name, $arg) = @_;
 	if ($name eq 'concat') {
 		return '(( ' . join(' ) . ( ', (map { make_rhs([$_]) } @$arg)) . ' ))';
+	} elsif	($name eq 'defined') {
+		$arg = make_rhs($arg);
+		return "defined( $arg )";
 	} elsif	($name eq 'ifdef') {
 		$arg = make_rhs($arg);
-		return "$arg if defined($arg)";
+		return "$arg if defined $arg";
 	} elsif	($name eq 'tostring') {
 		$arg = make_rhs($arg);
 		return "('' . $arg)";
