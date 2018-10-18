@@ -192,18 +192,51 @@ sub work {
 }
 
 
+sub _unlisten_client_action {
+	my ($self, $client, $action) = @_;
+	#
+	# remove this action from the clients action list
+	my $wa = delete $client->actions->{$action} 
+		or die "worker action not found: $action";
+
+	my $listenstring = $wa->listenstring or die "unknown listenstring";
+
+	# now remove this workeraction from the listenstring workeraction list
+	my $l = $self->listenstrings->{$listenstring};
+	my @idx = grep { refaddr $$l[$_] == refaddr $wa } 0..$#$l;
+	splice @$l, $_, 1 for @idx;
+
+	# delete if the listenstring client list is now empty
+	unless (@$l) {
+		delete $self->listenstrings->{$listenstring};
+		delete $self->actionnames->{$action};
+		# not much we can do about pending jobs now..
+		delete $self->pending->{$listenstring};
+		$self->jcpg->pubsub->unlisten($listenstring);
+		$self->log->debug("unlisten $listenstring");
+	}		
+}
+
 sub _disconnect {
 	my ($self, $client) = @_;
 	$self->log->info('oh my.... ' . ($client->who // 'somebody') . ' disonnected..');
 
 	return unless $client->who;
 
+	my ($res) = $self->jcpg->db->query(
+			q[select disconnect($1)],
+			$client->workername,
+		)->array;
+	die "no result" unless $res and @$res;
+		
 	my @actions = keys %{$client->actions};
 	
-	for my $a (@actions) {
-		$self->log->debug("withdrawing $a");
-		# hack.. make a _withdraw for this..?
-		$self->rpc_withdraw($client->con, {actionname => $a});
+	$self->_unlisten_client_action($client, $_) for @actions;
+
+	if (my $tmr = delete $client->{tmr}) {
+		# cleanup ping timer
+		$self->log->debug("remove tmr $tmr");
+		Mojo::IOLoop->remove($tmr);
 	}
 
 	delete $self->clients->{refaddr($client)};
@@ -558,13 +591,8 @@ sub rpc_withdraw {
 	my ($self, $con, $i) = @_;
 	my $client = $con->owner;
 	my $actionname = $i->{actionname} or die 'actionname required';
-	# find listenstring by actionname
 
-	my $wa = $client->actions->{$actionname} or die "unknown actionname";
-	# remove this action from the clients action list
-	delete $client->actions->{$actionname};
-
-	my $listenstring = $wa->listenstring or die "unknown listenstring";
+	$self->_unlisten_client_action($client, $actionname);
 
 	my ($res) = $self->jcpg->db->query(
 			q[select withdraw($1, $2)],
@@ -573,21 +601,6 @@ sub rpc_withdraw {
 		)->array;
 	die "no result" unless $res and @$res;
 	
-	# now remove this workeraction from the listenstring workeraction list
-	my $l = $self->listenstrings->{$listenstring};
-	my @idx = grep { refaddr $$l[$_] == refaddr $wa } 0..$#$l;
-	splice @$l, $_, 1 for @idx;
-
-	# delete if the listenstring client list is now empty
-	unless (@$l) {
-		delete $self->listenstrings->{$listenstring};
-		delete $self->actionnames->{$actionname};
-		# not much we can do about pending jobs now..
-		delete $self->pending->{$listenstring};
-		$self->jcpg->pubsub->unlisten($listenstring);
-		$self->log->debug("unlisten $listenstring");
-	}		
-
 	if (not $client->actions and $client->tmr) {
 		# cleanup ping timer if client has no more actions
 		$self->log->debug("remove tmr $client->{tmr}");
