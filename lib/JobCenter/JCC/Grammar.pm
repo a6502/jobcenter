@@ -185,7 +185,8 @@ magic-assignment: block-ondent / LANGLE / ( /( STAR )/ | identifier ( / COMMA / 
 
 lhs: ( / (ALPHA) DOT / )? varpart ( / DOT / varpart )*
 
-assignment-operator: / ( EQUAL | DOT EQUAL | PLUS EQUAL | DASH EQUAL ) /
+assignment-operator: / ( EQUAL | DOT EQUAL | PLUS EQUAL | DASH EQUAL | SLASH EQUAL | STAR EQUAL
+	| SLASH SLASH EQUAL | PIPE PIPE EQUAL ) /
 
 rhs: term ( +rhs-operator term | +regexmatch )*
 

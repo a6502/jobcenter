@@ -978,7 +978,7 @@ sub make_perl {
 			}
 			die 'not assigment?' unless $at eq 'assignment';
 			my ($lhs, $op, $rhs) = @{$av}{qw(lhs assignment_operator rhs)};
-			die "cannot do op $op yet" unless any { $op eq $_ } qw( = .= += -= );
+			die "cannot do op $op yet" unless any { $op eq $_ } qw( = .= += -= *= /= //= ||= );
 			push @perl, make_variable($lhs, $what) . " $op " . make_rhs($rhs) . ';';
 		}
 		say "perl for $what: ", join(' ', @perl);
