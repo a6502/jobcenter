@@ -143,6 +143,7 @@ statement:
 	| +goto
 	| +if
 	| +label
+	| +let
 	| +lock
 	| +raise_error
 	| +raise_event
@@ -226,8 +227,6 @@ eval: / 'eval' <colon> / ( assignments | `syntax error: eval:\n<assignments>` )
 
 goto: / 'goto' + / identifier
 
-label: / 'label' + / identifier
-
 if: / 'if' - / ( +condition colon +then elses? | `syntax error: if <condition>:\n<if>` )
 
 then: block
@@ -237,6 +236,10 @@ elses: block-ondent ( +elsif | +else )
 elsif: / 'elsif' + / ( +condition colon +then elses? | `syntax error: elsif <condition>:\n<if>` )
 
 else: / 'else' <colon> / block
+
+label: / 'label' + / identifier
+
+let: / 'let' <colon> / ( assignments | `syntax error: let:\n<assignments>` )
 
 lock: / 'lock' + / ( +locktype + +lockvalue
 	| `syntax error: lock locktype lockvalue` )

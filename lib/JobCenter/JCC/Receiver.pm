@@ -74,6 +74,7 @@ sub got_to_flatten {
 *got_imap = \&got_to_flatten;
 *got_in = \&got_to_flatten;
 *got_iospec = \&got_to_flatten;
+*got_let = \&got_to_flatten;
 *got_lhs = \&got_to_flatten;
 *got_locks = \&got_to_flatten;
 *got_lockspec = \&got_to_flatten;

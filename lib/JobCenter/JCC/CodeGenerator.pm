@@ -597,6 +597,9 @@ sub gen_label {
 	return ($labeltid, $labeltid);	
 }
 
+# let is just a alias for eval
+*gen_let = \&gen_eval;
+
 sub gen_lock {
 	my ($self, $lock) = @_;
 	my $tid;
