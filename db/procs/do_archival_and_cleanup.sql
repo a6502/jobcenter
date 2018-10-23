@@ -2,26 +2,16 @@ CREATE OR REPLACE FUNCTION jobcenter.do_archival_and_cleanup(dummy text DEFAULT 
  RETURNS void
  LANGUAGE sql
  SECURITY DEFINER
- SET search_path TO jobcenter, pg_catalog, pg_temp
+ SET search_path TO 'jobcenter', 'pg_catalog', 'pg_temp'
 AS $function$
--- mark dead/gone/whatever workers as stopped
-UPDATE workers SET
-	stopped = now()
+-- mark dead/gone/whatever workers as disconnected
+SELECT
+	disconnect(name)
+FROM
+	workers
 WHERE
 	stopped IS NULL
 	AND last_ping + interval '3 minutes' < now();
--- remove worker actions of dead workers
-DELETE FROM
-	 worker_actions
-WHERE
-	worker_id NOT IN (
-		SELECT
-			worker_id
-		FROM
-			workers
-		WHERE
-			stopped IS NULL
-	);
 -- move finished jobs to the jobs_archive table
 WITH jobrecords AS (
 	DELETE FROM
