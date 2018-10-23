@@ -191,7 +191,6 @@ sub work {
 	return 0;
 }
 
-
 sub _unlisten_client_action {
 	my ($self, $client, $action) = @_;
 	#
@@ -214,28 +213,38 @@ sub _unlisten_client_action {
 		delete $self->pending->{$listenstring};
 		$self->jcpg->pubsub->unlisten($listenstring);
 		$self->log->debug("unlisten $listenstring");
-	}		
+	}
 }
+
 
 sub _disconnect {
 	my ($self, $client) = @_;
-	$self->log->info('oh my.... ' . ($client->who // 'somebody') . ' disonnected..');
+	$self->log->info('oh my.... ' . ($client->who // 'somebody')
+		. ' (' . $client->from. ') disonnected..');
 
 	return unless $client->who;
 
-	my ($res) = $self->jcpg->db->query(
-			q[select disconnect($1)],
-			$client->workername,
-		)->array;
-	die "no result" unless $res and @$res;
-		
-	my @actions = keys %{$client->actions};
-	
-	$self->_unlisten_client_action($client, $_) for @actions;
+	if ($client->worker_id) {
+		# the client was a worker at some point..
+		# let's assume things are initialized correctly
+		$self->log->debug("worker gone processing $client->{workername}");
 
+		# clean up actions
+		for my $action (keys %{$client->actions}) {
+			$self->_unlisten_client_action($client, $action);
+		}
+
+		# todo: non-blocking?
+		my ($res) = $self->jcpg->db->dollar_only->query(
+				q[select disconnect($1)],
+				$client->workername,
+			)->array;
+		die "no result" unless $res and @$res;
+	}
+
+	# the client might have a active timer if it was a worker
 	if (my $tmr = delete $client->{tmr}) {
 		# cleanup ping timer
-		$self->log->debug("remove tmr $tmr");
 		Mojo::IOLoop->remove($tmr);
 	}
 
@@ -601,7 +610,7 @@ sub rpc_withdraw {
 		)->array;
 	die "no result" unless $res and @$res;
 	
-	if (not $client->actions and $client->tmr) {
+	if (not %{$client->actions} and $client->tmr) {
 		# cleanup ping timer if client has no more actions
 		$self->log->debug("remove tmr $client->{tmr}");
 		Mojo::IOLoop->remove($client->tmr);
