@@ -1,7 +1,7 @@
 CREATE OR REPLACE FUNCTION jobcenter.do_task_error(a_jobtask jobtask, a_outargs jsonb)
  RETURNS void
  LANGUAGE plpgsql
- SET search_path TO jobcenter, pg_catalog, pg_temp
+ SET search_path TO 'jobcenter', 'pg_catalog', 'pg_temp'
 AS $function$DECLARE
 	v_task_state jsonb;
 	v_config jsonb;
@@ -9,7 +9,7 @@ AS $function$DECLARE
 	v_maxtries integer;
 	v_timeout timestamptz;
 BEGIN
-	--RAISE NOTICE 'in do_task_error!';
+	--RAISE LOG 'in do_task_error!';
 	-- figure out if this is a soft error we can retry
 	IF a_outargs ? 'error' AND a_outargs->'error' ? 'class'
 		AND a_outargs #>> '{error,class}' = 'soft' THEN
@@ -28,19 +28,18 @@ BEGIN
 
 		v_tries = COALESCE((v_task_state->>'tries')::integer,1);
 		v_maxtries = COALESCE((v_config#>>'{retry,tries}')::integer,0);
+		-- if there is no retry policy tries will be > maxtries
 
 		IF v_config ? 'retry' THEN
 
-			-- if there is no retry policy tries will be > maxtries
+			RAISE LOG 'do_task_error tries % max_tries %', v_tries, v_maxtries;
 
-			RAISE NOTICE 'do_task_error tries % max_tries %', v_tries, v_maxtries;
-
-			IF v_tries < v_maxtries THEN
+			IF v_maxtries < 0 OR v_tries < v_maxtries THEN
 				-- interval exists?
 				BEGIN
 					v_timeout = now() + (v_config#>>'{retry,interval}')::interval;
 
-					RAISE NOTICE 'do_task_error timeout %', v_timeout;
+					RAISE LOG 'do_task_error timeout %', v_timeout;
 
 					UPDATE jobs SET
 						state = 'retrywait',
@@ -84,6 +83,6 @@ BEGIN
 	PERFORM do_log(a_jobtask.job_id, false, null, a_outargs);
 
 	-- wake up maestro
-	RAISE NOTICE 'NOTIFY "jobtaskerror", %', '' || a_jobtask::text || '';
+	RAISE LOG 'NOTIFY "jobtaskerror", %', '' || a_jobtask::text || '';
 	PERFORM pg_notify( 'jobtaskerror',  a_jobtask::text );
 END$function$
