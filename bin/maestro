@@ -37,7 +37,7 @@ our $backoff = 0.1;
 our $timer_min = 0.1;
 
 # some handy package globals
-our ($jcpg, $log, $tmr, $next);
+our ($ioloop, $jcpg, $log, $tmr, $next);
 
 exit main();
 
@@ -53,7 +53,7 @@ sub _calljobtaskproc {
 			$log->debug("scheduling retry of _calljobtaskproc $proc($arg): $sqlstate");
 			$res->sth->finish;
 			# try a backoff with a bit of randomness
-			Mojo::IOLoop->timer(($backoff + rand($retries * $backoff)) => sub {
+			$ioloop->timer(($backoff + rand($retries * $backoff)) => sub {
 				$log->debug("retry $retries of _calljobtaskproc $proc($arg)");
 				_calljobtaskproc($db, $proc, $arg, $retries + 1);
 			});
@@ -98,65 +98,31 @@ sub calljobtaskproc {
 	}
 }
 
-sub do_timeout {
-	my ($loop) = @_;
-	local $@;
-	unless (eval {
-		$jcpg->queue_query( sub {
-			my ($db) = @_;
-			$tmr = undef;
-			$db->query(q[select do_timeout()], sub {
-				my ($db, $err, $res) = @_;
-				my $sqlstate = $res->sth->state;
-				if ($sqlstate eq '40001' or $sqlstate eq '40P01') {
-					$log->debug("scheduling retry of do_timeout");
-					Mojo::IOLoop->timer($backoff => \&do_timeout);
-				}
-				if ($err) {
-					$res->sth->finish;
-					$log->error("do_timeout got errror $err");
-					return;
-				}
-				my $r = $res->array;
-				$res->sth->finish;
-				if ($r and ref $r eq 'ARRAY' and defined @$r[0]) {
-					my $foo = my $bar = @$r[0] + 0;
-					$foo = .1 if $foo < .1; # fixme: minimum resolution?
-					my $now = time();
-					$next = $now + $foo;
-					$log->debug("do_timeout: timer now $foo ($bar)");
-					Mojo::IOLoop->remove($tmr) if $tmr;
-					$tmr = Mojo::IOLoop->timer($foo => \&do_timeout);
-				};
-			});
-		});
-		1;
-	}) {
-		$log->error("do_timeout threw error: $@");
-		$next = time()*2;
-	}
-	#say "do_timeout done\n";
-}
-
 sub do_settimer {
 	my ($pubsub, $payload) = @_;
 	my $now = time();
 
 	# payload is an empty string when no payload was sent..
-	#$log->debug("settimer: " . ($payload || '<null>') . " now: $now next: $next");
+	$log->debug("timer notification: '$payload'");
+	#$log->debug("settimer: '" . ((defined $payload) ? $payload : '<null>')
+	#	. "' now: $now next: $next");
 
-	if ($payload) {
+	if ($payload ne '') {
 		if ($now + $payload < $next or $next <= $now) {
 			$payload = $timer_min if $payload < $timer_min;
-			$log->debug("settimer: $payload");
+			$log->debug("setting timer to $payload seconds");
 
-			Mojo::IOLoop->remove($tmr) if $tmr;
-			$tmr = Mojo::IOLoop->timer($payload => \&do_timeout);
+			$ioloop->remove($tmr) if $tmr;
+			#$tmr = $ioloop->timer($payload => \&do_timeout);
+			$tmr = $ioloop->timer($payload =>  sub {
+				$log->debug('timer: do_timeout');
+				calljobtaskproc('do_timeout', '(dummy)');
+			});
 			$next = $now + $payload;
 		}
 	} elsif ($tmr) {
 		$log->debug("disabling timer");
-		Mojo::IOLoop->remove($tmr);
+		$ioloop->remove($tmr);
 		undef $tmr;
 		$next = $now;
 	}
@@ -178,14 +144,23 @@ sub main {
 	die 'Config Errror: ' . Config::Tiny->errstr() unless $cfg;
 	#print Dumper($cfg);
 
-	my $pid_file = $cfg->{pid_file} // "$FindBin::Bin/../log/maestro.pid";
+	my $pid_file = $cfg->{pid_file} // realpath("$FindBin::Bin/../log/maestro.pid");
 	die "maestro already running?" if check_pid($pid_file);
 
 	$log = Mojo::Log->new(level => ($debug) ? 'debug' : 'info');
-	$log->path("$FindBin::Bin/../log/maestro.log") if $daemon;
+	$log->path(realpath("$FindBin::Bin/../log/maestro.log")) if $daemon;
+	# todo: config
+
+	if ($debug) {
+		# pg log messages come as perl warnings, so log warnings
+		$SIG{__WARN__} = sub {
+			my ($w) = @_;
+			$w =~ s/\n$//; $w =~ s/\n/ \\n /;
+			$log->warn($w)
+		};
+	}
 
 	daemonize() if $daemon;
-
 	ensure_pid_file($pid_file, $log);
 
 	$jcpg = JobCenter::Pg->new(
@@ -196,10 +171,15 @@ sub main {
 		. ( ($cfg->{pg}->{port}) ? ':' . $cfg->{pg}->{port} : '' )
 		. '/' . $cfg->{pg}->{db}
 	);
+	$jcpg->log($log);
 	$jcpg->max_total_connections($cfg->{pg}->{con} // 5);
 
 	$jcpg->on(connection => sub {
 		my ($jcpg, $dbh) = @_;
+		return unless $debug;
+		#$dbh->trace('DBD');
+		$dbh->{PrintWarn} = 1; # pg log messages are warnings too
+		$dbh->do("select set_config('client_min_messages', 'log', false)");
 		$log->debug("jcpg: $jcpg has new connection: $dbh");
 	});
 
@@ -216,22 +196,27 @@ sub main {
 	$jcpg->pubsub->listen('timer' => \&do_settimer);
 
 	$jcpg->pubsub->listen('timerquery' => sub {
-		$log->debug("got timerquery");
+		$log->debug('got timerquery notification');
 		$jcpg->pubsub->notify('nexttimer', $next);
 	});
 
-	my $mopupper = Mojo::IOLoop->recurring(60 => sub {
-		$log->debug('do_archival_and_cleanup');
+	$ioloop = Mojo::IOLoop->singleton;
+
+	my $mopupper = $ioloop->recurring(60 => sub {
+		$log->debug('recurring: do_archival_and_cleanup');
 		calljobtaskproc('do_archival_and_cleanup', '(dummy)');
 	});
+
+	# this is safe as long as there is only one maestro (us)
+	calljobtaskproc('do_crash_recovery', '(dummy)');
 
 	local $SIG{TERM} = local $SIG{INT} = sub {
 		my $sig = shift;
 		$log->info("caught sig$sig.");
-		Mojo::IOLoop->stop
+		$ioloop->stop
 	};
 
-	Mojo::IOLoop->start;
+	$ioloop->start;
 
 	$log->info('the end is nigh!');
 	unlink $pid_file if -w $pid_file;
