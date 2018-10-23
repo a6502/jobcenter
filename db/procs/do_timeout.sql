@@ -1,8 +1,8 @@
-CREATE OR REPLACE FUNCTION jobcenter.do_timeout()
- RETURNS integer
+CREATE OR REPLACE FUNCTION jobcenter.do_timeout(dummy text DEFAULT 'dummy'::text)
+ RETURNS void
  LANGUAGE plpgsql
  SECURITY DEFINER
- SET search_path TO jobcenter, pg_catalog, pg_temp
+ SET search_path TO 'jobcenter', 'pg_catalog', 'pg_temp'
 AS $function$DECLARE
 	v_job_id bigint;
 	v_task_id integer;
@@ -20,7 +20,7 @@ AS $function$DECLARE
 BEGIN
 	FOR v_job_id, v_task_id, v_workflow_id, v_state IN SELECT job_id, task_id, workflow_id, state
 			FROM jobs WHERE timeout <= now() LOOP
-		RAISE NOTICE 'job % state %', v_job_id, v_state;
+		RAISE LOG 'job % state %', v_job_id, v_state;
 		v_jobtask := (v_workflow_id, v_task_id, v_job_id)::jobtask;
 		CASE v_state
 		WHEN 'eventwait' THEN
@@ -34,7 +34,7 @@ BEGIN
 			v_eventdata = jsonb_build_object(
 				'event', v_eventdata
 			);
-			RAISE NOTICE 'eventwait timeout for job %', v_job_id;
+			RAISE LOG 'eventwait timeout for job %', v_job_id;
 			PERFORM do_task_done(v_jobtask, v_eventdata);
 		WHEN 'retrywait' THEN
 			-- simpels?
@@ -55,7 +55,7 @@ BEGIN
 				job_id = v_job_id
 			RETURNING
 				out_args INTO v_in_args;
-			-- RAISE NOTICE 'timeout for job %', v_job_id;
+			-- RAISE LOG 'timeout for job %', v_job_id;
 
 			-- if filtering is allowed
 			IF v_conf ? 'filter' THEN
@@ -70,26 +70,26 @@ BEGIN
 					     OR v_in_args @> filter);
 
 				IF v_workers IS NULL THEN
-					RAISE NOTICE 'no worker for action_id % in_args %', v_action_id, v_in_args;
+					RAISE LOG 'no worker for action_id % in_args %', v_action_id, v_in_args;
 					CONTINUE;
 				END IF;
-				-- RAISE NOTICE 'action_id % in_args % workers %',	v_action_id, v_in_args, v_workers;
+				-- RAISE LOG 'action_id % in_args % workers %',	v_action_id, v_in_args, v_workers;
 				v_payload = jsonb_build_object('job_id', v_job_id, 'workers', v_workers);
 			ELSE
 				v_payload = jsonb_build_object('job_id', v_job_id);
 			END IF;
 
-			RAISE NOTICE 'retry action % for %', v_action_id, v_job_id;
-			RAISE NOTICE 'NOTIFY "action:%:ready", %', v_action_id, v_payload;
+			RAISE LOG 'retry action % for %', v_action_id, v_job_id;
+			RAISE LOG 'NOTIFY "action:%:ready", %', v_action_id, v_payload;
 			PERFORM pg_notify('action:' || v_action_id || ':ready', v_payload::text);
 		WHEN 'working' THEN
+			RAISE LOG 'job % timed out in task %', v_job_id, v_task_id;
 			v_eventdata = jsonb_build_object(
 				'error', jsonb_build_object(
 					'class', 'soft',
-					'msg', 'timeout'
+					'msg', format('timeout for job %s in task %s', v_job_id, v_task_id)
 				)
 			);
-			RAISE NOTICE 'timeout for job %', v_job_id;
 			PERFORM do_task_error(v_jobtask, v_eventdata);
 		WHEN 'sleeping' THEN
 			-- done sleeping
@@ -102,18 +102,8 @@ BEGIN
 			v_eventdata = jsonb_build_object(
 				'slept', v_slept::text
 			);
-			RAISE NOTICE 'timeout for job %', v_job_id;
+			RAISE LOG 'timeout for job %', v_job_id;
 			PERFORM do_task_done(v_jobtask, v_eventdata);
-		WHEN 'working' THEN
-			RAISE NOTICE 'job % timed out in task %', v_job_id, v_task_id;
-			v_eventdata = jsonb_build_object(
-				'error', jsonb_build_object(
-					'msg', format('job %s timed out in task %s', v_job_id, v_task_id)
-					'class', 'timeout',
-					'when', now()
-				)
-			);			
-			PERFORM do_task_error(v_jobtask, v_eventdata);
 		ELSE -- this should not happen
 			UPDATE
 				jobs
@@ -121,17 +111,7 @@ BEGIN
 				timeout = null -- done with this timeout
 			WHERE
 				job_id = v_job_id;
-			RAISE NOTICE 'got spurious timeout for job % in state %', v_job_id, v_state;
+			RAISE LOG 'got spurious timeout for job % in state %', v_job_id, v_state;
 		END CASE;
 	END LOOP;
-
-	SELECT
-		(EXTRACT(EPOCH FROM MIN(timeout))
-		- EXTRACT(EPOCH FROM now()))::integer
-		AS seconds INTO v_next
-	FROM
-		jobs;
-
-	RAISE NOTICE 'do_timeout: next %', v_next;
-	RETURN v_next;
 END;$function$
