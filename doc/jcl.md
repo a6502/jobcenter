@@ -28,15 +28,15 @@ An instance of a workflow.
 
 ### Data Types
 
-The recognized data types are based on the basic types of JSON, with a
-extension to specify required fields of JSON objects.
+The recognized data types are either the the basic types of JSON or
+specified using a JSON schema.
 
 The basic types are number, string, boolean and null. The composite types
-are array and json (for a free-form JSON object).
+are array and oject (for a free-form JSON object).
 
-Any other types names refer to JSON object of which a number of top-level
-fields are required to be present. Currently no further checking of the
-values of those fields is done.
+Any other types names refer to a type specified by a JSON Schema in the
+'json_schemas' table. Currently the only way to add/alter/delete types is by
+direct (psql) manipulation of that table.
 
 ### Input Map
 
@@ -187,15 +187,21 @@ the a.input argument becomes $a{input} etc.
 
     Parameters without the 'optional' keyword are required.
 
-- limits
+- config
 
     Declare the workflow limits. See ["Limits"](#limits)
+
+        Format: <limit> = <value>
 
 - locks
 
     Declare the workflow locks.
 
         Format: <type> <value> ['manual' | 'inherit']
+
+- role
+
+    Specify the role that is allowed to call this workflow
 
 - do:
 
@@ -207,6 +213,14 @@ the a.input argument becomes $a{input} etc.
 
 ### Steps and Statements
 
+- assert
+
+        assert <expression>:
+            <rhs>
+
+    The expression is evaluated and when it is false an error is raised with
+    the rhs as the error message.
+
 - call
 
         call <name>:
@@ -215,6 +229,8 @@ the a.input argument becomes $a{input} etc.
             <omap>
 
     The &lt;imap> and &lt;omap> are lists of assignments. See ["Input Map"](#input-map).
+    The 'into:' stanza and output map are optional when the action has no
+    outputs.
 
 - case
 
@@ -232,6 +248,8 @@ the a.input argument becomes $a{input} etc.
 
         eval:
             <assignments>
+
+    Alias for 'let'.
 
 - goto
 
@@ -254,6 +272,13 @@ the a.input argument becomes $a{input} etc.
 
     Declare a &lt;label>, a target for goto.
 
+- let
+
+        let:
+            <assignments>
+
+    Alias for 'eval'.
+
 - lock
 
         lock <type> <value>
@@ -262,8 +287,7 @@ the a.input argument becomes $a{input} etc.
 
 - raise\_error
 
-        raise_error:
-             msg = <rhs>
+        raise_error <rhs>
 
 - raise\_event
 
@@ -281,6 +305,12 @@ the a.input argument becomes $a{input} etc.
         return
 
     Causes immediate execution of the end task.
+
+- sleep
+
+        sleep <rhs>
+
+    The rhs needs to be a valid PostgreSQL interval expression.
 
 - split
 
@@ -312,10 +342,10 @@ the a.input argument becomes $a{input} etc.
         catch:
             <block>
 
-    See [Exceptions](https://metacpan.org/pod/Exceptions)
+    See ["Error Handling"](#error-handling)
 
 - unlock
- unlock &lt;type> &lt;value>
+    unlock &lt;type> &lt;value>
 
     See ["Locking"](#locking)
 
@@ -360,3 +390,28 @@ the a.input argument becomes $a{input} etc.
         Format: <name> <type> ['optional']
 
     Parameters without the 'optional' keyword are required.
+
+- config:
+
+    Specify action configuration. Allowed keys:
+
+        - filter
+              Array of allowed filter keys
+        - retry
+              Retry policy
+         - timeout
+              Maximum working time
+         - retryable
+              Retryable flag
+
+- role:
+
+    Specify which role is allowed to announce this action
+
+- env:
+
+        Format: <name> <type> [<default>]
+
+    Specify which values of the workflow environment are copied to the
+    action environment.
+
