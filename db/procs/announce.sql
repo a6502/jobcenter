@@ -1,18 +1,18 @@
-CREATE OR REPLACE FUNCTION jobcenter.announce(workername text, actionname text, impersonate text DEFAULT NULL::text, filter jsonb DEFAULT NULL::jsonb)
- RETURNS TABLE(o_worker_id bigint, o_listenstring text)
+CREATE OR REPLACE FUNCTION jobcenter.announce(workername text, actionname text, impersonate text DEFAULT NULL::text, filter jsonb DEFAULT NULL::jsonb, OUT worker_id bigint, OUT listenstring text)
+ RETURNS record
  LANGUAGE plpgsql
  SECURITY DEFINER
- SET search_path TO jobcenter, pg_catalog, pg_temp
+ SET search_path TO 'jobcenter', 'pg_catalog', 'pg_temp'
 AS $function$DECLARE
 	a_workername ALIAS FOR $1;
 	a_actionname ALIAS FOR $2;
 	a_impersonate ALIAS FOR $3;
 	a_filter ALIAS FOR $4;
-	v_worker_id bigint;
+	o_worker_id ALIAS FOR $5;
+	o_listenstring ALIAS FOR $6;
 	v_action_id int;
 	v_have_role text;
 	v_should_role text;
-	v_listenstring text;
 	v_config jsonb;
 	v_allowed_filter jsonb;
 	v_key text;
@@ -20,12 +20,22 @@ BEGIN
 	-- create worker if it does not exist already
 	-- see Example 40.2 in http://www.postgresql.org/docs/current/static/plpgsql-control-structures.html
 	LOOP
-		SELECT worker_id INTO v_worker_id FROM workers WHERE name = a_workername AND stopped IS NULL;
+		SELECT
+			workers.worker_id INTO o_worker_id
+		FROM
+			workers
+		WHERE
+			name = a_workername AND stopped IS NULL;
+
 		EXIT WHEN found;
 		-- not there, so try to insert the worker
 		-- if someone else inserts the same worker concurrently,
 		-- we could get a unique-key failure, so use on conflict do nothing
-		INSERT INTO workers(name) VALUES (a_workername) INTO v_worker_id ON CONFLICT DO NOTHING RETURNING worker_id;
+		INSERT INTO
+			workers (name)
+		VALUES (a_workername) INTO o_worker_id
+			ON CONFLICT DO NOTHING RETURNING workers.worker_id;
+
 		EXIT WHEN found; -- exit loop when insert succeeded
 	END LOOP;
 
@@ -88,12 +98,12 @@ BEGIN
 	END IF;
 
 	BEGIN
-		INSERT INTO worker_actions(worker_id, action_id, filter) VALUES (v_worker_id, v_action_id, a_filter);
+		INSERT INTO worker_actions(worker_id, action_id, filter) VALUES (o_worker_id, v_action_id, a_filter);
 	EXCEPTION WHEN unique_violation THEN
 		-- fixme: or just ignore?
 		RAISE EXCEPTION 'worker % already can do action %', a_workername, a_actionname;
 	END;
 
-	v_listenstring := 'action:' || v_action_id || ':ready';
-	RETURN QUERY VALUES (v_worker_id, v_listenstring);
+	o_listenstring := 'action:' || v_action_id || ':ready';
+	RETURN;
 END$function$
