@@ -91,7 +91,24 @@ sub new {
 		. '/' . $cfg->{pg}->{db}
 	) or die 'no pg?';
 	$jcpg->max_total_connections($cfg->{pg}->{con} // 5); # sane value?
-	$jcpg->on(connection => sub { my ($e, $dbh) = @_; $log->debug("pg: new connection: $dbh"); });
+
+	if ($debug) {
+		# pg log messages come as perl warnings, so log warnings
+		$SIG{__WARN__} = sub {
+			my ($w) = @_;
+			$w =~ s/\n$//; $w =~ s/\n/ \\n /;
+			$log->warn($w)
+		};
+	}
+
+	$jcpg->on(connection => sub {
+		my ($jcpg, $dbh) = @_;
+		return unless $debug;
+		#$dbh->trace('DBD');
+		$dbh->{PrintWarn} = 1; # pg log messages are warnings too
+		$dbh->do("select set_config('client_min_messages', 'log', false)");
+		$log->debug("jcpg: $jcpg has new connection: $dbh");
+	});
 
 	# set up 1 central listen
 	# this tests the pg connection as well

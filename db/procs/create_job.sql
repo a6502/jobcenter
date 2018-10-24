@@ -1,5 +1,5 @@
-CREATE OR REPLACE FUNCTION jobcenter.create_job(wfname text, args jsonb, tag text DEFAULT NULL::text, impersonate text DEFAULT NULL::text, env jsonb DEFAULT NULL::jsonb)
- RETURNS TABLE(o_job_id bigint, o_listenstring text)
+CREATE OR REPLACE FUNCTION jobcenter.create_job(wfname text, args jsonb, tag text DEFAULT NULL::text, impersonate text DEFAULT NULL::text, env jsonb DEFAULT NULL::jsonb, OUT job_id bigint, OUT listenstring text)
+ RETURNS record
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO jobcenter, pg_catalog, pg_temp
@@ -9,6 +9,8 @@ AS $function$DECLARE
 	a_tag ALIAS FOR $3;
 	a_impersonate ALIAS FOR $4;
 	a_env ALIAS FOR $5;
+	o_job_id ALIAS FOR $6;
+	o_listenstring ALIAS FOR $7;
 	v_workflow_id int;
 	v_task_id int;
 	v_val jsonb;
@@ -112,7 +114,7 @@ BEGIN
 		 v_env, COALESCE((v_config->>'max_steps')::integer, 99), 1, now(),
 		 now(), now())
 	RETURNING
-		job_id INTO o_job_id;
+		jobs.job_id INTO o_job_id;
 
 	-- wake up maestro
 	--RAISE NOTICE 'NOTIFY "jobtaskdone", %', (v_workflow_id::TEXT || ':' || v_task_id::TEXT || ':' || o_job_id::TEXT );
@@ -120,6 +122,5 @@ BEGIN
 	
 	o_listenstring := 'job:' || o_job_id::TEXT || ':finished';
 	-- and inform the caller
-	RETURN NEXT;
 	RETURN;
 END$function$
