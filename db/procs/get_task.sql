@@ -1,17 +1,14 @@
-CREATE OR REPLACE FUNCTION jobcenter.get_task(a_workername text, a_actionname text, a_job_id bigint DEFAULT NULL::bigint)
- RETURNS TABLE(o_job_id bigint, o_job_cookie text, o_in_args jsonb, o_env jsonb)
+CREATE OR REPLACE FUNCTION jobcenter.get_task(a_workername text, a_actionname text, a_job_id bigint DEFAULT NULL::bigint, OUT o_job_id bigint, OUT o_job_cookie text, OUT o_in_args jsonb, OUT o_env jsonb)
+ RETURNS record
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$DECLARE
 	v_action_id int;
 	v_config jsonb;
-	v_timeout timestamptz DEFAULT null;
 	v_worker_id bigint;
 	v_workflow_id int;
 	v_task_id int;
-	v_key text;
-	v_val jsonb;
 	v_filter jsonb;
 BEGIN
 	SELECT
@@ -35,8 +32,8 @@ BEGIN
 
 	IF a_job_id IS NOT NULL THEN
 		SELECT
-			job_id, workflow_id, task_id, out_args, task_state -> 'env'
-			INTO o_job_id, v_workflow_id, v_task_id, o_in_args, o_env
+			job_id, workflow_id, task_id
+			INTO o_job_id, v_workflow_id, v_task_id
 		FROM
 			jobs AS j
 			JOIN tasks AS t USING (task_id, workflow_id)
@@ -50,8 +47,8 @@ BEGIN
 	ELSE
 		-- poll
 		SELECT
-			job_id, workflow_id, task_id, out_args, task_state -> 'env'
-			INTO o_job_id, v_workflow_id, v_task_id, o_in_args, o_env
+			job_id, workflow_id, task_id
+			INTO o_job_id, v_workflow_id, v_task_id
 		FROM
 			jobs AS j
 			JOIN tasks AS t USING (task_id, workflow_id)
@@ -65,12 +62,8 @@ BEGIN
 	END IF;
 
 	IF NOT FOUND THEN
-		-- RAISE NOTICE 'task not found for job_id % and action_id %', a_job_id, v_action_id;
+		-- RAISE LOG 'task not found for job_id % and action_id %', a_job_id, v_action_id;
 		RETURN;
-	END IF;
-
-	IF v_config ? 'timeout' THEN
-		v_timeout = now() + (v_config->>'timeout')::interval;
 	END IF;
 
 	UPDATE jobs SET
@@ -78,24 +71,27 @@ BEGIN
 		state = 'working',
 		task_state = COALESCE(task_state, '{}'::jsonb) || jsonb_build_object('worker_id', v_worker_id),
 		cookie = md5('cookie' || workflow_id::text || task_id::text || job_id::text || now()::text || random()::text)::uuid,
-		timeout = v_timeout
+		timeout = CASE WHEN v_config ? 'timeout' THEN now() + (v_config->>'timeout')::interval ELSE null END
 	WHERE
 		job_id = o_job_id
 		AND task_id = v_task_id
 		AND state = 'ready'
-	RETURNING cookie INTO o_job_cookie;
+	RETURNING
+		cookie,
+		COALESCE(out_args, '{}'::jsonb),
+		COALESCE(task_state -> 'env', '{}'::jsonb) ||
+			CASE WHEN task_state ? 'tries'
+				THEN jsonb_build_object('tries', task_state->'tries')
+				ELSE '{}'::jsonb
+			END
+		INTO o_job_cookie, o_in_args, o_env;
 
 	IF NOT FOUND THEN
 		-- should not happen because of select for update?
-		RAISE NOTICE 'task gone for job_id % and action_id %', o_job_id, v_action_id;
+		RAISE LOG 'task gone for job_id % and action_id %', o_job_id, v_action_id;
 		RETURN;
 	END IF;
 
-	IF o_in_args IS NULL THEN
-		-- maybe we should do this in the client?
-		o_in_args = '{}'::jsonb;
-	END IF;
-	RAISE NOTICE 'get_task: o_in_args % o_env %', o_in_args, o_env;
-	RETURN NEXT;
+	RAISE LOG 'get_task: o_job_id % o_cookie % o_in_args % o_env %', o_job_id, o_job_cookie, o_in_args, o_env;
 	RETURN;
 END$function$
