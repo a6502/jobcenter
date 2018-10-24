@@ -545,45 +545,49 @@ sub loadproc {
 
 		if ($funcsig ne $dbfuncsig) {
 			$procsrc = "DROP FUNCTION $dbfunc;\n" . $procsrc;
+			$dbprocsrc = undef; # to set grants below
+		}
+	}
 
-			# now figure out the owner and grants
-			my $JCSYSTEM = $cfg->{system}->{role} or die 'no system role?';
-			my $JCPERL = $cfg->{perl}->{role} or die 'no perl role?';
-			my $JCCLIENT = $cfg->{client}->{user} or die 'no client role?';
-			my $JCMAESTRO = $cfg->{maestro}->{user} or die 'no maestro role?';
+	unless ($dbprocsrc) {
+		# now figure out the owner and grants
+		my $JCSYSTEM = $cfg->{system}->{role} or die 'no system role?';
+		my $JCPERL = $cfg->{perl}->{role} or die 'no perl role?';
+		my $JCCLIENT = $cfg->{client}->{user} or die 'no client role?';
+		my $JCMAESTRO = $cfg->{maestro}->{user} or die 'no maestro role?';
+		my $tmpfunc = $func;
+		$tmpfunc =~ s/^jobcenter\.//; 
 
-			if ($lang eq 'plperl' and $secdef) {
-				$procsrc .= <<"EOT";
+		if ($lang eq 'plperl' and $secdef) {
+			$procsrc .= <<"EOT";
 ;
 ALTER FUNCTION $func OWNER TO $JCPERL;
 REVOKE ALL ON FUNCTION $func FROM PUBLIC;
 GRANT ALL ON FUNCTION $func TO $JCPERL;
 EOT
-			} elsif ($secdef and $maestro{$func}) {
-				$procsrc .= <<"EOT";
+		} elsif ($secdef and $maestro{$tmpfunc}) {
+			$procsrc .= <<"EOT";
 ;
 ALTER FUNCTION $func OWNER TO $JCSYSTEM;
 REVOKE ALL ON FUNCTION $func FROM PUBLIC;
 GRANT ALL ON FUNCTION $func TO $JCSYSTEM;
 GRANT ALL ON FUNCTION $func TO $JCMAESTRO;
 EOT
-			} elsif ($secdef) {
-				$procsrc .= <<"EOT";
+		} elsif ($secdef) {
+			$procsrc .= <<"EOT";
 ;
 ALTER FUNCTION $func OWNER TO $JCSYSTEM;
 REVOKE ALL ON FUNCTION $func FROM PUBLIC;
 GRANT ALL ON FUNCTION $func TO $JCSYSTEM;
 GRANT ALL ON FUNCTION $func TO $JCCLIENT;
 EOT
-			} else {
-				$procsrc .= <<"EOT";
+		} else {
+			$procsrc .= <<"EOT";
 ;
 ALTER FUNCTION $func OWNER TO $JCSYSTEM;
 REVOKE ALL ON FUNCTION $func FROM PUBLIC;
 GRANT ALL ON FUNCTION $func TO $JCSYSTEM;
 EOT
-
-			}
 		}
 	}
 
@@ -691,6 +695,11 @@ EOT
 		my $acl = $f->{proacl} ? join(',', @{$f->{proacl}}) : '';
 		#print STDERR Dumper($f);
 		if ($f->{lanname} eq 'plpgsql' or $f->{lanname} eq 'sql') {
+			if ($f->{procowner} ne 'jc_system') {
+				$sql .= <<"EOT";
+ALTER FUNCTION $f->{proc} OWNER TO $JCSYSTEM;
+EOT
+			}
 			if ($f->{prosecdef}) {
 				if ($maestro{$f->{proc}}) {
 					if ($acl ne "$JCSYSTEM=X/$JCSYSTEM,$JCMAESTRO=X/$JCSYSTEM") {
@@ -717,6 +726,11 @@ EOT
 				}
 			}
 		} elsif ($f->{lanname} eq 'plperl') {
+			if ($f->{procowner} ne $JCPERL) {
+				$sql .= <<"EOT";
+ALTER FUNCTION $f->{proc} OWNER TO $JCPERL;
+EOT
+			}
 			if ($acl ne "$JCPERL=X/$JCPERL") {
 				$sql .= <<"EOT";
 REVOKE ALL ON FUNCTION $f->{proc} FROM PUBLIC;
@@ -811,15 +825,15 @@ WHERE pg_catalog.pg_function_is_visible(p.oid)
   AND p.proname = $1
 EOT
 
-# stored procedures called by the maestro (for seccheck/secfix)
+# stored procedures called by the maestro (for loadproc/seccheck/secfix)
 %maestro = map { $_ => 1 } qw[
 	do_archival_and_cleanup(text)
-	do_check_workers()
+	do_crash_recovery(text)
 	do_jobtask(jobtask)
 	do_jobtaskdone(jobtask)
 	do_jobtaskerror(jobtask)
 	do_ping(bigint)
-	do_timeout()
+	do_timeout(text)
 ];
 
 } #BEGIN
