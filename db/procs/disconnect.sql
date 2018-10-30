@@ -18,6 +18,9 @@ BEGIN
 	RETURNING
 		worker_id INTO v_worker_id;
 
+
+        RAISE LOG 'disconnect for % (%)', a_workername, v_worker_id;
+
 	IF NOT FOUND THEN
 		RETURN FALSE;
 	END IF;
@@ -39,9 +42,9 @@ BEGIN
 		WHERE
 			state = 'working'
 			AND (task_state->>'worker_id')::bigint = v_worker_id
-			AND (config->>'restartable')::boolean = true
+			AND (config->>'retryable')::boolean = true
 	LOOP
-		RAISE LOG 'raising error in %s', (v_workflow_id, v_task_id, v_job_id)::jobtask;
+		RAISE LOG 'raising error in %', (v_workflow_id, v_task_id, v_job_id)::jobtask;
 		PERFORM do_task_error((v_workflow_id, v_task_id, v_job_id)::jobtask, v_error);
 	END LOOP;
 
