@@ -104,12 +104,12 @@ BEGIN
 			)
 		);
 
-		-- fixme: copied from do_raise_error
 		UPDATE jobs SET
 			state = 'error',
 			task_completed = now(),
 			timeout = NULL,
-			out_args = v_errargs
+			out_args = NULL,
+			task_state = COALESCE(task_state, '{}'::jsonb) || v_errargs
 		WHERE job_id = v_parentjob_id;
 
 		PERFORM do_log(v_parentjob_id, false, null, v_errargs);
