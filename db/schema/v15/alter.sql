@@ -15,10 +15,3 @@ CREATE TABLE jobcenter.call_stats_collected (
 
 
 ALTER TABLE jobcenter.call_stats_collected OWNER TO $JCSYSTEM;
-
-
-DO $BODY$
-BEGIN
-        RAISE NOTICE 'Please load super.sql as a Postgresql superuser.';
-END
-$BODY$;
