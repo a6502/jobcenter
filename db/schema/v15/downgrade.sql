@@ -1,5 +1,2 @@
-DO $BODY$
-BEGIN
-	ASSERT false, 'sorry, downgrade too complicated';
-END
-$BODY$;
+DROP TABLE jobcenter.call_stats;
+DROP TABLE jobcenter.call_stats_collected;
