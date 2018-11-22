@@ -95,7 +95,7 @@ sub new {
 	if ($debug) {
 		# pg log messages come as perl warnings, so log warnings
 		$SIG{__WARN__} = sub {
-			my ($w) = @_;
+			my $w = decode_utf8($_[0]);
 			$w =~ s/\n$//; $w =~ s/\n/ \\n /;
 			$log->warn($w)
 		};
@@ -510,7 +510,7 @@ sub rpc_get_job_status {
 				return;
 			}
 			$self->log->debug("got status for job_id $job_id outargs $outargs");
-			$outargs = decode_json($outargs);
+			$outargs = decode_json(encode_utf8($outargs));
 			$rpccb->($job_id, $outargs);
 		}
 	)->catch(sub {
@@ -528,7 +528,7 @@ sub rpc_announce {
 	my $filter     = $i->{filter};
 	if (defined $filter) {
 		die "filter must be a json object" unless ref $filter eq 'HASH';
-		$filter = encode_json($filter);
+		$filter = decode_utf8(encode_json($filter));
 	}
 
 	my ($worker_id, $listenstring);
@@ -891,9 +891,10 @@ sub rpc_get_task {
 				$rpccb->();
 				return;
 			}
-			$res = $res->array;
+			#$res = $res->array;
 			my ($job_id2, $cookie, $inargsj, $env);
-			($job_id2, $cookie, $inargsj, $env) = @{$res} if ref $res;
+			($job_id2, $cookie, $inargsj, $env) = @{$res->array}; # if ref $res;
+			$res->finish;
 			unless ($cookie) {
 				$self->log->debug("no cookie?");
 				$rpccb->();
@@ -908,8 +909,9 @@ sub rpc_get_task {
 				return;
 			}
 
-			my $inargs = decode_json( $inargsj ); # unless $self->json;
-			$env = decode_json( $env ) if $env;
+			#say 'HEX ', join(' ', unpack('(H2)*', encode_utf8($inargsj)));
+			my $inargs = decode_json(encode_utf8($inargsj)); # unless $self->json;
+			$env = decode_json(encode_utf8($env)) if $env;
 
 			# timeouts (if any) will be done by the maestro..
 			#my $tmr = Mojo::IOLoop->timer($self->timeout => sub { $self->_task_timeout($cookie) } );
@@ -951,9 +953,9 @@ sub rpc_task_done {
 
 	local $@;
 	eval {
-		$outargs = encode_json( $outargs );
+		$outargs = decode_utf8(encode_json($outargs));
 	};
-	$outargs = encode_json({'error' => 'cannot json encode outargs: ' . $@}) if $@;
+	$outargs = decode_utf8(encode_json({'error' => 'cannot json encode outargs: ' . $@})) if $@;
 	$self->log->debug("task_done got $@") if $@;
 
 	$self->log->debug("worker '$client->{workername}' done with action '$task->{actionname}' for job $task->{job_id}"
