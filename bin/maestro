@@ -12,8 +12,9 @@ BEGIN {
 }
 
 # standard perl
-use Cwd qw(realpath);
+use Cwd qw( realpath );
 use Data::Dumper;
+use Encode qw( decode_utf8 );
 use FindBin;
 use Getopt::Long;
 use Time::HiRes qw( time );
@@ -154,7 +155,7 @@ sub main {
 	if ($debug) {
 		# pg log messages come as perl warnings, so log warnings
 		$SIG{__WARN__} = sub {
-			my ($w) = @_;
+			my $w = decode_utf8($_[0]);
 			$w =~ s/\n$//; $w =~ s/\n/ \\n /;
 			$log->warn($w)
 		};
