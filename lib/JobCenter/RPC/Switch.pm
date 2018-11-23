@@ -571,7 +571,7 @@ sub _create_job {
 
 	my $impersonate = $request->{rpcswitch}->{who};
 	my $vci = $request->{rpcswitch}->{vci};
-	my $env;
+	my $env = '{"rpcswitch":true}';
 
 	my $inargs = decode_utf8(encode_json($params));
 
@@ -731,7 +731,7 @@ sub _get_status {
 				return;
 			}
 			$self->log->debug("got status for job_id $job_id outargs $outargs");
-			$outargs = decode_json($outargs);
+			$outargs = decode_json(encode_utf8($outargs));
 			if ($outargs->{error}) {
 				$cb1->(RES_ERROR, $outargs->{error});
 			} else {
@@ -890,7 +890,7 @@ sub _get_task {
 				return;
 			}
 			$self->log->debug("actionname $actionname cookie $cookie inargs $inargs");
-			$inargs = decode_json($inargs);
+			$inargs = decode_json(encode_utf8($inargs));
 
 			my $task = {
 				actionname => $actionname,
@@ -946,7 +946,7 @@ sub _task_done {
 		$outargs = {scalar => $outargs};
 	}
 	# should work as it came in via json rpc
-	$outargs = encode_json($outargs);
+	$outargs = decode_utf8(encode_json($outargs));
 
 	$self->log->debug("done with action $task->{actionname} for job $task->{job_id}, outargs $outargs\n");
 
