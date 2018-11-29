@@ -427,6 +427,7 @@ sub _poll_done {
 			my ($d, $err, $res) = @_;
 			die $err if $err;
 			my ($outargs) = @{$res->array};
+			$res->finish;
 			return unless $outargs;
 			delete $self->{jobs}->{$job->{job_id}};
 			Mojo::IOLoop->remove($job->tmr) if $job->tmr;
