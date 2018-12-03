@@ -13,13 +13,19 @@ AS $function$DECLARE
 	v_workers bigint[];
 	v_workflow_id integer;
 	v_state job_state;
+	v_task_state jsonb;
 	v_next integer;
 	v_eventdata jsonb;
 	v_jobtask jobtask;
 	v_slept interval;
 BEGIN
-	FOR v_job_id, v_task_id, v_workflow_id, v_state IN SELECT job_id, task_id, workflow_id, state
-			FROM jobs WHERE timeout <= now() LOOP
+	FOR v_job_id, v_task_id, v_workflow_id, v_state, v_task_state IN
+			SELECT
+				 job_id, task_id, workflow_id, state, task_state
+			FROM
+				jobs
+			WHERE timeout <= now()
+			LOOP
 		RAISE LOG 'job % state %', v_job_id, v_state;
 		v_jobtask := (v_workflow_id, v_task_id, v_job_id)::jobtask;
 		CASE v_state
@@ -36,6 +42,18 @@ BEGIN
 			);
 			RAISE LOG 'eventwait timeout for job %', v_job_id;
 			PERFORM do_task_done(v_jobtask, v_eventdata);
+		WHEN 'lockwait' THEN
+			RAISE LOG 'job % timed out in lockwait task %', v_job_id, v_task_id;
+			v_eventdata = jsonb_build_object(
+				'error', jsonb_build_object(
+					'class', 'lock ',
+					'msg', format('locktype %s lockvalue %s timeout for job %s in task %s',
+							v_task_state->>'waitforlocktype', v_task_state->>'waitforlockvalue',
+							v_job_id, v_task_id
+						)
+				)
+			);
+			PERFORM do_task_error(v_jobtask, v_eventdata);
 		WHEN 'retrywait' THEN
 			-- simpels?
 			SELECT
@@ -82,15 +100,6 @@ BEGIN
 			RAISE LOG 'retry action % for %', v_action_id, v_job_id;
 			RAISE LOG 'NOTIFY "action:%:ready", %', v_action_id, v_payload;
 			PERFORM pg_notify('action:' || v_action_id || ':ready', v_payload::text);
-		WHEN 'working' THEN
-			RAISE LOG 'job % timed out in task %', v_job_id, v_task_id;
-			v_eventdata = jsonb_build_object(
-				'error', jsonb_build_object(
-					'class', 'soft',
-					'msg', format('timeout for job %s in task %s', v_job_id, v_task_id)
-				)
-			);
-			PERFORM do_task_error(v_jobtask, v_eventdata);
 		WHEN 'sleeping' THEN
 			-- done sleeping
 			SELECT
@@ -104,6 +113,15 @@ BEGIN
 			);
 			RAISE LOG 'timeout for job %', v_job_id;
 			PERFORM do_task_done(v_jobtask, v_eventdata);
+		WHEN 'working' THEN
+			RAISE LOG 'job % timed out in task %', v_job_id, v_task_id;
+			v_eventdata = jsonb_build_object(
+				'error', jsonb_build_object(
+					'class', 'soft',
+					'msg', format('timeout for job %s in task %s', v_job_id, v_task_id)
+				)
+			);
+			PERFORM do_task_error(v_jobtask, v_eventdata);
 		ELSE -- this should not happen
 			UPDATE
 				jobs

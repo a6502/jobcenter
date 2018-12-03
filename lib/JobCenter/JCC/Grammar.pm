@@ -157,6 +157,7 @@ statement:
 	| +unsubscribe
 #	| wait_for_child
 	| +wait_for_event
+	| +wait_for_lock
 	| +while
 
 assert: / 'assert' - / ( +condition colon +rhs-body | `syntax error: assert <condition>:\n<string-body>` )
@@ -271,11 +272,13 @@ try-block: block
 
 catch-block: block
 
-unlock: / 'unlock' + / identifier + ( perl_block | rhs )
+unlock: / 'unlock' + / +locktype + +lockvalue
 
-unsubscribe: / 'unsubscribe' <colon> / assignments
+unsubscribe: / 'unsubscribe' / colon assignments
 
 wait_for_event: / 'wait_for_event' / colon call-body
+
+wait_for_lock: / 'wait_for_lock' + / +locktype colon assignments
 
 while: / 'while' + / +condition colon +block
 

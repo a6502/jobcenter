@@ -1,0 +1,29 @@
+# locks
+workflow lockwaitest:
+in:
+	in string
+out:
+	out string;
+wfomap:
+	out = v.thing;
+locks:
+	foo _ manual
+do:
+	eval:
+		thing = 'got ' . a.in
+	try:
+		wait_for_lock foo:
+			value = 'bar'
+			wait = 'no'
+	catch:
+		eval:
+			thing = e.'_error'.msg
+		return
+	eval:
+		thing .= ' and got lock "foo" with "bar"'
+	sleep '5.55 seconds'
+	eval:
+		thing .= ' and did a nap'
+	unlock foo 'bar'
+	eval:
+		thing .= ' and unlocked lock "foo"'

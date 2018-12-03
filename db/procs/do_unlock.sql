@@ -118,8 +118,8 @@ BEGIN
 			PERFORM pg_notify( 'jobtaskdone', v_waitjobtask::text);
 			RETURN; -- and done
 		-- ELSE
-		-- the locks is contended but nobody is waiting?
-		-- is this an error?
+		-- the lock is contended but nobody is waiting?
+		-- this can happen when a lock timed out..
 		END IF;
 	END IF;
 	-- just delete

@@ -9,24 +9,25 @@ AS $function$DECLARE
 	v_action_id int;
 	v_locktype text;
 	v_lockvalue text;
-	v_newvars jsonb;
 	v_lockinherit boolean;
+	v_lockwait text;
 	v_stringcode text;
+	v_newvars jsonb;
 	v_contended integer;
 	v_parentjob_id bigint;
 	v_top_level_job_id bigint;
 	v_inheritable boolean;
 	v_lockjob_id bigint;
 	v_deadlockpath bigint[];
+	v_timeout timestamptz;
 BEGIN
 	-- paranoia check with side effects
 	SELECT
 		arguments, environment, variables, action_id, parentjob_id,
 		attributes->>'locktype', attributes->>'lockvalue', (attributes->>'lockinherit')::boolean,
-		attributes->>'stringcode'
+		attributes->>'stringcode', COALESCE(attributes->>'lockwait', 'yes')
 		INTO v_args, v_env, v_vars, v_action_id, v_parentjob_id,
-		v_locktype, v_lockvalue, v_lockinherit,
-		v_stringcode
+		v_locktype, v_lockvalue, v_lockinherit, v_stringcode, v_lockwait
 	FROM
 		jobs
 		JOIN tasks USING (workflow_id, task_id)
@@ -68,9 +69,14 @@ BEGIN
 	VALUES
 		(a_jobtask.job_id, v_locktype, v_lockvalue, v_lockinherit,
 		 CASE WHEN v_lockinherit THEN a_jobtask.job_id ELSE NULL END)
-	ON CONFLICT (locktype, lockvalue) DO UPDATE
-	SET contended = locks.contended + 1 WHERE locks.locktype=v_locktype AND locks.lockvalue = v_lockvalue
-	RETURNING job_id, contended, inheritable INTO v_lockjob_id, v_contended, v_inheritable;
+	ON CONFLICT
+		(locktype, lockvalue)
+	DO UPDATE
+		SET contended = locks.contended + 1
+	WHERE
+		locks.locktype=v_locktype AND locks.lockvalue = v_lockvalue
+	RETURNING
+		job_id, contended, inheritable INTO v_lockjob_id, v_contended, v_inheritable;
 
 	IF v_contended = 0 AND v_lockjob_id = a_jobtask.job_id THEN
 		-- now that was easy
@@ -103,6 +109,20 @@ BEGIN
 		END IF;
 	END IF;
 
+	IF v_lockwait = 'no' THEN
+		-- raise error;
+		RETURN do_raise_error(a_jobtask,
+				format('failed to get locktype %s lockvalue %s',
+					v_locktype, v_lockvalue
+				)
+			);
+	ELSIF v_lockwait = 'yes' THEN
+		v_timeout = null;
+	ELSE
+		-- catch?
+		v_timeout = now() + v_lockwait::interval;
+	END IF;
+
 	-- mark ourselves as waiting for this lock
 	-- fixme: log inargs?
 	UPDATE jobs SET
@@ -111,7 +131,8 @@ BEGIN
 			'waitforlocktype', v_locktype,
 			'waitforlockvalue', v_lockvalue,
 			'waitforlockinherit', v_lockinherit),
-		task_started = now()
+		task_started = now(),
+		timeout = v_timeout
 	WHERE
 		job_id = a_jobtask.job_id;
 

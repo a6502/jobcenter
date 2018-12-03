@@ -126,7 +126,9 @@ sub got_to_hashify {
 *got_lock = \&got_to_hashify;
 *got_repeat = \&got_to_hashify;
 *got_try = \&got_to_hashify;
+*got_unlock = \&got_to_hashify;
 *got_wait_for_event = \&got_to_hashify;
+*got_wait_for_lock = \&got_to_hashify;
 *got_when = \&got_to_hashify;
 *got_while = \&got_to_hashify;
 *got_workflow = \&got_to_hashify;

@@ -604,10 +604,20 @@ sub gen_label {
 sub gen_lock {
 	my ($self, $lock) = @_;
 	my $tid;
-	my ($type, $value) = @{$lock}{qw(locktype lockvalue)};
+	my ($type, $value, $assignment) = @{$lock}{qw(locktype lockvalue assignment)};
 	die "unkown lock $type" unless $self->{locks}->{$type};
 	die "lock type $type not declared manual" unless $self->{locks}->{$type}->{manual};
-	$value = make_perl($value, STRING);
+	my $wait;
+	if ($value) {
+		$value = make_perl($value, STRING);
+	} else {
+		die "no assignments for wait_for_lock $value?" unless ref $assignment eq 'ARRAY';
+		my $h = assignments_to_hashref($assignment);
+		$value = $h->{value} or die 'missing lock value in wait_for_lock';
+		$wait = $h->{wait} or die 'missing wait spec in wait_for_lock'; # todo: check for valid timeout?
+		$value =~ s/'/\\'/g;
+		$value = "'$value'";
+	}
 	if ( $self->{locks}->{$type}->{value} ne '_' ) {
 		warn "overriding locks value $self->{locks}->{$type}->{value} with $value";
 	}
@@ -616,6 +626,7 @@ sub gen_lock {
 			locktype => $type,
 			stringcode => $value,
 			lockinherit => $self->{locks}->{$type}->{inherit},
+			($wait ? (lockwait => $wait) : ()),
 			#_line => $lock->{_line},
 		})
 	);
@@ -729,7 +740,7 @@ sub gen_unlock {
 	# we don't need to check locktype against the db because gen_locks did that
 	# and parse_unlocks checked that the locktype of the unlock is in the
 	# declared list of locks from the workflow
-	my ($type, $value) = @$unlock;	
+	my ($type, $value) = @{$unlock}{qw(locktype lockvalue)};
 	die "unkown lock $type" unless $self->{locks}->{$type};
 	die "lock type $type not declared manual" unless $self->{locks}->{$type}->{manual};
 	$value = make_perl($value, STRING);
@@ -768,6 +779,9 @@ sub gen_wait_for_event {
 	return ($tid, $tid);
 }
 
+# wait_for_lock is a special case handled in gen_lock
+*gen_wait_for_lock = \&gen_lock;
+
 sub gen_while {
 	my ($self, $while) = @_;
 	my $whiletid = $self->instask(T_BRANCH, attributes => # while test
@@ -797,6 +811,35 @@ sub get_type {
 	#my (k, v) = each(%$ast);
 	return each(%$ast);
 }
+
+sub assignments_to_hashref {
+	my ($ast) = @_;
+
+	print 'assignments_to_hashref: ', Dumper($ast);
+
+	my %h;
+
+	for my $a (@$ast) {
+		my ($lhs, $op, $rhs) = @{$a}{qw(lhs assignment_operator rhs)};
+		die "cannot do op $op yet" unless $op eq '=';
+		my ($key, $val) = get_type($rhs->[0]);
+		if ($key eq 'number'
+		    or $key eq 'boolean'
+		    or $key eq 'null'
+		    or $key eq 'single_quoted_string'
+		    or $key eq 'double_quoted_string') {
+			$h{$lhs->[0]} = $val;
+		} else {
+			die "dunno how to make a literal from $key";
+		}
+
+	}
+
+	print 'assignments_to_hashref: ', Dumper(\%h);
+
+	return \%h;
+}
+
 
 # note: not a method
 sub make_rhs {
