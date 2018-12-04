@@ -7,6 +7,7 @@ AS $function$DECLARE
 	v_workflow_id INT;
 	v_task_id INT;
 	v_wait boolean;
+	v_detach boolean;
 	v_args JSONB;
 	v_parent_env JSONB;
 	v_jcenv JSONB;
@@ -20,9 +21,10 @@ BEGIN
 	-- find the sub-worklow using the task in the parent
 	-- get the arguments and variables as well
 	SELECT
-		action_id, COALESCE( (attributes->>'wait')::boolean, true), arguments,
+		action_id, COALESCE( (attributes->>'wait')::boolean, true),
+		COALESCE( (attributes->>'detach')::boolean, false), arguments,
 		COALESCE(environment, '{}'::jsonb), variables, current_depth
-		INTO v_workflow_id, v_wait, v_args, v_parent_env, v_vars, v_curdepth
+		INTO v_workflow_id, v_wait, v_detach, v_args, v_parent_env, v_vars, v_curdepth
 	FROM 
 		actions
 		JOIN tasks USING (action_id)
@@ -84,17 +86,20 @@ BEGIN
 
 	-- now create the new job and mark the start task 'done'
 	INSERT INTO jobcenter.jobs
-		(workflow_id, task_id, parentjob_id, state, arguments, environment,
+		(workflow_id, task_id, state, arguments, environment,
 		 max_steps, current_depth, task_entered, task_started, task_completed,
-		 job_state)
+		 parentjob_id, job_state)
 	VALUES
-		(v_workflow_id, v_task_id, a_parentjobtask.job_id, 'done', v_inargs, v_env,
+		(v_workflow_id, v_task_id, 'done', v_inargs, v_env,
 		 COALESCE((v_config->>'max_steps')::integer, 99), v_curdepth + 1, now(), now(), now(),
-		 jsonb_build_object('parenttask_id', a_parentjobtask.task_id, 'parentwait', v_wait))
+		 CASE WHEN v_detach THEN null ELSE a_parentjobtask.job_id END,
+		 CASE WHEN v_detach THEN null ELSE
+			jsonb_build_object('parenttask_id', a_parentjobtask.task_id, 'parentwait', v_wait)
+		 END)
 	RETURNING
 		job_id INTO v_job_id;
 
-	IF v_wait THEN
+	IF v_wait AND NOT v_detach THEN
 		-- mark the parent job as waiting for a child job
 		UPDATE jobs SET
 			state = 'childwait',
@@ -109,7 +114,7 @@ BEGIN
 		PERFORM pg_notify( 'jobtaskdone',  ( '(' || v_workflow_id || ',' || v_task_id || ',' || v_job_id || ')' ));
 		-- and continue to next task
 		-- logging the child job_id in the out_args field
-		RETURN do_task_epilogue(a_parentjobtask, false, null, null, to_jsonb(v_job_id));
+		RETURN do_task_epilogue(a_parentjobtask, false, null, v_inargs, to_jsonb(v_job_id));
 	END IF;
 	
 	-- not reached

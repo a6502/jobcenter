@@ -458,9 +458,9 @@ sub gen_call {
 	# only get_split calls us with a third argument for some extra magic
 	my ($self, $call, $magic) = @_;
 
-	$magic = ($magic) ? 1 : 0;
+	$magic = ($magic) ? $magic : 0;
 	# in magic mode gen_call can only call workflows (aka start childflows)
-	# and does so without waiting
+	# and does so without waiting (magic=1) and possibly detaching (magic=2)
 
 	my $types = '{action,procedure,workflow}';
 	$types = '{workflow}' if $magic;
@@ -498,7 +498,8 @@ EOF
 			to_json({
 				imapcode => $imap,
 				omapcode => $omap,
-				wait => ($magic) ? 0 : 1, # bleh.. !magic is undef, not 0
+				(($magic == 1) ? (wait => false) : ()),
+				(($magic == 2) ? (detach => true) : ()),
 				#_line => $call->{_line},
 			}));
 	return ($tid, $tid);
@@ -535,6 +536,21 @@ sub gen_case {
 	return ($casetid, $endcasetid);
 }	
 
+sub gen_detachflow {
+	my $self = shift;
+	return $self->gen_call(@_, 2); # more magic for gen_call
+}
+
+sub gen_eval {
+	my ($self, $eval) = @_;
+	my $evaltid = $self->instask(T_EVAL, attributes =>
+			to_json({
+				evalcode => make_perl($eval, OMAP),
+				#_line => $eval->{_line},
+			}));
+	return ($evaltid, $evaltid);
+}
+
 sub gen_if {
 	my ($self, $if) = @_;
 
@@ -563,17 +579,6 @@ sub gen_if {
 	}
 	return ($iftid, $endiftid);
 }	
-
-sub gen_eval {
-	my ($self, $eval) = @_;
-	my $evaltid = $self->instask(T_EVAL, attributes =>
-			to_json({
-				evalcode => make_perl($eval, OMAP),
-				#_line => $eval->{_line},
-			}));
-	return ($evaltid, $evaltid);
-}
-
 sub gen_goto {
 	my ($self, $goto) = @_;
 	my $gototid = $self->instask(T_NO_OP, attributes =>
@@ -676,7 +681,7 @@ sub gen_sleep {
 	my ($self, $sleep) = @_;
 	my $tid = $self->instask(T_SLEEP, attributes =>
 		to_json({
-			imapcode => '$i{\'timeout\'} = ' . make_rhs($sleep) . ';',
+			imapcode => '$i{\'timeout\'} = \'\' .' . make_rhs($sleep) . ';',
 			#_line => $sleep->{_line},
 		}));
 	return ($tid, $tid);

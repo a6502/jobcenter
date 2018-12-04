@@ -119,6 +119,7 @@ sub got_to_hashify {
 *got_call = \&got_to_hashify;
 *got_callflow = \&got_to_hashify;
 *got_case = \&got_to_hashify;
+*got_detachflow = \&got_to_hashify;
 *got_elsif = \&got_to_hashify;
 *got_event = \&got_to_hashify;
 *got_functioncall = \&got_to_hashify;

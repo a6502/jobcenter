@@ -51,8 +51,12 @@ BEGIN
 	--RAISE NOTICE 'v_inargs %', v_inargs;
 
 	-- now find out how long we are supposed to wait for that event..
-	v_timeout = now() + (v_inargs->>'timeout')::interval;
-	RAISE NOTICE 'wait until %', v_timeout;
+	IF v_inargs->>'timeout' <> 'null' THEN
+		v_timeout = now() + (v_inargs->>'timeout')::interval;
+		RAISE NOTICE 'wait until %', v_timeout;
+	ELSE
+		v_timeout = null;
+	END IF;
 
 	-- and what events we are actually interested in
 	SELECT array_agg(bla) INTO v_names FROM jsonb_array_elements_text(v_inargs->'events') AS bla;

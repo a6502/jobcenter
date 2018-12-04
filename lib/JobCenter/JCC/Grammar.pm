@@ -139,6 +139,7 @@ statement:
 	| +assert
 	| +call
 	| +case
+	| +detachflow
 	| +eval
 	| +goto
 	| +if
@@ -224,6 +225,8 @@ when: block-ondent / 'when' +  / +case-label colon +block
 case-label: identifier ( - COMMA - identifier )*
 
 case-else: block-ondent +else
+
+detachflow: / 'detachflow' + / +call-name colon ( +imap | `syntax error: detachflow [name]:\n<imap>` )
 
 eval: / 'eval' <colon> / ( assignments | `syntax error: eval:\n<assignments>` )
 
