@@ -619,9 +619,9 @@ sub gen_lock {
 		die "no assignments for wait_for_lock $value?" unless ref $assignment eq 'ARRAY';
 		my $h = assignments_to_hashref($assignment);
 		$value = $h->{value} or die 'missing lock value in wait_for_lock';
-		$wait = $h->{wait} or die 'missing wait spec in wait_for_lock'; # todo: check for valid timeout?
-		$value =~ s/'/\\'/g;
-		$value = "'$value'";
+		$wait = (eval $h->{wait}) or die 'missing wait spec in wait_for_lock';
+		# todo: check for valid timeout?
+		die "invalid wait spec '$wait'" unless $wait =~ /^((yes|no)$|(\d+))/;
 	}
 	if ( $self->{locks}->{$type}->{value} ne '_' ) {
 		warn "overriding locks value $self->{locks}->{$type}->{value} with $value";
@@ -817,6 +817,7 @@ sub get_type {
 	return each(%$ast);
 }
 
+# note: not a method
 sub assignments_to_hashref {
 	my ($ast) = @_;
 
@@ -827,17 +828,9 @@ sub assignments_to_hashref {
 	for my $a (@$ast) {
 		my ($lhs, $op, $rhs) = @{$a}{qw(lhs assignment_operator rhs)};
 		die "cannot do op $op yet" unless $op eq '=';
-		my ($key, $val) = get_type($rhs->[0]);
-		if ($key eq 'number'
-		    or $key eq 'boolean'
-		    or $key eq 'null'
-		    or $key eq 'single_quoted_string'
-		    or $key eq 'double_quoted_string') {
-			$h{$lhs->[0]} = $val;
-		} else {
-			die "dunno how to make a literal from $key";
-		}
-
+		$lhs = $lhs->[0];
+		my $val = make_perl($rhs, STRING);
+		$h{$lhs} = $val;
 	}
 
 	print 'assignments_to_hashref: ', Dumper(\%h);
