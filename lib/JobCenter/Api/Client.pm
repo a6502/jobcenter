@@ -12,7 +12,9 @@ has [qw(actions api con from id ns ping reqauth rpc stream tmr who
 
 sub new {
 	my $self = shift->SUPER::new();
-	my ($api, $rpc, $stream, $id) = @_;
+	my ($server, $stream, $id) = @_;
+	my $api = $server->api;
+	my $rpc = $api->rpc;
 	#say 'new connection!';
 	die 'no stream?' unless $stream and $stream->can('write');
 	my $handle = $stream->handle;

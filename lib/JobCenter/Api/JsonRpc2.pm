@@ -29,12 +29,11 @@ use JSON::RPC2::TwoWay;
 
 # JobCenter
 use JobCenter::Api::Auth;
-use JobCenter::Api::Client;
 use JobCenter::Api::Job;
 use JobCenter::Api::Task;
 use JobCenter::Api::WorkerAction;
 use JobCenter::Pg;
-use JobCenter::Util qw(:daemon);
+use JobCenter::Api::Server;
 
 has [qw(
 	actionnames
@@ -52,7 +51,7 @@ has [qw(
 	pid_file
 	ping
 	pqq
-	server
+	servers
 	rpc
 	tasks
 	timeout
@@ -64,25 +63,21 @@ sub new {
 	my $self = $class->SUPER::new();
 
 	my $cfg;
-	if ($args{cfgpath}) {
-		$cfg = Config::Tiny->read($args{cfgpath});
-		die 'failed to read config ' . $args{cfgpath} . ': ' . Config::Tiny->errstr unless $cfg;
-	} else {
-		die 'no cfgpath?';
-	}
+	die 'no cfgpath?' unless $args{cfgpath};
+	$cfg = $self->{cfg} = Config::Tiny->read($args{cfgpath});
+	die 'failed to read config ' . $args{cfgpath} . ': ' . Config::Tiny->errstr unless $cfg;
 
-	my $apiname = ($args{apiname} || fileparse($0)) . " [$$]";
-	my $daemon = $args{daemon} // 0; # or 1?
-	my $debug = $args{debug} // 0; # or 1?
-	my $log = $args{log} // Mojo::Log->new();
-	$log->path(realpath("$FindBin::Bin/../log/$apiname.log")) if $daemon;
+	my $apiname = $self->{apiname} = ($args{apiname} || fileparse($0)) . " [$$]";
+	my $debug = $self->{debug} = $args{debug} // 0; # or 1?
+	my $log = $self->{log} = $args{log} // Mojo::Log->new();
 
-	my $pid_file = $cfg->{pid_file} // realpath("$FindBin::Bin/../log/$apiname.pid");
-	die "$apiname already running?" if $daemon and check_pid($pid_file);
+	#$log->path(realpath("$FindBin::Bin/../log/$apiname.log")) if $daemon;
+	#my $pid_file = $cfg->{pid_file} // realpath("$FindBin::Bin/../log/$apiname.pid");
+	#die "$apiname already running?" if $daemon and check_pid($pid_file);
 
 	# make our clientname the application_name visible in postgresql
 	$ENV{'PGAPPNAME'} = $apiname;
-	my $jcpg = JobCenter::Pg->new(
+	my $jcpg = $self->{jcpg} = JobCenter::Pg->new(
 		'postgresql://'
 		. $cfg->{api}->{user}
 		. ':' . $cfg->{api}->{pass}
@@ -124,7 +119,7 @@ sub new {
 		$self->log->debug("pubsub cb $@") if $@;
 	});
 
-	my $rpc = JSON::RPC2::TwoWay->new(debug => $debug) or die 'no rpc?';
+	my $rpc = $self->{rpc} = JSON::RPC2::TwoWay->new(debug => $debug) or die 'no rpc?';
 
 	$rpc->register('announce', sub { $self->rpc_announce(@_) }, non_blocking => 1, state => 'auth');
 	$rpc->register('create_job', sub { $self->rpc_create_job(@_) }, non_blocking => 1, state => 'auth');
@@ -137,48 +132,28 @@ sub new {
 	$rpc->register('task_done', sub { $self->rpc_task_done(@_) }, notification => 1, state => 'auth');
 	$rpc->register('withdraw', sub { $self->rpc_withdraw(@_) }, state => 'auth');
 
-	my $serveropts = { port => ( $cfg->{api}->{listenport} // 6522 ) };
-	$serveropts->{address} = $cfg->{api}->{listenaddress} if $cfg->{api}->{listenaddress};
-	if ($cfg->{api}->{tls_key}) {
-		$serveropts->{tls} = 1;
-		$serveropts->{tls_key} = $cfg->{api}->{tls_key};
-		$serveropts->{tls_cert} = $cfg->{api}->{tls_cert};
-	}
-	if ($cfg->{api}->{tls_ca}) {
-		#$serveropts->{tls_verify} = 0; # cheating..
-		$serveropts->{tls_ca} = $cfg->{api}->{tls_ca};
-	}
-
-	my $server = Mojo::IOLoop->server(
-		$serveropts => sub {
-			my ($loop, $stream, $id) = @_;
-			my $client = JobCenter::Api::Client->new($self, $rpc, $stream, $id);
-			$client->on(close => sub { $self->_disconnect($client) });
-			$self->clients->{refaddr($client)} = $client;
-		}
-	) or die 'no server?';
-
-	my $auth = JobCenter::Api::Auth->new(
+	$self->{auth} = JobCenter::Api::Auth->new(
 		$cfg, 'api|auth',
 	) or die 'no auth?';
 
+	my @servers;
+	die "no listen configuration?" unless ref $cfg->{'api|listen'} eq 'HASH';
+	for my $l (keys %{$cfg->{'api|listen'}}) {
+
+		my $lc = $cfg->{"api|listen|$l"} or
+			die "no listen configuration for $l?";
+
+		push @servers, JobCenter::Api::Server->new($self, $l, $lc);
+	}
+
 	# keep sorted
 	$self->{actionnames} = {};
-	$self->{apiname} = $apiname;
-	$self->{auth} = $auth;
-	$self->{cfg} = $cfg;
 	$self->{clients} = {};
-	$self->{daemon} = $daemon;
-	$self->{debug} = $debug;
-	$self->{jcpg} = $jcpg;
 	$self->{listenstrings} = {}; # connected workers, grouped by listenstring
-	$self->{log} = $log;
 	$self->{pending} = {}; # pending tasks flags for listenstrings
-	$self->{pid_file} = $pid_file if $daemon;
 	$self->{ping} = $args{ping} || 60;
 	$self->{pqq} = undef; # ping query queue
-	$self->{server} = $server;
-	$self->{rpc} = $rpc;
+	$self->{servers} = \@servers;
 	$self->{tasks} = {};
 	$self->{timeout} = $args{timeout} // 60; # 0 is a valid timeout?
 
@@ -188,9 +163,6 @@ sub new {
 
 sub work {
 	my ($self) = @_;
-	if ($self->daemon) {
-		daemonize();
-	}
 
 	local $SIG{TERM} = local $SIG{INT} = sub {
 		$self->_shutdown(@_);
