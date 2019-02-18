@@ -18,8 +18,6 @@ pass=password
 [maestro]
 user=jc_maestro
 pass=password
-; default:
-;listenport=6502
 
 [system]
 role=jc_system
@@ -30,12 +28,29 @@ role=jc_perl
 [api]
 user=jc_client
 pass=password
-listenport=6522
-;tls_cert=/some/path/jobcenter/etc/api.crt
-;tls_key=/some/path/jobcenter/etc/api.pem
+
+[api|listen]
+default=
+;ssl=
+
+[api|listen|default]
+address=127.0.0.1
+port=6522
+
+[api|listen|ssl]
+address=127.0.0.1
+port=6520
+auth=clientcert
+tls_cert=/some/path/jobcenter/etc/api.crt
+tls_key=/some/path/jobcenter/etc/api.pem
+tls_ca=/some/path/jobcenter/etc/ca.crt
 
 [api|auth]
 password=JobCenter::Api::Auth::Passwd
+;clientcert=JobCenter::Api::Auth::ClientCert
 
 [api|auth|password]
 pwfile=/some/path/jobcenter/etc/api.passwd
+
+;[api|auth|clientcert]
+;cnfile=/some/path/jobcenter/etc/api.cnlist
