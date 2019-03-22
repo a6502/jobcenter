@@ -34,11 +34,11 @@ Usage: jcadm [opts] <cmd> ...
 
 Subcomands:
 
-clients         : prints connected api clients
-jobs [-v]       : prints things about jobs
-help            : this help
-pending         : prints api pending flags
-workers         : prints worker status from the db
+clients                     : prints connected api clients
+jobs [-v] [states]          : prints things about jobs
+help                        : this help
+pending                     : prints api pending flags
+workers                     : prints worker status from the db
 
 Use 'jcadm <cmd> help' for more information about a subcommand.
 
