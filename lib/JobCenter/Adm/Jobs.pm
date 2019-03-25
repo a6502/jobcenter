@@ -6,18 +6,23 @@ sub do_cmd {
 	my $self = shift;
 	my $verbose;
 
+	my @states;
 	for (@_) {
-		/^-v$/ and $verbose = 1;
+		/^-v$/ and do { $verbose = 1; next };
+		/^-/   and do { die "unknown flag: $_\n" };
+		push @states, $_;
 	}
 	
-	return $verbose ? $self->_verbose : $self->_summary;
+	return $verbose ? $self->_verbose(@states) : $self->_summary(@states);
 }
 
-sub _verbose {
+sub _select_counts {
 	my $self = shift;
-	my $pg = $self->adm->pg;
-	
-	my $result = $pg->db->dollar_only->query(q[
+	my @qs   = ("?")x@_;
+	local $" = ', ';
+
+	my $states = @qs ? "and state in (@qs)" : '';
+	my $result = eval { $self->adm->pg->db->query(qq[
 		select
 			state,
 			count(*) as count
@@ -25,17 +30,31 @@ sub _verbose {
 			jobs
 		where
 			job_finished is null
+			$states
 		group by
 			state
 		order by
 			count desc
-	]);
+	], @_)};
+
+	if (my $e = $@) {
+		die $e =~ /invalid input value for enum job_state: "([^"]+)"/
+			? "unknown job_state: $1\n"
+			: $e;
+	}
+
+	return $result;
+}
+
+sub _verbose {
+	my $self = shift;
+	my $result = $self->_select_counts(@_);
 
 	my $found;
 	
 	for my $jobs (@{$result->hashes}) {
 
-		my $result = $pg->db->query(q[
+		my $result = $self->adm->pg->db->query(q[
 			select
 				j.job_id as job_id,
 				j.workflow_id as workflow_id,
@@ -68,21 +87,7 @@ sub _verbose {
 
 sub _summary {
 	my $self = shift;
-	my $pg = $self->adm->pg;
-	
-	my $result = $pg->db->dollar_only->query(q[
-		select
-			state,
-			count(*) as count
-		from
-			jobs
-		where
-			job_finished is null
-		group by
-			state
-		order by
-			count desc
-	]);
+	my $result = $self->_select_counts(@_);
 	
 	my @rows;
 	push @rows, $result->columns();
