@@ -73,7 +73,7 @@ BEGIN
 		job_id = a_jobtask.job_id
 		AND name = ANY(v_names)
 	ORDER BY event_id
-	LIMIT 1 -- FOR UPDATE OF event_subscriptions; -- FOR UPDATE OF job_events, queued_events;
+	LIMIT 1; -- FOR UPDATE OF event_subscriptions; -- FOR UPDATE OF job_events, queued_events;
 
 	IF FOUND THEN
 		-- delete this job_event
