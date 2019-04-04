@@ -21,7 +21,7 @@ RUN cpanm install MojoX::NetstringStream JSON::RPC2::TwoWay JobCenter::Client::M
 # prepare jobcenter installation
 RUN useradd jobcenter
 WORKDIR /home/jobcenter
-RUN git clone https://github.com/M0WA/jobcenter jobcenter
+RUN git clone https://github.com/a6502/jobcenter jobcenter
 WORKDIR /home/jobcenter/jobcenter
 RUN cp etc/jobcenter.conf.example  etc/jobcenter.conf
 RUN chown -R jobcenter. /home/jobcenter/jobcenter
@@ -29,7 +29,7 @@ RUN chown -R jobcenter. /home/jobcenter/jobcenter
 # prepare rpcswitch installation
 RUN useradd rpcswitch
 WORKDIR /home/rpcswitch
-RUN git clone https://github.com/M0WA/rpc-switch rpcswitch
+RUN git clone https://github.com/a6502/rpc-switch rpcswitch
 WORKDIR /home/rpcswitch/rpcswitch
 RUN rm etc/config.pl.example
 COPY config.pl etc/config.pl
