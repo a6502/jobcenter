@@ -18,7 +18,7 @@ RUN apt install -o APT::Install-Suggests=0 -o APT::Install-Recommends=0 -y  \
         libjson-perl
 
 # install more perl modules
-RUN cpanm install MojoX::NetstringStream JSON::RPC2::TwoWay JobCenter::Client::Mojo Text::Table::Tiny
+RUN cpanm install MojoX::NetstringStream JSON::RPC2::TwoWay JobCenter::Client::Mojo Text::Table::Tiny JSON
 
 # adding users
 RUN useradd jobcenter
