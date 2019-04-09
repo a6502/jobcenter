@@ -30,6 +30,11 @@ caution: use this image for development/testing purposes only
     cd docker
     docker-compose up -d
 
+## run jobcenter tests
+
+    cd docker
+    docker-compose up jobsrv-test
+
 ## shutdown jobcenter server + client
 
     cd docker

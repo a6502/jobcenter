@@ -25,7 +25,7 @@ RUN useradd jobcenter
 RUN useradd rpcswitch
 
 # cloning from repositories
-ENV GIT_REPO https://github.com/M0WA
+ENV GIT_REPO https://github.com/a6502
 ENV GIT_REPO_JOBCENTER jobcenter
 ENV GIT_REPO_RPCSWITCH rpc-switch
 RUN git clone ${GIT_REPO}/${GIT_REPO_JOBCENTER} /home/jobcenter/jobcenter
