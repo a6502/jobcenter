@@ -1,0 +1,56 @@
+version: '3'
+
+services:
+
+  jobsrv:
+    build: ./jobsrv
+    image: jobcenter/server:latest
+    privileged: true
+    volumes:
+      - "./jobsrv/pgsql/postgresql.conf:/etc/postgresql/postgresql.conf:ro"
+      - "./jobsrv/pgsql/plperl.conf:/etc/plperl.conf:ro"
+      - "./jobsrv/pgsql/plperlinit.pl:/etc/plperlinit.pl:ro"
+      - "./jobsrv/jobcenter/jcswitch.conf:/home/jobcenter/jobcenter/etc/jcswitch.conf:ro"
+      - "./jobsrv/jobcenter/jobcenter.conf:/home/jobcenter/jobcenter/etc/jobcenter.conf:ro"
+      - "./jobsrv/jobcenter/api.passwd:/home/jobcenter/jobcenter/etc/api.passwd:ro"
+      - "./jobsrv/rpcswitch/config.pl:/home/rpcswitch/rpcswitch/etc/config.pl:ro"
+      - "./jobsrv/rpcswitch/methods.pl:/home/rpcswitch/rpcswitch/etc/methods.pl:ro"
+      - "./jobsrv/rpcswitch/switch.passwd:/home/rpcswitch/rpcswitch/etc/switch.passwd:ro"
+    networks:
+      jcnet:
+        aliases:
+          - jobsrv
+
+  jobsrv-test:
+    build: ./jobsrv-test
+    image: jobcenter/server-test:latest
+    privileged: true
+    volumes:
+      - "./jobsrv/pgsql/postgresql.conf:/etc/postgresql/postgresql.conf:ro"
+      - "./jobsrv/pgsql/plperl.conf:/etc/plperl.conf:ro"
+      - "./jobsrv/pgsql/plperlinit.pl:/etc/plperlinit.pl:ro"
+      - "./jobsrv/jobcenter/jcswitch.conf:/home/jobcenter/jobcenter/etc/jcswitch.conf:ro"
+      - "./jobsrv/jobcenter/jobcenter.conf:/home/jobcenter/jobcenter/etc/jobcenter.conf:ro"
+      - "./jobsrv/jobcenter/api.passwd:/home/jobcenter/jobcenter/etc/api.passwd:ro"
+      - "./jobsrv/rpcswitch/config.pl:/home/rpcswitch/rpcswitch/etc/config.pl:ro"
+      - "./jobsrv/rpcswitch/methods.pl:/home/rpcswitch/rpcswitch/etc/methods.pl:ro"
+      - "./jobsrv/rpcswitch/switch.passwd:/home/rpcswitch/rpcswitch/etc/switch.passwd:ro"
+    networks:
+      jcnet:
+        aliases:
+          - jobsrv-test
+
+  jobcli:
+    build: ./jobcli
+    image: jobcenter/client:latest
+    depends_on:
+      - jobsrv
+    networks:
+      jcnet:
+        aliases:
+          - jobcli
+
+networks:
+  jcnet:
+    driver: bridge
+
