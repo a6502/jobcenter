@@ -68,10 +68,10 @@ sub new {
 	$ENV{'PGAPPNAME'} = $workername;
 	my $jcpg = JobCenter::Pg->new(
 		'postgresql://'
-		. $cfg->{jcswitch}->{user}
-		. ':' . $cfg->{jcswitch}->{pass}
-		. '@' . ( $cfg->{jcswitch}->{host} // '' )
-		. ( ($cfg->{jcswitch}->{port}) ? ':' . $cfg->{jcswitch}->{port} : '' )
+		. $cfg->{jcswitch}->{db_user}
+		. ':' . $cfg->{jcswitch}->{db_pass}
+		. '@' . ( $cfg->{jcswitch}->{db_host} // '' )
+		. ( ($cfg->{jcswitch}->{db_port}) ? ':' . $cfg->{jcswitch}->{db_port} : '' )
 		. '/' . $cfg->{jcswitch}->{db}
 	);
 	$jcpg->database_class('JobCenter::Pg::Db');
