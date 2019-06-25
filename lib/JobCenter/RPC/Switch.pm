@@ -169,7 +169,7 @@ sub new {
 		$ns->on(close => sub {
 			$conn->close;
 			$log->info('connection to rpcswitch closed');
-			$selt->{_exit} = WORK_CONNECTION_CLOSED;
+			$self->{_exit} = WORK_CONNECTION_CLOSED;
 			$self->{done}++;
 			Mojo::IOLoop->stop;
 		});
