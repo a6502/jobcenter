@@ -28,7 +28,7 @@ use Config::Tiny;
 use JSON::RPC2::TwoWay 0.03; # for access to the request
 # JSON::RPC2::TwoWay depends on JSON::MaybeXS anyways, so it can be used here
 # without adding another dependency
-use JSON::MaybeXS qw(decode_json encode_json);
+use JSON::MaybeXS;
 use MojoX::NetstringStream 0.05; # older versions have utf-8 bugs
 
 # jobcenter
@@ -72,10 +72,10 @@ sub new {
 	$ENV{'PGAPPNAME'} = $workername;
 	my $jcpg = JobCenter::Pg->new(
 		'postgresql://'
-		. $cfg->{jcswitch}->{user}
-		. ':' . $cfg->{jcswitch}->{pass}
+		. $cfg->{jcswitch}->{db_user}
+		. ':' . $cfg->{jcswitch}->{db_pass}
 		. '@' . ( $cfg->{jcswitch}->{host} // '' )
-		. ( ($cfg->{jcswitch}->{port}) ? ':' . $cfg->{jcswitch}->{port} : '' )
+		. ( ($cfg->{jcswitch}->{db_port}) ? ':' . $cfg->{jcswitch}->{db_port} : '' )
 		. '/' . $cfg->{jcswitch}->{db}
 	);
 	$jcpg->database_class('JobCenter::Pg::Db');
@@ -575,9 +575,18 @@ sub _create_job {
 	my $wfname = $mi->{workflow} or die 'no workflowname?';
 	my $vtag = $mi->{vtag};
 
-	my $impersonate = $request->{rpcswitch}->{who};
-	my $vci = $request->{rpcswitch}->{vci};
-	my $env = '{"rpcswitch":true}';
+	my $rpcswitch = $request->{rpcswitch}; # should be there
+	my $impersonate = $rpcswitch->{who};
+	my $vci = $rpcswitch->{vci};
+	my $env;
+	if ($rpcswitch->{reqauth}) {
+		$env = decode_utf8(encode_json({
+			reqauth => $rpcswitch->{reqauth},
+			rpcswitch => JSON->true,
+		}));
+	} else {
+		$env = '{"rpcswitch":true}';
+	}
 
 	my $inargs = decode_utf8(encode_json($params));
 
