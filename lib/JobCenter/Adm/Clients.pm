@@ -25,7 +25,7 @@ sub do_cmd {
 		say 'workername: ', $c->{workername} // 'none';
 		my $a = $c->{actions};
 		if ($a and %$a) {
-			my @keys = qw(slots used filter);
+			my @keys = qw(slotgroup slots used filter);
 			my @rows = ['actionname', @keys];
 			push @rows, [$_, @{$a->{$_}}{@keys}] for keys %$a;
 			$self->tablify(\@rows, 'actions:');
