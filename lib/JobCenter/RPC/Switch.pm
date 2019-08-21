@@ -74,7 +74,7 @@ sub new {
 		'postgresql://'
 		. $cfg->{jcswitch}->{db_user}
 		. ':' . $cfg->{jcswitch}->{db_pass}
-		. '@' . ( $cfg->{jcswitch}->{host} // '' )
+		. '@' . ( $cfg->{jcswitch}->{db_host} // '' )
 		. ( ($cfg->{jcswitch}->{db_port}) ? ':' . $cfg->{jcswitch}->{db_port} : '' )
 		. '/' . $cfg->{jcswitch}->{db}
 	);
