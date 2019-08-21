@@ -28,7 +28,7 @@ use Config::Tiny;
 use JSON::RPC2::TwoWay 0.03; # for access to the request
 # JSON::RPC2::TwoWay depends on JSON::MaybeXS anyways, so it can be used here
 # without adding another dependency
-use JSON::MaybeXS qw(decode_json encode_json);
+use JSON::MaybeXS;
 use MojoX::NetstringStream 0.05; # older versions have utf-8 bugs
 
 # jobcenter
@@ -46,8 +46,12 @@ has [qw(
 use constant {
 	RES_OK => 'RES_OK',
 	RES_WAIT => 'RES_WAIT',
+	RES_TIMEOUT => 'RES_TIMEOUT',
 	RES_ERROR => 'RES_ERROR',
 	RES_OTHER => 'RES_OTHER', # 'dunno'
+	WORK_OK                => 0,           # exit codes for work method
+	WORK_PING_TIMEOUT      => 92,
+	WORK_CONNECTION_CLOSED => 91,
 };
 
 sub new {
@@ -165,6 +169,7 @@ sub new {
 		$ns->on(close => sub {
 			$conn->close;
 			$log->info('connection to rpcswitch closed');
+			$self->{_exit} = WORK_CONNECTION_CLOSED;
 			$self->{done}++;
 			Mojo::IOLoop->stop;
 		});
@@ -417,6 +422,7 @@ sub work {
 	};
 
 	$self->log->debug(blessed($self) . ' starting work');
+	$self->{_exit} = WORK_OK;
 	while (!$self->done) {
 		$self->_reconfigure($reload++);
 		Mojo::IOLoop->start;
@@ -424,7 +430,7 @@ sub work {
 	$self->_shutdown(@_);
 	$self->log->debug(blessed($self) . ' done?');
 
-	return 0;
+	return $self->{_exit};
 }
 
 # announce a method at the rpcswitch
@@ -569,9 +575,18 @@ sub _create_job {
 	my $wfname = $mi->{workflow} or die 'no workflowname?';
 	my $vtag = $mi->{vtag};
 
-	my $impersonate = $request->{rpcswitch}->{who};
-	my $vci = $request->{rpcswitch}->{vci};
-	my $env = '{"rpcswitch":true}';
+	my $rpcswitch = $request->{rpcswitch}; # should be there
+	my $impersonate = $rpcswitch->{who};
+	my $vci = $rpcswitch->{vci};
+	my $env;
+	if ($rpcswitch->{reqauth}) {
+		$env = decode_utf8(encode_json({
+			reqauth => $rpcswitch->{reqauth},
+			rpcswitch => JSON->true,
+		}));
+	} else {
+		$env = '{"rpcswitch":true}';
+	}
 
 	my $inargs = decode_utf8(encode_json($params));
 

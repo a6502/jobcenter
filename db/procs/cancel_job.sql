@@ -32,7 +32,7 @@ BEGIN
 
 	CASE
 		v_state
-	WHEN 'ready', 'working', 'eventwait', 'sleeping', 'done', 'plotting', 'retrywait', 'lockwait', 'error' THEN
+	WHEN 'ready', 'working', 'eventwait', 'sleeping', 'done', 'plotting', 'retrywait', 'lockwait', 'error', 'childwait' THEN
 
 		IF v_state IN ('working', 'done', 'plotting') AND a_force = false THEN
 			RETURN format('refusing to cancel job %s in state %s without force flag', a_job_id, v_state);

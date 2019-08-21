@@ -30,10 +30,11 @@ use JSON::RPC2::TwoWay;
 # JobCenter
 use JobCenter::Api::Auth;
 use JobCenter::Api::Job;
+use JobCenter::Api::Server;
+use JobCenter::Api::SlotGroup;
 use JobCenter::Api::Task;
 use JobCenter::Api::WorkerAction;
 use JobCenter::Pg;
-use JobCenter::Api::Server;
 
 has [qw(
 	actionnames
@@ -123,6 +124,7 @@ sub new {
 
 	$rpc->register('announce', sub { $self->rpc_announce(@_) }, non_blocking => 1, state => 'auth');
 	$rpc->register('create_job', sub { $self->rpc_create_job(@_) }, non_blocking => 1, state => 'auth');
+	$rpc->register('create_slotgroup', sub { $self->rpc_create_slotgroup(@_) }, state => 'auth');
 	$rpc->register('find_jobs', sub { $self->rpc_find_jobs(@_) }, non_blocking => 1, state => 'auth');
 	$rpc->register('get_api_status', sub { $self->rpc_get_api_status(@_) }, state => 'auth');
 	$rpc->register('get_job_status', sub { $self->rpc_get_job_status(@_) }, non_blocking => 1, state => 'auth');
@@ -491,12 +493,51 @@ sub rpc_get_job_status {
 	});
 }
 
+sub rpc_create_slotgroup {
+	my ($self, $con, $i) = @_;
+	my $client = $con->owner;
+	my $name = $i->{name} or die 'slotgroup name required';
+	my $slots = $i->{slots} // 1;
+	die 'slots should be a positive number'
+		unless $slots > 0;
+
+	die "slotgroup $name already exists"
+		if $client->slotgroups->{$name};
+
+	$client->slotgroups->{$name} = JobCenter::Api::SlotGroup->new(
+		name => $name,
+		slots => $slots,
+		used => 0,
+	);
+
+	return JSON->true;
+}
+
 
 sub rpc_announce {
 	my ($self, $con, $i, $rpccb) = @_;
 	my $client = $con->owner;
 	my $actionname = $i->{actionname} or die 'actionname required';
-	my $slots      = $i->{slots} // 1;
+	my $sgname = $i->{slotgroup};
+	my $slots = $i->{slots};
+	my $slotgroup;
+	if ($sgname and $slots) {
+		die 'cannot provide both slotgroup and slots';
+	} elsif ($sgname) {
+		$slotgroup = $client->slotgroups->{$sgname};
+		die "slotgroup $sgname does not exist"
+			unless $slotgroup;
+	} else {
+		$slots //= 1;
+		die 'slots should be a positive number'
+			unless $slots > 0;
+		$slotgroup = JobCenter::Api::SlotGroup->new(
+			name => "_$actionname",
+			slots => $slots,
+			used => 0,
+		);
+	}
+	die 'no slotgroup?' unless $slotgroup;
 	my $workername = $i->{workername} // $client->workername // $client->who;
 	my $filter     = $i->{filter};
 	if (defined $filter) {
@@ -551,9 +592,8 @@ sub rpc_announce {
 		actionname => $actionname,
 		client => $client,
 		listenstring => $listenstring,
-		slots => $slots,
+		slotgroup => $slotgroup,
 		filter => $filter,
-		used => 0,
 	);
 
 	$client->workername($workername);
@@ -714,8 +754,10 @@ sub _task_ready {
 				next;
 			}
 		}
-		$self->log->debug('worker ' . $worker_id . ' has ' . $_->used . ' of ' . $_->slots . ' used');
-		if ($_->used < $_->slots) {
+		my $sg = $_->slotgroup or die "no slogroup in worker $worker_id!?";
+		$self->log->debug('worker ' . $worker_id . ' slotgroup '. $sg->name
+			 .' has ' . $sg->used . ' of ' . $sg->slots . ' used');
+		if ($sg->used < $sg->slots) {
 			$wa = $_;
 			last;
 		}
@@ -729,7 +771,7 @@ sub _task_ready {
 		return;
 	}
 
-	$wa->{used}++; # let's assmume the worker takes it
+	$wa->slotgroup->{used}++; # let's assume the worker takes it
 
 	$self->log->debug('sending task ready to worker ' . $wa->client->worker_id . ' for ' . $wa->actionname);
 
@@ -756,7 +798,7 @@ sub _task_ready_next {
 	my ($self, $job_id) = @_;
 	
 	my $task = $self->{tasks}->{$job_id} or return; # die 'no task in _task_ready_next?';
-	$task->workeraction->{used}--; # this worker didn't take the job
+	$task->workeraction->slotgroup->{used}--; # this worker didn't take the job
 	my $workers = $task->workers;
 	
 	$self->log->debug("try next client for $task->{listenstring} for $task->{job_id}");
@@ -775,8 +817,10 @@ sub _task_ready_next {
 				next;
 			}
 		}
-		$self->log->debug('worker ' . $worker_id . ' has ' . $_->used . ' of ' . $_->slots . ' used');
-		if ($_->used < $_->slots) {
+		my $sg = $_->slotgroup or die "no slogroup in worker $worker_id!?";
+		$self->log->debug('worker ' . $worker_id . ' slotgroup '. $sg->name
+			 .' has ' . $sg->used . ' of ' . $sg->slots . ' used');
+		if ($sg->used < $sg->slots) {
 			$wa = $_;
 			last;
 		}
@@ -800,7 +844,7 @@ sub _task_ready_next {
 		return;
 	}
 
-	$wa->{used}++; # let's assmume the next worker takes it
+	$wa->slotgroup->{used}++; # let's assmume the next worker takes it
 	$wa->client->con->notify('task_ready', {actionname => $wa->actionname, job_id => $job_id});
 
 	my $tmr = Mojo::IOLoop->timer(3 => sub { $self->_task_ready_next($job_id) } );
@@ -878,7 +922,7 @@ sub rpc_get_task {
 					}
 				}
 				# no need to consider the worker busy then..
-				$task->{workeraction}->{used}--;
+				$task->workeraction->slotgroup->{used}--;
 				return;
 			}
 
@@ -900,7 +944,7 @@ sub rpc_get_task {
 			$self->{tasks}->{$cookie} = $task;
 
 			$self->log->debug("get_task sending job_id $task->{job_id} to "
-				 . "$task->{workeraction}->{client}->{worker_id} used $task->{workeraction}->{used} "
+				 . "$task->{workeraction}->{client}->{worker_id} used $task->{workeraction}->{slotgroup}->{used} "
 				 . "cookie $cookie inargs $inargsj");
 
 			$rpccb->($job_id2, $cookie, $inargs, $env);
@@ -922,7 +966,7 @@ sub rpc_task_done {
 	return unless $task; # really?	
 	Mojo::IOLoop->remove($task->tmr) if $task->tmr;
 	# try to prevent used going negative..
-	$task->{workeraction}->{used}-- if $task->{workeraction}->{used} > 0;
+	$task->workeraction->slotgroup->{used}-- if $task->workeraction->slotgroup->used > 0;
 
 	local $@;
 	eval {
@@ -932,7 +976,7 @@ sub rpc_task_done {
 	$self->log->debug("task_done got $@") if $@;
 
 	$self->log->debug("worker '$client->{workername}' done with action '$task->{actionname}' for job $task->{job_id}"
-		." slots used $task->{workeraction}->{used} outargs '$outargs'");
+		." slots used $task->{workeraction}->{slotgroup}->{used} outargs '$outargs'");
 
 	Mojo::IOLoop->delay(
 		sub {
@@ -1020,11 +1064,15 @@ sub rpc_get_api_status {
 			next unless $c;
 			my %actions;
 			if ($c->actions) {
-				$actions{$_->actionname} = {
-					filter => $_->filter,
-					slots => $_->slots,
-					used => $_->used,
-				} for values %{$c->actions};
+				for my $a (values %{$c->actions}) {
+					my $sg = $a->slotgroup;
+					$actions{$a->actionname} = {
+						filter => $a->filter,
+						slotgroup => $sg->name,
+						slots => $sg->slots,
+						used => $sg->used,
+					};
+				}
 			}
 			push @out, {
 				actions => \%actions,

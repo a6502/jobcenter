@@ -1,7 +1,7 @@
 package JobCenter::Api::WorkerAction;
 use Mojo::Base -base;
 
-has [qw(actionname client filter listenstring slots used workername)];
+has [qw(actionname client filter listenstring slotgroup workername)];
 
 sub update {
 	my ($self, %attr) = @_;

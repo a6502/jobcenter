@@ -7,8 +7,8 @@ use MojoX::NetstringStream;
 
 use Data::Dumper;
 
-has [qw(actions api con from id ns ping reqauth rpc stream tmr who
-	 workername worker_id)];
+has [qw(actions api con from id ns ping reqauth rpc stream slotgroups
+	tmr who workername worker_id)];
 
 sub new {
 	my $self = shift->SUPER::new();
@@ -55,6 +55,7 @@ sub new {
 	$self->{ns} = $ns;
 	$self->{ping} = 60; # fixme: configurable?
 	$self->{rpc} = $rpc;
+	$self->{slotgroups} = {};
 	$self->{stream} = $stream;
 	return $self;
 }
