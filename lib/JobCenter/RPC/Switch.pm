@@ -25,7 +25,7 @@ use File::Basename;
 
 # from cpan
 use Config::Tiny;
-use JSON::RPC2::TwoWay 0.03; # for access to the request
+use JSON::RPC2::TwoWay 0.04; # for access to the request
 # JSON::RPC2::TwoWay depends on JSON::MaybeXS anyways, so it can be used here
 # without adding another dependency
 use JSON::MaybeXS;
@@ -1086,7 +1086,10 @@ sub call_rpcs_nb {
 	my $delay = Mojo::IOLoop->delay(
 		sub {
 			my $d = shift;
-			$self->conn->call($method, $inargs, $d->begin(0), 1);
+			$self->conn->callraw({
+				method => $method,
+				params => $inargs
+			}, $d->begin(0));
 		},
 		sub {
 			#print Dumper(@_);
@@ -1097,6 +1100,7 @@ sub call_rpcs_nb {
 				$rescb->(RES_ERROR, "$e->{message} ($e->{code})");
 				return;
 			}
+			# print Dumper(\@_) unless Scalar::Util::reftype($r) eq "HASH";
 			my ($status, $outargs) = @{$r->{result}};
 			if ($status eq RES_WAIT) {
 				#print '@$r', Dumper($r);
