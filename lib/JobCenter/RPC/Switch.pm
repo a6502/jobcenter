@@ -1132,7 +1132,8 @@ sub _shutdown {
 	my($self) = @_;
 	$self->log->info("shutting down..");
 
-	Mojo::IOLoop->stop;
+	#Mojo::IOLoop->stop;
+	$self->pending({});
 
 	# explicit copy becuase we modify the hash below
 	my @actions = keys %{$self->actions};
@@ -1141,16 +1142,21 @@ sub _shutdown {
 		$self->withdraw_jc(action => $actionname);
 	}
 
-	for my $methodname (keys %{$self->methods}) {
-		$self->log->debug("withdrawing method $methodname from the rpcswitch");
-		$self->withdraw_rpcs(method => $methodname);
+	unless ($self->{_exit}) {
+		for my $methodname (keys %{$self->methods}) {
+			$self->log->debug("withdrawing method $methodname from the rpcswitch");
+			$self->withdraw_rpcs(method => $methodname);
+		}
 	}
 	$self->methods({});
 
-	$self->log->info('waiting for ' . (scalar keys %{$self->{tasks}}) . ' tasks to finish');
+	$self->log->info('sending soft errors for ' . (scalar keys %{$self->{tasks}}) . ' unfinished tasks');
+	$self->_task_done($_, { error => { class => 'soft', msg => 'jcswitch shutting down'}})
+		for (%{$self->{tasks}});
+
 	# wait for how long?
-	Mojo::IOLoop->singleton->reactor->one_tick while
-		scalar keys %{$self->{tasks}};
+	#Mojo::IOLoop->singleton->reactor->one_tick while
+	#	scalar keys %{$self->{tasks}};
 
 }
 
