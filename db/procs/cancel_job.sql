@@ -44,6 +44,7 @@ BEGIN
 			state = 'error',
 			job_finished = now(),
 			task_started = now(),
+			task_entered = now(),
 			task_completed = now(),
 			out_args = jsonb_build_object('error', format('job cancelled: %s', a_reason)),
 			timeout = NULL
