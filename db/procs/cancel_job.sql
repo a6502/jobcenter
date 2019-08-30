@@ -32,7 +32,7 @@ BEGIN
 
 	CASE
 		v_state
-	WHEN 'ready', 'working', 'eventwait', 'sleeping', 'done', 'plotting', 'retrywait', 'lockwait', 'error', 'childwait' THEN
+	WHEN 'ready', 'working', 'eventwait', 'sleeping', 'done', 'plotting', 'retrywait', 'lockwait', 'error', 'zombie', 'childwait' THEN
 
 		IF v_state IN ('working', 'done', 'plotting') AND a_force = false THEN
 			RETURN format('refusing to cancel job %s in state %s without force flag', a_job_id, v_state);
@@ -55,10 +55,10 @@ BEGIN
 
 		RETURN format('job %s cancelled', a_job_id);
 
-	WHEN 'zombie' THEN
-		RETURN format('cancel parent job of %s instead', a_job_id);
-	WHEN 'childwait' THEN
-		RETURN format('cancel child job of %s instead', a_job_id);
+	--WHEN 'zombie' THEN
+	--	RETURN format('cancel parent job of %s instead', a_job_id);
+	--WHEN 'childwait' THEN
+	--	RETURN format('cancel child job of %s instead', a_job_id);
 	WHEN 'finished' THEN
 		RETURN format('huh? job %s in state finished but job_finsihed is null??', a_job_id);
 	ELSE
