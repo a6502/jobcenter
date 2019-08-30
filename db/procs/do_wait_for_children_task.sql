@@ -59,7 +59,7 @@ BEGIN
 	WHERE
 		parentjob_id = a_jobtask.job_id
 		AND state = 'error'
-	LIMIT 1; -- FIXME: order?
+	FETCH FIRST ROW ONLY FOR UPDATE OF jobs; -- FIXME: order?
 
 	IF FOUND THEN -- raise error
 		v_errargs = jsonb_build_object(
@@ -81,8 +81,8 @@ BEGIN
 
 	-- check if all children are finished
 	PERFORM * FROM jobs WHERE parentjob_id = a_jobtask.job_id AND state <> 'zombie';
-		-- FOR UPDATE OF jobs;
-	-- using locking here can lead to deadlocks with unreleted queries (task_done)
+		--FOR UPDATE OF jobs;
+	-- using locking here can lead to deadlocks with unrelated queries (task_done)
 
 	IF FOUND THEN -- not finished
 		-- the childjob will unblock us when it is finished (we hope)
