@@ -833,6 +833,7 @@ EOT
 	do_jobtaskdone(jobtask)
 	do_jobtaskerror(jobtask)
 	do_ping(bigint)
+	do_wait_for_children(jobtask)
 	do_timeout(text)
 ];
 

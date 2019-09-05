@@ -455,15 +455,28 @@ sub gen_assert {
 }
 
 sub gen_call {
-	# only get_split calls us with a third argument for some extra magic
 	my ($self, $call, $magic) = @_;
 
-	$magic = ($magic) ? $magic : 0;
+	# gen_detach, gen_map and gen_split are special cases of
+	# gen_call with a bit of added magic
+
+	# determine kind of magic
+	my %magtab = (
+			# $flowonly, $wait, $detach, $map
+		none => [0, 1, 0, 0],
+		callflow => [1, 0, 0, 0],
+		detach => [1, 0, 1, 0],
+		map => [1, 0, 0, 1],
+	);
+	$magic //= 'none';
+	my ($flowonly, $wait, $detach, $map) = @{$magtab{$magic}}
+		or die "unknown kind of magic $magic";
+
 	# in magic mode gen_call can only call workflows (aka start childflows)
 	# and does so without waiting (magic=1) and possibly detaching (magic=2)
 
 	my $types = '{action,procedure,workflow}';
-	$types = '{workflow}' if $magic;
+	$types = '{workflow}' if $flowonly;
 
 	# resolve calls to actions and workflows with the same tags we are compiling with
 	my $tags = '{default}';
@@ -476,6 +489,13 @@ sub gen_call {
 	}
 
 	die 'no call_name' unless $call->{call_name};
+
+	if ($map) {
+		die 'no using clause in map?' unless $map = $call->{map_using};
+		die 'invalid using clause in map' unless ref $map eq 'ARRAY';
+		$map = join('.', @$map);
+		die "invalid using clause $map in map" unless $map =~ /^(\w+|\w\.\w+)$/;
+	}
 
 	my $aid = $self->qs( <<'EOF', $call->{call_name}, $types, $tags);
 SELECT
@@ -498,8 +518,9 @@ EOF
 			to_json({
 				imapcode => $imap,
 				omapcode => $omap,
-				(($magic == 1) ? (wait => false) : ()),
-				(($magic == 2) ? (detach => true) : ()),
+				($wait ? () : (wait => false)),
+				($detach ? (detach => true) : ()),
+				($map ? (map => $map) : ()),
 				#_line => $call->{_line},
 			}));
 	return ($tid, $tid);
@@ -538,7 +559,7 @@ sub gen_case {
 
 sub gen_detachflow {
 	my $self = shift;
-	return $self->gen_call(@_, 2); # more magic for gen_call
+	return $self->gen_call(@_, 'detach'); # more magic for gen_call
 }
 
 sub gen_eval {
@@ -638,6 +659,13 @@ sub gen_lock {
 	return ($tid, $tid);
 }
 
+sub gen_map {
+	my ($self, $map) = @_;
+	# a 'loose' map is just a implicit split-join
+	say "\tcalling gen_split";
+	return $self->gen_split([{map => $map}]);
+}
+
 sub gen_raise_error {
 	my ($self, $raise) = @_;
 	my $raisetid = $self->instask(T_RAISE_ERROR, attributes =>
@@ -691,11 +719,12 @@ sub gen_split {
 	my ($self, $split) = @_;
 	my (@childtids, $firsttid, $lasttid);
 	# first start all childflows in order, with wait = false
-	for my $flow (@$split) {
-		$flow = $flow->{callflow} or die 'not callflow';
-		say 'flow: ', Dumper($flow);
-		my $tid = $self->gen_call($flow, 1); # give gen_call some extra magic
-		push @childtids, $tid;
+	for my $se (@$split) {
+		my $t;
+		($t, $se) = get_type($se);
+		say "se $t: ", Dumper($se);
+		my $tid = $self->gen_call($se, $t); # give gen_call some extra magic
+		push @childtids, { tid => $tid, type => $t };
 		$firsttid = $tid unless $firsttid;
 		$self->set_next($lasttid, $tid) if $lasttid;
 		$lasttid = $tid;
@@ -708,7 +737,8 @@ sub gen_split {
 	for my $ct (@childtids) {
 		my $tid = $self->instask(T_REAP_CHILD, attributes =>
 			to_json({
-				reapfromtask_id => $ct,
+				reapfromtask_id => $ct->{tid},
+				(($ct->{type} eq 'map') ? (map => true) : ()),
 				# _line => $split->{_line},
 			}));
 		$self->set_next($lasttid, $tid); # $lasttid should be set
@@ -934,7 +964,15 @@ sub make_variable {
 		unshift @a, $default if $default and (length($a[0]) > 1 or $#a == 0);
 		die "invalid top level $a[0] for $what" unless $a[0] =~ $toplevel; # /^[aeiov]$/;
 		my $perl = '$' . shift @a;
-		$perl .= "{'$_'}" for @a;
+		for (@a) {
+			# uglyness to handle array indexes
+			if (ref $_ eq 'HASH') {
+				my ($v, $i) = @{$_->{varpart_array} // []} or die 'not varpart_array?';
+				$perl .= "{'$v'}->[$i]";
+			} else {
+				$perl .= "{'$_'}";
+			}
+		}
 		say "make_variable: $perl";
 		return $perl;
 	} else {
@@ -956,10 +994,10 @@ sub make_func {
 		return "$arg if defined $arg";
 	} elsif	($name eq 'tostring') {
 		$arg = make_rhs($arg);
-		return "('' . $arg)";
+		return "('' . ($arg))";
 	} elsif ($name eq 'tonumber') {
 		$arg = make_rhs($arg);
-		return "(0 + $arg)";
+		return "(0 + ($arg))";
 	} elsif ($name eq 'tojson') {
 		$arg = make_rhs($arg);
 		return "to_json($arg)";

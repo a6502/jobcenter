@@ -146,6 +146,7 @@ statement:
 	| +label
 	| +let
 	| +lock
+	| +map
 	| +raise_error
 	| +raise_event
 	| +repeat
@@ -253,6 +254,13 @@ locktype: identifier
 
 lockvalue: ( perl_block | rhs )
 
+map: / 'map' + / +call-name / + 'using' + / ( +map-using | `syntax error: map [name] using [identifier]:` )
+	( map-body | `syntax error: map [name] using [identifier]:\n<map-body>` )
+
+map-using: variable colon
+
+map-body: +imap ( block-ondent / 'collect' / colon +omap )?
+
 raise_error: / 'raise_error' + / ( perl_block | rhs )
 
 raise_event: / 'raise_event' <colon> / assignments
@@ -263,9 +271,11 @@ return: / ('return') /
 
 sleep: / 'sleep' + / ( perl_block | rhs )
 
-split: / 'split' / colon block-indent +callflow+ block-undent
+split: / 'split' / colon block-indent ( split-body | `syntax error: split:\ns<split-body>` ) block-undent
 
-callflow: block-ondent / 'callflow' + / +call-name colon call-body
+split-body: ( block-ondent ( +map | +callflow | .ignorable ) )+
+
+callflow: / 'callflow' + / +call-name colon call-body
 
 subscribe: / 'subscribe' <colon> / assignments
 
@@ -289,7 +299,9 @@ condition: perl-block | rhs
 
 variable: / ( ALPHA ) DOT / varpart ( / DOT / varpart )*
 
-varpart: identifier ( / LSQUARE <integer> LSQUARE / )?
+varpart: +varpart-array | identifier
+
+varpart-array: identifier / LSQUARE <integer> RSQUARE /
 
 literal: +number | +boolean | +single-quoted-string | +double-quoted-string | +null
 
@@ -306,7 +318,9 @@ single-line-comment: / - HASH ANY* EOL /
 
 identifier: bare-identifier | string
 
-bare-identifier: /( ALPHA WORD* )/
+#bare-identifier: /( ALPHA WORD* )/
+# allow starting _
+bare-identifier: /( [a-zA-Z_] [0-9A-Za-z_ ]* )/
 
 string: single-quoted-string | double-quoted-string
 

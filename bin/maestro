@@ -32,7 +32,7 @@ use JobCenter::Pg;
 use JobCenter::Util qw(:daemon);
 
 # transaction backoff time
-our $backoff = 0.1;
+our $backoff = .3; # 0.1;
 
 # minimal timer value
 our $timer_min = 0.1;
@@ -51,10 +51,11 @@ sub _calljobtaskproc {
 		$log->debug("_calljobtaskproc callback");
 		my $sqlstate = $res->sth->state;
 		if ($sqlstate eq '40001' or $sqlstate eq '40P01') {
-			$log->debug("scheduling retry of _calljobtaskproc $proc($arg): $sqlstate");
 			$res->sth->finish;
+			my $timeout = $backoff + rand($retries * $backoff);
+			$log->debug("scheduling retry $retries after $timeout of _calljobtaskproc $proc($arg): $sqlstate");
 			# try a backoff with a bit of randomness
-			$ioloop->timer(($backoff + rand($retries * $backoff)) => sub {
+			$ioloop->timer($timeout => sub {
 				$log->debug("retry $retries of _calljobtaskproc $proc($arg)");
 				_calljobtaskproc($db, $proc, $arg, $retries + 1);
 			});
@@ -184,7 +185,7 @@ sub main {
 		$log->debug("jcpg: $jcpg has new connection: $dbh");
 	});
 
-	for my $listen (qw[jobtask jobtaskdone jobtaskerror ping]) {
+	for my $listen (qw[jobtask jobtaskdone jobtaskerror ping wait_for_children]) {
 		$jcpg->pubsub->listen($listen => sub {
 			my ($pubsub, $payload) = @_;
 			$log->debug("got NOTIFY \"$listen\""

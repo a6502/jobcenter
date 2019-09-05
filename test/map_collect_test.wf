@@ -1,0 +1,15 @@
+# split
+workflow map_collect_test:
+in:
+	input array
+	# input = [ 10, 20, 30 ]
+out:
+	output number
+wfomap:
+	<output>
+do:
+	map calladd using a.input:
+		input = tonumber(e._v) # loop variable
+		step = e._i # loop index
+	collect:
+		output += o.output

@@ -46,7 +46,7 @@ BEGIN
 		RAISE EXCEPTION 'reap_from_task field required for reap_child task %', a_jobtask.task_id;
 	END IF;
 
-
+	-- todo: unify with the non-map case
 	IF v_map THEN
 		RAISE NOTICE 'look for child jobs of % task %', a_jobtask.job_id, v_reapfromtask_id;
 		-- the child job should be a zombie already
@@ -80,6 +80,18 @@ BEGIN
 		v_env = do_populate_env(a_jobtask, v_env);
 
 		FOR v_subjob_id, v_in_args, v_out_args IN
+			SELECT
+				job_id, arguments, out_args
+			FROM
+				jobs
+			WHERE
+				(job_state->>'parenttask_id')::integer = v_reapfromtask_id
+				AND parentjob_id = a_jobtask.job_id
+				AND state = 'zombie'
+			ORDER BY job_id FOR UPDATE OF jobs LOOP
+			
+			RAISE NOTICE 'child job % finished', v_subjob_id;
+
 			UPDATE
 				jobs
 			SET
@@ -87,57 +99,15 @@ BEGIN
 				job_finished = now(),
 				task_completed = now()
 			WHERE
-				(job_state->>'parenttask_id')::integer = v_reapfromtask_id
-				AND parentjob_id = a_jobtask.job_id
-				AND state = 'zombie'
-			RETURNING job_id, arguments, out_args LOOP
-			
-			RAISE NOTICE 'child job % finished', v_subjob_id;
+				job_id = v_subjob_id;
 
 			-- we want the output definitios and maps from the original task that started this
 			-- childjob, so we use v_reapfromtask_id in the do_outargsmap
 			BEGIN
-
-				/*
-				SELECT
-					vars_changed, newvars
-					INTO v_changed, v_newvars
-				FROM
-					do_outargsmap((a_jobtask.workflow_id, v_reapfromtask_id, a_jobtask.job_id)::jobtask, v_rec.out_args);
-				
-
-				--FOR UPDATE OF jobs;
-
-				IF NOT FOUND THEN
-					RAISE NOTICE 'do_outargsarsmap: job_id % not found', a_jobtask.job_id;
-					RETURN;
-				END IF;
-
-				-- now get the rest using the task_id and workflow_id
-				SELECT
-					action_id, attributes->>'omapcode'
-					INTO v_action_id, v_code
-				FROM
-					tasks
-					JOIN actions USING (action_id)
-				WHERE
-					task_id = a_jobtask.task_id
-					AND workflow_id = a_jobtask.workflow_id;
-
-				IF NOT FOUND THEN
-					RAISE NOTICE 'do_outargsarsmap: task % not found', a_jobtask.task_id;
-					RETURN;
-				END IF;
-				
-				-- omap also initializes oldvars to empty, but then we would log a change if newvars is also empty
-				v_oldvars := COALESCE(v_oldvars, '{}'::jsonb);
-
-
-				*/
-								
 				v_out_args := COALESCE(v_out_args, '{}'::jsonb);
 
 				RAISE NOTICE 'do_outargsmap: v_oldvars % a_outargs %', v_newvars, v_out_args;
+				-- 'unroll' do_outargsmap to save a lot of queries
 
 				PERFORM do_outargscheck(v_action_id, v_out_args);
 
@@ -180,6 +150,7 @@ BEGIN
 			RAISE NOTICE 'reap_child newvars: %', v_newvars;
 		END LOOP;
 
+		-- cant' use the normal task_epilogue here because that would redo the logging we already did
 		--RETURN do_task_epilogue(a_jobtask, (v_oldvars IS DISTINCT FROM v_newvars), v_newvars, v_in_args, v_out_args);
 
 		UPDATE jobs SET
@@ -196,7 +167,6 @@ BEGIN
 		END IF;
 
 		RETURN (false, (a_jobtask.workflow_id, v_nexttask_id, a_jobtask.job_id)::jobtask)::nextjobtask;
-
 	END IF;
 
 	RAISE NOTICE 'look for child job of % task %', a_jobtask.job_id, v_reapfromtask_id;

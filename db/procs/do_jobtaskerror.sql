@@ -29,7 +29,8 @@ BEGIN
 		job_id = a_jobtask.job_id
 		AND task_id = a_jobtask.task_id
 		AND workflow_id = a_jobtask.workflow_id
-		AND state = 'error';
+		AND state = 'error'
+	FOR UPDATE OF jobs;
 	
 	IF NOT FOUND THEN
 		RAISE EXCEPTION 'do_jobtaskerror called for job not in error state %', a_jobtask.job_id;

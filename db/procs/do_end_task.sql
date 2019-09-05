@@ -72,16 +72,20 @@ BEGIN
 		WHERE
 			job_id = v_parentjob_id
 			AND state = 'childwait'
-		FOR UPDATE OF jobs; -- SKIP LOCKED;
+		FOR SHARE OF jobs;
 
 		IF FOUND THEN
 			-- poke parent
-			RETURN do_wait_for_children_task((v_parentworkflow_id, v_parenttask_id, v_parentjob_id)::jobtask);
+			-- RETURN do_wait_for_children_task((v_parentworkflow_id, v_parenttask_id, v_parentjob_id)::jobtask);
+			-- get the maestro to wake the parent
+			RAISE LOG 'NOTIFY "wait_for_children", %', (v_parentworkflow_id, v_parenttask_id, v_parentjob_id)::jobtask::text;
+			PERFORM pg_notify('wait_for_children', (v_parentworkflow_id, v_parenttask_id, v_parentjob_id)::jobtask::text);
 		ELSE
 			-- remain a zombie, the parent will look for us sometime
-			RAISE NOTICE 'parentjob % not waiting for us', v_parentjob_id;
-			RETURN null; -- no next task
+			RAISE LOG 'parentjob % not waiting for us', v_parentjob_id;
+			-- RETURN null; -- no next task
 		END IF;
+		RETURN null; -- no next task
 	END IF;
 
 	-- mark job as finished
@@ -121,7 +125,8 @@ BEGIN
 	WHERE
 		job_id = v_parentjob_id
 		AND task_id = v_parenttask_id
-		AND state = 'childwait';
+		AND state = 'childwait'
+	FOR UPDATE OF jobs;
 	
 	IF NOT FOUND THEN
 		-- what?

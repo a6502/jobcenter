@@ -82,6 +82,7 @@ BEGIN
 	-- jcenv overwrites wfenv overwrites parent_env
 	v_env := jsonb_set(v_env, '{max_depth}', to_jsonb(v_maxdepth));
 
+	-- todo: unify this with the non-map case
 	IF v_map IS NOT NULL THEN
 		v_array := CASE WHEN v_map LIKE 'a.%' THEN v_args->substring(v_map,3) WHEN v_map LIKE 'v.%' THEN v_vars->substring(v_map,3) END;
 		RAISE LOG 'hiero! %', v_array;
@@ -93,7 +94,7 @@ BEGIN
 		END IF;
 		FOR v_i, v_v IN SELECT ordinality, value FROM jsonb_array_elements(v_array) WITH ORDINALITY LOOP
 			BEGIN
-				v_inargs := do_inargsmap(v_workflow_id, a_parentjobtask, v_args, v_parent_env || jsonb_build_object('_i', v_i, '_v', v_v), v_vars);
+				v_inargs := do_inargsmap(v_workflow_id, a_parentjobtask, v_args, v_parent_env || jsonb_build_object('_i', v_i::int, '_v', v_v), v_vars);
 			EXCEPTION WHEN OTHERS THEN
 				RETURN do_raise_error(a_parentjobtask, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 			END;
