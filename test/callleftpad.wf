@@ -1,0 +1,17 @@
+# call
+workflow callleftpad:
+in:
+	string string
+	len integer
+	pad string ' '
+out:
+	string string
+wfomap:
+	<*>
+do:
+	call leftpad:
+		string = a.string
+		len = a.len
+		pad = a.pad
+	into:
+		<*>

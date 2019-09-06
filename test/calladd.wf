@@ -1,0 +1,15 @@
+# call
+workflow calladd:
+in:
+	input number
+	step number 3
+out:
+	output number
+wfomap:
+	output = v.counter
+do:
+	call add:
+		counter = a.input
+		step = a.step
+	into:
+		<counter>

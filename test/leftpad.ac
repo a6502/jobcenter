@@ -1,0 +1,8 @@
+action leftpad:
+in:
+	string string
+	len integer
+	pad string ' '
+out:
+	string string
+
