@@ -13,17 +13,12 @@ AS $function$DECLARE
 	v_out_args jsonb;
 BEGIN
 	-- this could end up being called a lot, so try to bail out as early as possible
-	-- FIXME: hash job_id and task_id? lock the task_id? just locking the job_id
-	-- could lead to conflict with other uses of pg_try_advisory_xact_lock
-	IF NOT pg_try_advisory_xact_lock(a_jobtask.job_id) THEN
-		RAISE LOG 'failed to lock wait_for_children job %', a_jobtask.job_id;
-		RETURN null;
-	END IF;
 
 	-- this function can be called in two ways:
 	-- 1. by do_jobtask / do_wait_for_children_task
 	-- 1. directly by the maestro in reponse to a notification
 	-- in either way the current job task should be a wait_for_children task
+	-- but the task_id might be of the create_childjob task
 	-- paranoia check
 	SELECT
 		task_id, state INTO v_task_id, v_state
@@ -37,13 +32,18 @@ BEGIN
 		--AND task_id = a_jobtask.task_id
 		AND state = 'childwait'
 		AND actions.type = 'system'
-		AND actions.name = 'wait_for_children'
-	FOR SHARE OF jobs;
+		AND actions.name = 'wait_for_children';
 
 	IF NOT FOUND THEN
 		-- this can happen because all children call us on finish so some other
 		-- notification might already have done this
 		RAISE LOG 'bailing out of wait_for_children job % task %', a_jobtask.job_id, a_jobtask.task_id;
+		RETURN null;
+	END IF;
+
+	--try to lock on the lower 32 bits of the job_id and the task_id we just found
+	IF NOT pg_try_advisory_xact_lock(a_jobtask.job_id::bit(32)::int, v_task_id) THEN
+		RAISE LOG 'failed to lock wait_for_children job % task %', a_jobtask.job_id, v_task_id;
 		RETURN null;
 	END IF;
 
