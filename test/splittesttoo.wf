@@ -3,7 +3,7 @@ workflow "splittesttoo":
 in:
 	input array
 out:
-	output string
+	output array
 wfomap:
 	<output>
 do:
@@ -12,9 +12,9 @@ do:
 			input = tonumber(e._v) # loop value
 			step = tonumber(e._i) # loop index
 		collect:
-			output += o.output
+			output ,= o.output
 		callflow callleftpad:
 			string = tostring(a.input[-1])
 			len = 10
 		into:
-			output .= ' ' . o.string
+			output ,= o.string
