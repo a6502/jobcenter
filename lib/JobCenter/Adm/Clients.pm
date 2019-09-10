@@ -21,7 +21,7 @@ sub do_cmd {
 	say 'connected clients:';
 	for my $c (@$result) {
 		say '=' x 64;
-		say "who : $c->{who} ($c->{from})";
+		say 'who : ', $c->{who} // '<unknown>', '(', $c->{from} // 'somewhere' ,')';
 		say 'workername: ', $c->{workername} // 'none';
 		my $a = $c->{actions};
 		if ($a and %$a) {

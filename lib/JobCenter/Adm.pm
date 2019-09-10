@@ -9,6 +9,7 @@ use Mojo::Pg;
 use Mojo::Util qw(camelize);
 
 # standard perl
+#use Data::Dumper;
 use File::Basename;
 
 # cpan
@@ -35,8 +36,10 @@ has client => sub {
 		$args{tls} = 1;
 		$args{tls_key} = $self->{cfg}{admin}{apiclient_key};
 		$args{tls_cert} = $self->{cfg}{admin}{apiclient_cert};
-		$args{tls_ca} = $self->{cfg}{api}{tls_ca} if $self->{cfg}{api}{tls_ca};
+		$args{tls_ca} = $self->{cfg}{admin}{apiclient_ca} if $self->{cfg}{admin}{apiclient_ca};
 	}
+
+	#print 'using args ', Dumper(\%args);
 
 	my $client = JobCenter::Client::Mojo->new(%args)
 		or die 'no jobcenter api client?';

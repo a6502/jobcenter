@@ -19,8 +19,10 @@ sub new {
 		$serveropts->{tls_cert} = $lc->{tls_cert};
 	}
 	if ($lc->{tls_ca}) {
-		$serveropts->{tls_verify} = 0x03;
 		$serveropts->{tls_ca} = $lc->{tls_ca};
+	}
+	if ($lc->{tls_verify}) {
+		$serveropts->{tls_verify} = 0x03;
 	}
 
 	my $am = $api->auth->methods;
