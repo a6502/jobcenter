@@ -287,14 +287,18 @@ sub rpc_create_job {
 	my $timeout = $i->{timeout} // 60;
 	my $impersonate = $client->who;
 	my $env;
+	if (ref $i->{clenv} eq 'HASH') {
+		$env->{clenv} = $i->{clenv};
+	}
 	if ($client->reqauth) {
 		my ($res, $log, $authscope) = $client->reqauth->request_authentication($client, $i->{reqauth});
 		unless ($res) {
 			$rpccb->(undef, $log);
 			return;
 		}
-		$env = decode_utf8(encode_json({authscope => $authscope}));
+		$env->{authscope} = {authscope => $authscope};
 	}
+	$env = decode_utf8(encode_json($env)) if $env;
 	my $cb = sub {
 		my ($job_id, $outargs) = @_;
 		$con->notify('job_done', {job_id => $job_id, outargs => $outargs})
