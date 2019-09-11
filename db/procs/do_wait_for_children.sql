@@ -10,7 +10,7 @@ AS $function$DECLARE
 	v_childjob_id bigint;
 	v_in_args jsonb;
 	v_errargs jsonb;
-	v_out_args jsonb;
+	v_childerr jsonb;
 BEGIN
 	-- this could end up being called a lot, so try to bail out as early as possible
 
@@ -55,11 +55,12 @@ BEGIN
 
 	-- check for errors
 	SELECT
-		job_id, out_args INTO v_childjob_id, v_out_args 
+		job_id, COALESCE(task_state->'error', '{"msg":"uh?"}'::jsonb) INTO v_childjob_id, v_childerr
 	FROM
 		jobs 
 	WHERE
 		parentjob_id = a_jobtask.job_id
+		AND job_finished IS NOT NULL
 		AND state = 'error'
 	FETCH FIRST ROW ONLY FOR UPDATE OF jobs; -- FIXME: order?
 
@@ -68,14 +69,15 @@ BEGIN
 			'error', jsonb_build_object(
 				'msg', format('childjob %s raised error', v_childjob_id),
 				'class', 'childerror',
-				'error', v_out_args -> 'error'
+				'error', v_childerr
 			)
 		);
 		UPDATE jobs SET
 			state = 'error',
 			task_completed = now(),
 			timeout = NULL,
-			out_args = v_errargs
+			out_args = NULL,
+			task_state = COALESCE(task_state, '{}'::jsonb) || v_errargs
 		WHERE job_id = a_jobtask.job_id;
 		PERFORM do_log(a_jobtask.job_id, false, null, v_errargs);
 		RETURN (true, v_waitjobtask)::nextjobtask;
