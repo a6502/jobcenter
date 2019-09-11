@@ -836,6 +836,8 @@ EOT
 	do_wait_for_children(jobtask)
 	do_timeout(text)
 ];
+# ugh
+$maestro{'do_jobtaskerror(jobtask, boolean)'} = 1;
 
 } #BEGIN
 
