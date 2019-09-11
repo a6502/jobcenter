@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION jobcenter.do_jobtaskerror(a_jobtask jobtask)
+CREATE OR REPLACE FUNCTION jobcenter.do_jobtaskerror(a_jobtask jobtask, a_magic boolean DEFAULT false)
  RETURNS nextjobtask
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -94,7 +94,12 @@ BEGIN
 
 		IF NOT FOUND THEN
 			-- what?
-			RAISE EXCEPTION 'parentjob % not found?', v_parentjob_id;
+			IF a_magic THEN
+				RAISE NOTICE 'parentjob % not found? ignoring', v_parentjob_id;
+				RETURN null;
+			ELSE
+				RAISE EXCEPTION 'parentjob % not found?', v_parentjob_id;
+			END IF;
 		END IF;
 
 		v_errargs = jsonb_build_object(
@@ -139,7 +144,9 @@ BEGIN
 		RAISE NOTICE 'unblock job %, error %', v_parentjob_id, v_errargs;
 		-- and call do_task error
 		-- FIXME: transform error object
-		RETURN do_wait_for_children_task((v_parentworkflow_id, v_parenttask_id, v_parentjob_id)::jobtask);
+		--RETURN do_wait_for_children_task((v_parentworkflow_id, v_parenttask_id, v_parentjob_id)::jobtask);
+		RAISE LOG 'NOTIFY "wait_for_children", %', (v_parentworkflow_id, v_parenttask_id, v_parentjob_id)::jobtask::text;
+		PERFORM pg_notify('wait_for_children', (v_parentworkflow_id, v_parenttask_id, v_parentjob_id)::jobtask::text);
 	END IF;
 
 	RETURN null; -- no next task
