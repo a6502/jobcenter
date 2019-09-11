@@ -9,6 +9,7 @@ AS $function$DECLARE
 	v_action_id int;
 	v_state job_state;
 	v_job_finished timestamp with time zone;
+	v_error jsonb;
 	v_res text;
 BEGIN
 	SELECT
@@ -38,20 +39,27 @@ BEGIN
 			RETURN format('refusing to cancel job %s in state %s without force flag', a_job_id, v_state);
 		END IF;
 
+		v_error := jsonb_build_object(
+			'error', jsonb_build_object(
+				'msg', format('job cancelled: %s', a_reason),
+				'class', 'fatal'
+			)
+		);
+
 		UPDATE
 			jobs
 		SET
 			state = 'error',
-			job_finished = now(),
-			task_started = now(),
-			task_entered = now(),
+			task_started = COALESCE(task_started, now()),
+			task_entered = COALESCE(task_entered, now()),
 			task_completed = now(),
-			out_args = jsonb_build_object('error', format('job cancelled: %s', a_reason)),
+			task_state = COALESCE(task_state, '{}'::jsonb) || v_error,
 			timeout = NULL
 		WHERE
 			job_id = a_job_id;
 
-		PERFORM do_cleanup_on_finish((v_workflow_id, v_task_id, a_job_id)::jobtask);
+		-- call the normal processing with some extra magic
+		PERFORM do_jobtaskerror((v_workflow_id, v_task_id, a_job_id)::jobtask, true);
 
 		RETURN format('job %s cancelled', a_job_id);
 
