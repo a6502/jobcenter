@@ -24,6 +24,7 @@ BEGIN
 		);
 
 	IF NOT FOUND THEN
+		RAISE NOTICE 'cleanup_on_finish: nothing to clean up?';
 		RETURN;
 	END IF;
 
@@ -34,20 +35,6 @@ BEGIN
 	-- FIXME: use knowledge of what was deleted?
 	DELETE FROM queued_events WHERE event_id NOT IN (SELECT event_id FROM job_events);
 
-	/*
-	-- abort any still running child jobs
-	UPDATE
-		jobs
-	SET
-		state = 'error',
-		out_args = '{"error":{"msg":"aborted by parent job","class":"abort"}}'::jsonb,
-		job_finished = now(),
-		timeout = null
-	WHERE
-		parentjob_id = a_jobtask.job_id
-		AND state NOT IN ('finished', 'error');
-	*/
-
 	-- signal any remaining child jobs to abort cq raise an abort error
 	UPDATE
 		jobs
@@ -55,6 +42,7 @@ BEGIN
 		aborted = true
 	WHERE
 		parentjob_id = a_jobtask.job_id
+		AND job_finished IS NULL
 		AND state NOT IN ('finished', 'error', 'zombie');
 
 	-- unlock all remaining locks
