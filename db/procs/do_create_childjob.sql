@@ -20,7 +20,7 @@ AS $function$DECLARE
 	v_maxdepth integer;
 	v_array jsonb;
 	v_i bigint;
-	v_v text;
+	v_v jsonb;
 	v_children bigint[] := '{}';
 BEGIN
 	-- find the sub-worklow using the task in the parent
