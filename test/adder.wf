@@ -1,0 +1,18 @@
+workflow adder:
+in:
+	counter	integer
+	step	integer 1
+	which	string
+out:
+	counter	integer
+wfomap:
+	<counter>	
+do:
+	interface add:
+		a.add
+		b.add
+		c.add
+	call a.which . '.add':
+		[[ %i = %a ]]
+	into:
+		<*>

@@ -84,16 +84,31 @@ jcl: .ignorable* ( +workflow | +action ) .ignorable*
 
 # hack in action support
 action: +action-type +workflow-name colon (
-	( .ignorable | +in | +out | +env | +role | +config )+
-	| `syntax error: action [name]\n:<action>` )
+	( .ignorable
+	| +interface
+	| +in
+	| +out
+	| +env
+	| +role
+	| +config )+ | `syntax error: action [name]\n:<action>` )
 
 action-type: / ( 'action' | 'procedure' ) / +
 
 workflow: / 'workflow' + / +workflow-name colon (
-	( .ignorable | +in | +out | +wfenv | +role | +config | +locks | +wfomap | +do )+
-	| `syntax error: workflow [name]\n:<workflow>` )
+	( .ignorable
+	| +interface
+	| +in
+	| +out
+	| +wfenv
+	| +role
+	| +config
+	| +locks
+	| +wfomap
+	| +do )+ | `syntax error: workflow [name]\n:<workflow>` )
 
 workflow-name: /( ALPHA [ WORDS DOT ]* )/ | string
+
+interface: / 'interface' / + +workflow-name colon
 
 in: / 'in' <colon> / ( block-indent inout block-undent
 	| `syntax error: in:\n<inout>` )
@@ -108,8 +123,6 @@ inout: ( +iospec | .ignorable )*
 
 iospec: block-ondent identifier + identifier (+ / ('optional') / | + literal)? / - SEMI? - /
 
-idlist: block-ondent identifier
-
 config: / 'config' <colon> / ( assignments | `syntax error: config:\n<assignments>` )
 
 wfenv: / 'wfenv' <colon> / ( assignments | `syntax error: wfenv:\n<assignments>` )
@@ -123,6 +136,8 @@ lockspec: block-ondent identifier  + ( identifier | / ( UNDER ) / ) (+ / ( 'inhe
 role: / 'role' <colon> / (
 	block-indent ( idlist | .ignorable )* block-undent
 	| `syntax error: role:\n<idlist>` )
+
+idlist: block-ondent identifier
 
 wfomap: / 'wfomap' <colon> / ( assignments | `syntax error: wfomap:\n<assignments>` )
 
@@ -143,6 +158,7 @@ statement:
 	| +eval
 	| +goto
 	| +if
+	| +interface-call
 	| +label
 	| +let
 	| +lock
@@ -242,6 +258,14 @@ elses: block-ondent ( +elsif | +else )
 elsif: / 'elsif' + / ( +condition colon +then elses? | `syntax error: elsif <condition>:\n<if>` )
 
 else: / 'else' <colon> / block
+
+interface-call: / 'interface' + / +call-name colon
+	( +interface-namelist block-ondent / 'call' - / +case-expression colon call-body
+	  | `syntax error: interface [name]:\n<names>` )
+
+interface-namelist: block-indent ( interface-name | .ignorable )+ block-undent
+
+interface-name: block-ondent workflow-name
 
 label: / 'label' + / identifier
 

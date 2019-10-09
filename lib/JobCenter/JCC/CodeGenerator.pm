@@ -111,7 +111,9 @@ sub generate_workflow {
 	# FIXME: race condition when multiples jcc's compile the same wf at the same time..
 	{
 		my $res = $self->db->dollar_only->query(
-			q|select version from actions where name = $1 and type = 'workflow' order by version desc limit 1|, 
+			q|select version from actions
+				where name = $1 and type = 'workflow'
+				order by version desc limit 1|,
 			$wf->{workflow_name}
 		)->array;
 		#print 'res: ', Dumper($res);
@@ -131,9 +133,6 @@ sub generate_workflow {
 	my $config = $self->gen_config($wf->{config}, 'workflow');
 
 	my $wfenv = $self->gen_wfenv($wf->{wfenv});
-	#my $wfenv = to_json({ map { $$_[0] => $$_[1] } @{$wf->{env}} });
-	#say 'wfenv ', $wfenv;
-	#$wfenv = undef if $wfenv and ($wfenv eq 'null' or $wfenv eq '{}');
 
 	my $wfid = $self->qs(
 		q|insert into actions (name, type, version, wfenv, rolename, config, src, srcmd5)
@@ -143,27 +142,63 @@ sub generate_workflow {
 	$self->{wfid} = $wfid;
 	say "wfid: $wfid";
 
-	# use a fake returning clause to we can reuse our qs function	
-	for my $in (@{$wf->{in}}) {
-		$in = $in->{iospec} or die 'not an iospec';
-		$self->qs(
-			q|insert into action_inputs (action_id, name, type, optional, "default") values ($1, $2, $3, $4, $5) returning action_id|,
-			$wfid, $$in[0], $$in[1], ($$in[2] ? 'true' : 'false'), make_literal($$in[2])
-		);
-	}
+	if ($wf->{interface}) {
+		die "interface conlicts with in/out/env"
+			if $wf->{in} or $wf->{out} or $wf->{env};
+		my $iname = $wf->{interface}->{workflow_name};
+		my $res = $self->db->dollar_only->query(
+			q|select action_id, version from actions
+				where name = $1 order by version desc limit 1|,
+			$iname,
+		)->array;
+		#print 'res: ', Dumper($res);
+		die "interface $iname not found?" unless $res and @$res;
+		my $iid = @$res[0]; # fixme: multiple results?
 
-	for my $out (@{$wf->{out}}) {
-		$out = $out->{iospec} or die 'not an iospec';;
 		$self->qs(
-			q|insert into action_outputs (action_id, name, type, optional) values ($1, $2, $3, $4) returning action_id|,
-			$wfid, $$out[0], $$out[1], (($$out[2] && $$out[2] eq 'optional') ? 'true' : 'false')
+			q|insert into action_inputs (action_id, name, type, optional, "default", destination)
+				select $1, name, type, optional, "default", destination
+					from action_inputs where action_id = $2
+			  returning action_id|,	$wfid, $iid
 		);
+
+		$self->qs(
+			q|insert into action_outputs (action_id, name, type, optional)
+				select $1, name, type, optional
+					from action_outputs where action_id = $2
+			  returning action_id|,	$wfid, $iid
+		);
+	} else {
+		die "either interface or in/out required"
+			unless $wf->{in} or $wf->{out};
+			# fixme: check env?
+
+		# use a fake returning clause to we can reuse our qs function
+		for my $in (@{$wf->{in}}) {
+			$in = $in->{iospec} or die 'not an iospec';
+			$self->qs(
+				q|insert into action_inputs (action_id, name, type, optional, "default")
+					values ($1, $2, $3, $4, $5) returning action_id|,
+				$wfid, $$in[0], $$in[1], ($$in[2] ? 'true' : 'false'), make_literal($$in[2])
+			);
+		}
+
+		for my $out (@{$wf->{out}}) {
+			$out = $out->{iospec} or die 'not an iospec';;
+			$self->qs(
+				q|insert into action_outputs (action_id, name, type, optional)
+					values ($1, $2, $3, $4) returning action_id|,
+				$wfid, $$out[0], $$out[1], (($$out[2] && $$out[2] eq 'optional') ? 'true' : 'false')
+			);
+		}
+
 	}
 
 	if ($self->{tags}) {
 		for my $tag (split /:/, $self->{tags}) {
 			$self->qs(
-				q|insert into action_version_tags (action_id, tag) values ($1, $2) returning action_id|,
+				q|insert into action_version_tags (action_id, tag)
+					values ($1, $2) returning action_id|,
 				$wfid, $tag
 			);
 		}
@@ -222,7 +257,9 @@ sub generate_action {
 	# FIXME: race condition when multiples jcc's compile the same wf at the same time..
 	{
 		my $res = $self->db->dollar_only->query(
-			q|select version from actions where name = $1 and type = $2 order by version desc limit 1|, 
+			q|select version from actions
+				where name = $1 and type = $2
+				order by version desc limit 1|,
 			$wf->{workflow_name}, $what
 		)->array;
 		#print 'res: ', Dumper($res);
@@ -239,16 +276,9 @@ sub generate_action {
 		$role = $roles[0];
 	}
 
-	#my (%config, $config);
-	#$config{env} = $wf->{env} if $wf->{env} and @{$wf->{env}};
-	#$config{filter} = $wf->{filter} if $wf->{filter} and @{$wf->{filter}};
-	#$config = to_json(\%config) if %config;
 	my $config = $self->gen_config($wf->{config}, $what);
 
 	my $wfenv;
-	#my $wfenv = to_json({ map { $$_[0] => $$_[1] } @{$wf->{env}} });
-	#say 'wfenv ', $wfenv;
-	#$wfenv = undef if $wfenv and ($wfenv eq 'null' or $wfenv eq '{}');
 
 	my $wfid = $self->qs(
 		q|insert into actions (name, type, version, wfenv, rolename, config, src, srcmd5)
@@ -257,33 +287,67 @@ sub generate_action {
 	);
 	say "wfid: $wfid";
 
-	# use a fake returning clause to we can reuse our qs function	
-	for my $in (@{$wf->{in}}) {
-		$in = $in->{iospec} or die 'not an iospec';
-		$self->qs(
-			q|insert into action_inputs (action_id, name, type, optional, "default") values ($1, $2, $3, $4, $5) returning action_id|,
-			$wfid, $$in[0], $$in[1], ($$in[2] ? 'true' : 'false'), make_literal($$in[2])
-		);
-	}
+	if ($wf->{interface}) {
+		die "interface conlicts with in/out/env"
+			if $wf->{in} or $wf->{out} or $wf->{env};
+		my $iname = $wf->{interface}->{workflow_name};
+		my $res = $self->db->dollar_only->query(
+			q|select action_id, version from actions where name = $1 order by version desc limit 1|,
+			$iname,
+		)->array;
+		#print 'res: ', Dumper($res);
+		die "interface $iname not found?" unless $res and @$res;
+		my $iid = @$res[0]; # fixme: multiple results?
 
-	for my $env (@{$wf->{env}}) {
-		$env = $env->{iospec} or die 'not an iospec';
 		$self->qs(
-			q|insert into action_inputs
-				(action_id, name, type, optional, "default", destination)
-			 values
-				($1, $2, $3, $4, $5, 'environment')
-			 returning action_id|,
-			$wfid, $$env[0], $$env[1], ($$env[2] ? 'true' : 'false'), make_literal($$env[2])
+			q|insert into action_inputs (action_id, name, type, optional, "default", destination)
+				select $1, name, type, optional, "default", destination
+					from action_inputs where action_id = $2
+			  returning action_id|,	$wfid, $iid
 		);
-	}
 
-	for my $out (@{$wf->{out}}) {
-		$out = $out->{iospec} or die 'not an iospec';
 		$self->qs(
-			q|insert into action_outputs (action_id, name, type, optional) values ($1, $2, $3, $4) returning action_id|,
-			$wfid, $$out[0], $$out[1], (($$out[2] && $$out[2] eq 'optional') ? 'true' : 'false')
+			q|insert into action_outputs (action_id, name, type, optional)
+				select $1, name, type, optional
+					from action_outputs where action_id = $2
+			  returning action_id|,	$wfid, $iid
 		);
+	} else {
+		die "either interface or in/out required"
+			unless $wf->{in} or $wf->{out};
+			# fixme: check env?
+
+		# use a fake returning clause to we can reuse our qs function
+		for my $in (@{$wf->{in}}) {
+			$in = $in->{iospec} or die 'not an iospec';
+			$self->qs(
+				q|insert into action_inputs (action_id, name, type, optional, "default")
+					values ($1, $2, $3, $4, $5) returning action_id|,
+				$wfid, $$in[0], $$in[1], ($$in[2] ? 'true' : 'false'), make_literal($$in[2])
+			);
+		}
+
+		for my $env (@{$wf->{env}}) {
+			$env = $env->{iospec} or die 'not an iospec';
+			$self->qs(
+				q|insert into action_inputs
+					(action_id, name, type, optional, "default", destination)
+				 values
+					($1, $2, $3, $4, $5, 'environment')
+				 returning action_id|,
+				$wfid, $$env[0], $$env[1], ($$env[2] ? 'true' : 'false'), make_literal($$env[2])
+			);
+		}
+
+		for my $out (@{$wf->{out}}) {
+			$out = $out->{iospec} or die 'not an iospec';
+			$self->qs(
+				q|insert into action_outputs (action_id, name, type, optional)
+					values ($1, $2, $3, $4) returning action_id|,
+				$wfid, $$out[0], $$out[1], (($$out[2] && $$out[2] eq 'optional') ? 'true' : 'false')
+			);
+		}
+
 	}
 
 	if ($self->{tags}) {
@@ -600,6 +664,81 @@ sub gen_if {
 	}
 	return ($iftid, $endiftid);
 }	
+
+sub gen_interface_call {
+	my ($self, $ic) = @_;
+
+	my $iname = $ic->{call_name};
+	my $res = $self->db->dollar_only->query(
+		q|select action_id, version from actions
+			where name = $1 order by version desc limit 1|,
+		$iname,
+	)->array;
+	#print 'res: ', Dumper($res);
+	die "interface $iname not found?" unless $res and @$res;
+	my $iid = @$res[0];
+
+	my $stringcode = make_perl($ic->{case_expression}, STRING);
+
+	my $casetid = $self->instask(T_SWITCH, attributes => # case
+			to_json({
+				stringcode => $stringcode
+				#_line => $case->{_line},
+			}));
+	my $endcasetid = $self->instask(T_NO_OP); # dummy task to tie things together
+
+	my %case;
+
+	for my $dname (@{$ic->{interface_namelist}}) {
+		die "dupicate destination $dname?"
+			if $case{$dname};
+
+		my $res = $self->db->dollar_only->query(
+			q|select action_id, version from actions
+				where name = $1 order by version desc limit 1|,
+			$dname,
+		)->array;
+		#print 'res: ', Dumper($res);
+		die "destination $dname not found?" unless $res and @$res;
+		my $did = @$res[0];
+
+		$res = $self->db->dollar_only->query(
+			q|select name, type, optional, "default", destination
+				from action_inputs where action_id = $1
+			  except select name, type, optional, "default", destination
+				from action_inputs where action_id = $2|,
+			$iid, $did
+		)->array;
+		die "interfaces for $iname and $dname do not match? " . Dumper($res)
+			if $res;
+
+		my $tid;
+		($tid, $tid) = $self->gen_call({
+				call_name => $dname,
+				imap => $ic->{imap},
+				omap => $ic->{omap},
+				});
+		$case{$dname} = $tid;
+
+		$self->qs(q|insert into next_tasks values($1, $2, $3) returning from_task_id|, $casetid, $tid, $dname);
+		$self->set_next($tid, $endcasetid); # when block to end case
+	}
+
+	# create a raise_error as the else branch
+	my $raisetid;
+	($raisetid, $raisetid) = $self->gen_raise_error([
+			     {
+			       'perl_block' => "'interface call destination ' .("
+					. substr($stringcode, 0, -1) . ") .' does not exist?'"
+			     },
+			   ]);
+
+	# we store the else branch in the next_task_id field
+	$self->set_next($casetid, $raisetid); # case to else block
+	$self->set_next($raisetid, $endcasetid); # else block to end case
+	return ($casetid, $endcasetid);
+}
+
 sub gen_goto {
 	my ($self, $goto) = @_;
 	my $gototid = $self->instask(T_NO_OP, attributes =>
@@ -919,6 +1058,8 @@ sub make_term {
 	} elsif ($key eq 'functioncall') {
 		my ($name, $arg) = @{$val}{qw(funcname funcarg)};
 		return make_func($name, $arg);
+	} elsif ($key eq 'perl_block' ){
+		return $val;
 	} else {
 		die "dunno how to make perl from $key";
 	}
