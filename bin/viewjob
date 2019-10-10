@@ -57,11 +57,11 @@ sub main {
 	my $job = $pgh->selectrow_hashref(q[
 		select
 			workflow_id, state, arguments, environment, job_created, job_finished, out_args,
-			age(job_finished, job_created) as took
+			age(job_finished, job_created) as took, task_id, out_args, variables, task_state
 		from jobs where job_id=$1
 		union all select
 			workflow_id, state, arguments, environment, job_created, job_finished, out_args,
-			age(job_finished, job_created) as took
+			age(job_finished, job_created) as took, null as task_id, out_args, null as variables, null as task_state
 		from jobs_archive where job_id=$2],
 		{},
 		$job_id, $job_id
@@ -111,14 +111,27 @@ sub main {
 	}
 	$sth = undef;
 
+	if (not $job->{job_finished} and $job->{task_id}) {
+		my ($action_id, $type, $name) = get_action($job->{task_id});
+		say '---------------------------------------------------------  <--- current';
+		if ($type eq 'system') {
+			say "step $steps $name";
+		} else {
+			say "step $steps call $type $name ($action_id)";
+		}
+		say "        task_state $job->{task_state}" if $job->{task_state};
+		say "        inargs     $job->{out_args}" if $job->{out_args};
+		say "        curvars    $job->{variables}" if $job->{variables};
+		$steps = sprintf "%2d", $steps + 1;
+	}
+
 	say '---------------------------------------------------------' if $steps > 1;
 
 	#say Dumper($job);
 	say "job state $job->{state}";
 	say "    finished at $job->{job_finished} took $job->{took}" if $job->{job_finished};
-	say "    result      $job->{out_args}" if $job->{out_args};
+	say "    result      $job->{out_args}" if $job->{out_args} and $job->{job_finished};
 	say '';
-
 	return 0;
 }
 
@@ -131,10 +144,9 @@ sub get_action {
 			{},
 			$task_id
 		);
-		die "no task $task_id?" unless $type and $name;		
+		die "no task $task_id?" unless $type and $name;
 		$actions{$task_id} = [$action_id, $type, $name];
 	}
 	return @{$actions{$task_id}};
 }
-
 
