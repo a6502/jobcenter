@@ -36,6 +36,7 @@ Subcomands:
 
 clients                     : prints connected api clients
 jobs [-v] [states]          : prints things about jobs
+errors [-v] [workflows]     : prints things about job errors
 help                        : this help
 pending                     : prints api pending flags
 workers                     : prints worker status from the db
