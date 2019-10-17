@@ -80,7 +80,7 @@ sub _verbose {
 		}
 	}
 
-	say 'no unfinshed jobs' unless $found;
+	say 'no unfinished jobs' unless $found;
 
 	return 0;
 }
@@ -94,9 +94,9 @@ sub _summary {
 	push @rows, @{$result->arrays()};
 
 	if ($#rows) {
-		$self->tablify(\@rows, 'unfished jobs:');
+		$self->tablify(\@rows, 'unfinished jobs:');
 	} else {
-		say 'no unfinshed jobs';
+		say 'no unfinished jobs';
 	}
 
 	return 0;
