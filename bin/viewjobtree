@@ -1,0 +1,131 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+use 5.10.0;
+
+# standard modules
+use Data::Dumper;
+use FindBin;
+
+# non standard modules
+use Config::Tiny;
+use DBI;
+use DBD::Pg qw(:async);
+use Graph::Easy;
+
+my $pgh;
+
+exit main(@ARGV);
+
+sub main {
+	die "usage: $0 <jobid> [<jobid>...]" unless @_;
+
+	my $graph = Graph::Easy->new();
+	$graph->add_nodes(@ARGV);
+
+	my $cfgpath = "$FindBin::Bin/../etc/jobcenter.conf";
+
+	my $cfg = Config::Tiny->read($cfgpath);
+	die 'failed to read config ' . $cfgpath . ': ' . Config::Tiny->errstr unless $cfg;
+	my $pgdsn = 'dbi:Pg:dbname=' . $cfg->{pg}->{db}
+		. (($cfg->{pg}->{host}) ? ';host=' . $cfg->{pg}->{host} : '')
+		. (($cfg->{pg}->{port}) ? ';port=' . $cfg->{pg}->{port} : '');
+	my $pguser = $cfg->{admin}->{user};
+	my $pgpass = $cfg->{admin}->{pass};
+
+	# make our clientname the application_name visible in postgresql
+	$ENV{'PGAPPNAME'} = "$0 [$$]";
+
+	$pgh = DBI->connect(
+		$pgdsn, $pguser, $pgpass,
+		{
+			AutoCommit => 1,
+			RaiseError => 1,
+			PrintError => 0,
+		}
+	) or die "cannot connect to db: $DBI::errstr";
+
+	my %visited;
+	my @relationships;
+
+	my @job_ids = @ARGV;
+
+	while (@job_ids) {
+		my $job_id = shift @job_ids;
+
+		next if $visited{$job_id}++;
+
+		my ($parentjob_id, $childjob_ids) = get_family($job_id);
+
+		push @job_ids, $parentjob_id if defined $parentjob_id;
+
+		for (@$childjob_ids) {
+			push @relationships, [$job_id, $_];
+			push @job_ids, $_;
+		}
+	}
+		
+
+	$graph->add_edge (@$_) for @relationships;
+
+	print $graph->as_ascii;
+
+	return 0;
+}
+
+sub get_family {
+	my $job_id = shift or die "no job_id\n";
+
+	my $sth = $pgh->prepare_cached(q[
+		select 
+			j.job_id, j.parentjob_id, c.job_id as childjob_id
+		from (
+			select 
+				job_id, parentjob_id 
+			from 
+				jobs 
+			where 
+				job_id = ? 
+			union 
+			select 
+				job_id, parentjob_id 
+			from 
+				jobs_archive 
+			where 
+				job_id = ?
+		) as j 
+		left join (
+			select 
+				job_id, parentjob_id 
+			from 
+				jobs 
+			where 
+				parentjob_id = ? 
+			union 
+			select 
+				job_id, parentjob_id 
+			from 
+				jobs_archive 
+			where 
+				parentjob_id = ?
+		) c 
+		on 
+			j.job_id = c.parentjob_id
+		],
+	);
+
+	my $r = $sth->execute(($job_id)x4);
+
+	my ($_job_id, $parentjob_id, @childjob_ids);
+	while (my $row = $sth->fetchrow_arrayref) {
+		($_job_id, $parentjob_id) = @{$row}[0,1] unless defined $_job_id;
+		push @childjob_ids, $row->[2] if defined $row->[2];
+	}
+
+	die "no job $job_id?" unless $_job_id;
+	die "bad job_id returned $_job_id != $job_id" unless $job_id == $_job_id;
+
+	return ($parentjob_id, \@childjob_ids);
+}
+
