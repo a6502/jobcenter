@@ -9,6 +9,7 @@ AS $function$DECLARE
 	v_parenttask_id int;
 	v_parentworkflow_id int;
 	v_parentwait boolean;	
+	v_parentjobtask jobtask;
 	v_env jsonb;
 	v_eo jsonb; -- error object
 	v_errargs jsonb;
@@ -102,6 +103,8 @@ BEGIN
 			END IF;
 		END IF;
 
+		v_parentjobtask = (v_parentworkflow_id, v_parenttask_id, v_parentjob_id)::jobtask;
+
 		v_errargs = jsonb_build_object(
 			'error', jsonb_build_object(
 				'msg', format('childjob %s raised error', a_jobtask.job_id),
@@ -120,7 +123,15 @@ BEGIN
 
 		PERFORM do_log(v_parentjob_id, false, null, v_errargs);
 
-		RETURN (true, (v_parentworkflow_id, v_parenttask_id, v_parentjob_id)::jobtask)::nextjobtask;
+		IF a_magic THEN
+			-- wake up maestro
+			RAISE LOG 'NOTIFY "jobtaskerror", %', '' || v_parentjobtask::text || '';
+			PERFORM pg_notify('jobtaskerror', v_parentjobtask::text );
+			RETURN null;
+		ELSE
+			-- we were called by the maestro
+			RETURN (true, v_parentjobtask)::nextjobtask;
+		END IF;
 	END IF;
 
 	-- check if the parent is already waiting for its children
@@ -140,13 +151,15 @@ BEGIN
 		job_id = v_parentjob_id
 		AND state = 'childwait';
 
+	v_parentjobtask = (v_parentworkflow_id, v_parenttask_id, v_parentjob_id)::jobtask;
+
 	IF FOUND THEN
 		RAISE NOTICE 'unblock job %, error %', v_parentjob_id, v_errargs;
 		-- and call do_task error
 		-- FIXME: transform error object
 		--RETURN do_wait_for_children_task((v_parentworkflow_id, v_parenttask_id, v_parentjob_id)::jobtask);
-		RAISE LOG 'NOTIFY "wait_for_children", %', (v_parentworkflow_id, v_parenttask_id, v_parentjob_id)::jobtask::text;
-		PERFORM pg_notify('wait_for_children', (v_parentworkflow_id, v_parenttask_id, v_parentjob_id)::jobtask::text);
+		RAISE LOG 'NOTIFY "wait_for_children", %', v_parentjobtask::text;
+		PERFORM pg_notify('wait_for_children', v_parentjobtask::text);
 	END IF;
 
 	RETURN null; -- no next task
