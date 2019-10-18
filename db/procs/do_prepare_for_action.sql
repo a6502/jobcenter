@@ -13,7 +13,7 @@ AS $function$DECLARE
 	v_payload jsonb;
 	v_task_state jsonb;
 	v_key text;
-	v_aenv jsonb;
+	v_aenv jsonb DEFAULT '{}'::jsonb;
 BEGIN
 	-- get the arguments and such
 	SELECT
@@ -40,6 +40,7 @@ BEGIN
 		RETURN do_raise_error(a_jobtask, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;
 
+	-- compute action environment
 	FOR v_key IN SELECT
 				"name"
 			FROM
@@ -48,8 +49,7 @@ BEGIN
 				action_id = v_action_id
 				AND destination = 'environment' LOOP
 		IF v_env ? v_key THEN
-			v_aenv = COALESCE(v_aenv, '{}'::jsonb)
-				|| jsonb_build_object(v_key, v_env -> v_key);
+			v_aenv = v_aenv	|| jsonb_build_object(v_key, v_env -> v_key);
 		END IF;
 	END LOOP;
 	IF v_key IS NOT NULL THEN
@@ -61,7 +61,7 @@ BEGIN
 		END;
 		v_task_state := COALESCE(v_task_state, '{}'::jsonb) || jsonb_build_object('env', v_aenv);
 	END IF;
-	-- RAISE NOTICE 'v_task_state %', v_task_state;
+	--RAISE NOTICE 'v_task_state %', v_task_state;
 
 	-- 'abuse' the out_args field to store the calulated in_args
 	UPDATE jobs SET
