@@ -36,9 +36,10 @@ sub _select_counts {
 		from jobs j
 		join actions a 
 		on j.workflow_id = a.action_id
-		where j.state = 'error'
+		where j.state = 'error' and j.job_state->'error_seen' is null
 		$cond
 		group by a.name
+		order by a.name
 	], ($cutoff ? $cutoff : ()), @$names)};
 
 	if (my $e = $@) {
@@ -73,7 +74,7 @@ sub _verbose {
 				jobs as j join actions as wf
 			on 
 				j.workflow_id = wf.action_id
-			where j.state = 'error' and wf.name = ?
+			where j.state = 'error' and j.job_state->'error_seen' is null and wf.name = ?
 				$cond
 			order by
 				j.job_id desc, j.workflow_id
