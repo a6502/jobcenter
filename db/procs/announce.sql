@@ -46,6 +46,7 @@ BEGIN
 		actions
 	WHERE
 		name = a_actionname
+		AND type = 'action'
 	ORDER BY version DESC LIMIT 1;
 
 	IF NOT found THEN
