@@ -73,7 +73,6 @@ sub got_to_flatten {
 *got_funcname = \&got_to_flatten;
 *got_imap = \&got_to_flatten;
 *got_in = \&got_to_flatten;
-*got_interface_call = \&got_to_flatten;
 *got_interface_namelist = \&got_to_flatten;
 *got_iospec = \&got_to_flatten;
 *got_let = \&got_to_flatten;
