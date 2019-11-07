@@ -34,19 +34,21 @@ Usage: jcadm [opts] <cmd> ...
 
 Subcomands:
 
-clients                     : prints connected api clients
-jobs [-v] [states]          : prints things about jobs
-errors [-v] [workflows]     : prints things about job errors
-help                        : this help
-pending                     : prints api pending flags
-workers                     : prints worker status from the db
+clients                         : prints connected api clients
+jobs   [-v]   [states]          : prints things about jobs
+errors [-v]   [workflows]       : prints things about job errors
+locks  [-vv?] [locktypes]       : prints things about job locks
+help                            : this help
+pending                         : prints api pending flags
+workers                         : prints worker status from the db
 
 Use 'jcadm <cmd> help' for more information about a subcommand.
 
 Supported options:
-	--config=/path/to/cfg   : use alternate configfile
-	--debug=1               : set debug flag
-	-h, -?, --help          : prints "try jcadm help"
+	--config=/path/to/cfg       : use alternate configfile
+	--debug=1                   : set debug flag
+	-h, -?,  --help             : prints "try jcadm help"
+	-v, -vv, --verbose          : verbosity level
 
 EOT
 	return 0;
