@@ -3,13 +3,17 @@ package JobCenter::Adm::Errors;
 use Mojo::Base 'JobCenter::Adm::Cmd';
 
 use List::Util 'first';
+use FindBin ();
 
 use constant MAX_ERR_MSG_LEN => 100;
+use constant CONF_FILE => "$FindBin::Bin/../etc/jcadm/errors/fields.conf";
 
 sub do_cmd {
 	my $self = shift;
 	my $verbose = 0;
 	my $cutoff;
+
+	$self->_read_conf;
 
 	my @names;
 	while (@_) {
@@ -30,20 +34,7 @@ sub do_cmd {
 sub _select_counts {
 	my ($self, $cutoff, $names, $details) = @_;
 
-	my $msg = qq[
-		coalesce(
-			out_args->'error'->>'msg', 
-			task_state->'error'->>'msg', 
-			out_args->'error'->>'name', 
-			task_state->'error'->>'name', 
-			out_args->'error'->>'text', 
-			task_state->'error'->>'text', 
-			out_args->>'error', 
-			task_state->>'error',
-			'unknown error'
-		)
-	];
-
+	my $msg = $self->_msg_field(qw/out_args task_state/);
 	my @det = $details ? (", $msg as msg", ", $msg") : ('', '');
 
 	my @qs   = ("?")x@$names;
@@ -149,6 +140,33 @@ sub _trim_msg {
 	$row->[$col] = $msg;
 
 	return $row;
+}
+
+sub _read_conf {
+	my $self = shift;
+	my @fields;
+	if (open my $fh, "<", CONF_FILE) {
+		while (<$fh>) {
+			if (/^\s*((?:\w+\.)*\w+)\s*$/) {
+				push @fields, [ split /\./, $1 ];
+			} else {
+				warn "bad field format: $1\n" if $1;
+			}
+		}
+	}
+	$self->{fields} = @fields ? \@fields : [[ 'error' ]];
+}
+
+sub _msg_field {
+	my $self = shift;
+	my $msg  = "coalesce(";
+	for my $fields (@{$self->{fields}}) {
+		my @start = map { "'$_'" } @$fields;
+		my $last  = pop @start;
+		$msg .= join("->", $_, @start)."->>$last, " for @_;
+	}
+	$msg .= "'unknown error')";
+	return $msg;
 }
 
 1;
