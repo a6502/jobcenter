@@ -2,14 +2,20 @@ package JobCenter::Adm::Errors;
 
 use Mojo::Base 'JobCenter::Adm::Cmd';
 
+use List::Util 'first';
+
+use constant MAX_ERR_MSG_LEN => 100;
+
 sub do_cmd {
 	my $self = shift;
-	my ($verbose, $cutoff);
+	my $verbose = 0;
+	my $cutoff;
 
 	my @names;
 	while (@_) {
 		local $_ = shift @_;
-		/^(?:-v|--verbose)$/ and do { $verbose = 1; next };
+		/^-vv$/ and do { $verbose += 2; next };
+		/^(?:-v|--verbose)$/ and do { $verbose++; next };
 		/^(?:-c|--cutoff)(?:(=)(.*))?$/ and do { 
 			$cutoff = $1 ? $2 : shift @_;
 			next;
@@ -18,11 +24,27 @@ sub do_cmd {
 		push @names, $_;
 	}
 
-	return $verbose ? $self->_verbose($cutoff, \@names) : $self->_summary($cutoff, \@names);
+	return $verbose > 1 ? $self->_verbose($cutoff, \@names) : $self->_summary($cutoff, \@names, $verbose);
 }
 
 sub _select_counts {
-	my ($self, $cutoff, $names) = @_;
+	my ($self, $cutoff, $names, $details) = @_;
+
+	my $msg = qq[
+		coalesce(
+			out_args->'error'->>'msg', 
+			task_state->'error'->>'msg', 
+			out_args->'error'->>'name', 
+			task_state->'error'->>'name', 
+			out_args->'error'->>'text', 
+			task_state->'error'->>'text', 
+			out_args->>'error', 
+			task_state->>'error',
+			'unknown error'
+		)
+	];
+
+	my @det = $details ? (", $msg as msg", ", $msg") : ('', '');
 
 	my @qs   = ("?")x@$names;
 	local $" = ', ';
@@ -32,14 +54,14 @@ sub _select_counts {
 	$cond .= "and a.name in (@qs) " if @$names;
 
 	my $result = eval { $self->adm->pg->db->query(qq[
-		select count(*) as count, a.name as workflow_name
+		select count(*) as count, a.name as workflow_name $det[0]
 		from jobs j
 		join actions a 
 		on j.workflow_id = a.action_id
 		where j.state = 'error' and j.job_state->'error_seen' is null
 		$cond
-		group by a.name
-		order by a.name
+		group by a.name $det[1]
+		order by a.name $det[1]
 	], ($cutoff ? $cutoff : ()), @$names)};
 
 	if (my $e = $@) {
@@ -53,7 +75,7 @@ sub _select_counts {
 
 sub _verbose {
 	my ($self, $cutoff, $names) = @_;
-	my $result = $self->_select_counts($cutoff, $names);
+	my $result = $self->_select_counts($cutoff, $names, 0);
 
 	my $found;
 	my $cond = $cutoff
@@ -97,9 +119,9 @@ sub _summary {
 	my $self = shift;
 	my $result = $self->_select_counts(@_);
 	
-	my @rows;
-	push @rows, $result->columns();
-	push @rows, @{$result->arrays()};
+	my $cols = $result->columns(); 
+	my $col  = first { $cols->[$_] eq 'msg' } 0..$#$cols;
+	my @rows = ( $cols, map { _trim_msg($col, $_) } @{$result->arrays} );
 
 	if ($#rows) {
 		$self->tablify(\@rows, 'job errors:');
@@ -108,6 +130,25 @@ sub _summary {
 	}
 
 	return 0;
+}
+
+sub _trim_msg {
+	my ($col, $row) = @_;
+
+	return $row unless defined $col;
+
+	my $msg = $row->[$col];
+
+	if (defined $msg) {
+		$msg =~ s/(?:\n|\r|\s)+/ /g;
+		if (length $msg > MAX_ERR_MSG_LEN) {
+			$msg = substr($msg, 0, (MAX_ERR_MSG_LEN - 1)) . "\N{HORIZONTAL ELLIPSIS}";
+		}
+	}
+
+	$row->[$col] = $msg;
+
+	return $row;
 }
 
 1;
