@@ -4,38 +4,46 @@ use Mojo::Base 'JobCenter::Adm::Cmd';
 
 sub do_cmd {
 	my $self = shift;
-	my $verbose;
+	my $verbose = 0;
 
 	my @states;
 	for (@_) {
-		/^-v$/ and do { $verbose = 1; next };
+		/^(?:-v|--verbose)$/ and do { $verbose++; next };
+		/^-vv$/ and do { $verbose += 2; next };
 		/^-/   and do { die "unknown flag: $_\n" };
 		push @states, $_;
 	}
 	
-	return $verbose ? $self->_verbose(@states) : $self->_summary(@states);
+	return $verbose > 1 ? $self->_verbose(\@states) : $self->_summary(\@states, $verbose);
 }
 
 sub _select_counts {
-	my $self = shift;
-	my @qs   = ("?")x@_;
+	my ($self, $states, $details) = @_;
+
+	my @det = $details ? ('a.name,', 'join actions a on j.workflow_id = a.action_id') : ('', '');
+
+	my @qs   = ("?")x@$states;
 	local $" = ', ';
 
-	my $states = @qs ? "and state in (@qs)" : '';
+	my $cond = @qs ? "and j.state in (@qs)" : '';
 	my $result = eval { $self->adm->pg->db->query(qq[
 		select
-			state,
+			j.state, 
+			$det[0]
 			count(*) as count
 		from
-			jobs
+			jobs j
+			$det[1]
 		where
-			job_finished is null
-			$states
+			j.job_finished is null
+			$cond
 		group by
-			state
+			$det[0]
+			j.state
 		order by
+			$det[0]
 			count desc
-	], @_)};
+	], @$states)};
 
 	if (my $e = $@) {
 		die $e =~ /invalid input value for enum job_state: "([^"]+)"/
@@ -47,8 +55,8 @@ sub _select_counts {
 }
 
 sub _verbose {
-	my $self = shift;
-	my $result = $self->_select_counts(@_);
+	my ($self, $states) = @_;
+	my $result = $self->_select_counts($states, 0);
 
 	my $found;
 	
