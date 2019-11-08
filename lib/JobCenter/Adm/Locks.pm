@@ -107,7 +107,7 @@ sub _verbose {
 		}
 	}
 
-	say 'no job errors' unless $found;
+	say 'no job locks' unless $found;
 
 	return 0;
 }
@@ -121,9 +121,9 @@ sub _summary {
 	push @rows, @{$result->arrays()};
 
 	if ($#rows) {
-		$self->tablify(\@rows, 'job errors:');
+		$self->tablify(\@rows, 'job locks:');
 	} else {
-		say 'no job errors';
+		say 'no job locks';
 	}
 
 	return 0;
