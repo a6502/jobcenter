@@ -147,10 +147,11 @@ sub _read_conf {
 	my @fields;
 	if (open my $fh, "<", CONF_FILE) {
 		while (<$fh>) {
+			chomp;
 			if (/^\s*((?:\w+\.)*\w+)\s*$/) {
 				push @fields, [ split /\./, $1 ];
 			} else {
-				warn "bad field format: $1\n" if $1;
+				warn "bad field format: $_\n" if $_;
 			}
 		}
 	}
