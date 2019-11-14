@@ -35,8 +35,8 @@ Usage: jcadm [opts] <cmd> ...
 Subcomands:
 
 clients                         : prints connected api clients
-jobs   [-v]   [states]          : prints things about jobs
-errors [-v]   [workflows]       : prints things about job errors
+jobs   [-vv?] [states]          : prints things about jobs
+errors [-vv?] [workflows]       : prints things about job errors
 locks  [-vv?] [locktypes]       : prints things about job locks
 help                            : this help
 pending                         : prints api pending flags

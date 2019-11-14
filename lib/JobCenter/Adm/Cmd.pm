@@ -1,5 +1,7 @@
 package JobCenter::Adm::Cmd;
 
+use open ':std' => ':utf8';
+
 use Mojo::Base -base;
 
 use Text::Table::Tiny 0.04;
