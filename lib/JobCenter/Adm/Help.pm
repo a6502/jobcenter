@@ -40,6 +40,7 @@ errors [-vv?] [workflows]       : prints things about job errors
 locks  [-vv?] [locktypes]       : prints things about job locks
 help                            : this help
 pending                         : prints api pending flags
+tasks                           : prints current api tasks
 workers                         : prints worker status from the db
 
 Use 'jcadm <cmd> help' for more information about a subcommand.
