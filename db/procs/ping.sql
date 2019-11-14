@@ -23,11 +23,13 @@ AS $function$BEGIN
 			CASE WHEN wa.filter IS NOT NULL THEN
 				jsonb_build_object(
 					'poll', ('prettyplease_' || a.name::text || ':' || a_worker_id::text),
-					'workers', array[a_worker_id]
+					'workers', array[a_worker_id],
+					'count', count(*)
 				)::text
 			ELSE
 				jsonb_build_object(
-					'poll', ('prettyplease_' || wa.action_id::text)
+					'poll', ('prettyplease_' || wa.action_id::text),
+					'count', count(*)
 				)::text
 			END
 		)
