@@ -673,7 +673,7 @@ sub _poll_done {
 		sub {
 			my ($d, $err, $res) = @_;
 			die $err if $err;
-			my ($outargs) = @{$res->array};
+			my ($job_id2, $outargs) = @{$res->array};
 			return unless $outargs; # job not finished
 			delete $self->{jobs}->{$job->{job_id}};
 			delete $self->{channels}->{$job->{vci}}->{$job->{job_id}} if $self->{channels}->{$job->{vci}};
