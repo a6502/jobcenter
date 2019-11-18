@@ -832,7 +832,7 @@ sub _task_ready {
 	}
 
 	my $tmr;
-	$tmr = Mojo::IOLoop->timer(3 => sub { $self->_task_ready_next($job_id) } ) if $job_id;
+	$tmr = Mojo::IOLoop->timer(10 => sub { $self->_task_ready_next($job_id) } ) if $job_id;
 
 	for my $wa (@was) {
 		my $task = JobCenter::Api::Task->new(
@@ -885,6 +885,8 @@ sub _task_ready_next {
 		$self->log->debug("no other worker for $task->{listenstring}!?");
 		# no other workers available than the one we already tried?
 		# give up for now and let the retry mechanisms cope with this
+		$wa->slotgroup->{used}--;
+		# but don't forget to reduce the used count..
 		return;
 	}
 
