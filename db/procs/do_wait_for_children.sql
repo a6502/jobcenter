@@ -83,15 +83,27 @@ BEGIN
 		RETURN (true, v_waitjobtask)::nextjobtask;
 	END IF;
 
-	PERFORM * FROM jobs WHERE parentjob_id = a_jobtask.job_id AND state <> 'zombie';
-		--FOR UPDATE OF jobs;
-	-- using locking here can lead to deadlocks with unrelated queries (task_done)
+	LOOP
+		BEGIN
+			PERFORM * FROM jobs WHERE parentjob_id = a_jobtask.job_id AND state <> 'zombie'
+				FOR KEY SHARE OF jobs NOWAIT;
+				-- using locking here can lead to deadlocks with unrelated queries (task_done)
+				-- so we try to be as gentle as possible
 
-	IF FOUND THEN -- not finished
-		-- the childjob will unblock us when it is finished (we hope)
-		RAISE LOG 'not all children of job % are zombies yet', a_jobtask.job_id;
-		RETURN null;
-	END IF;
+			IF FOUND THEN -- not finished
+				-- the childjob will unblock us when it is finished (we hope)
+				RAISE LOG 'not all children of job % are zombies yet', a_jobtask.job_id;
+				RETURN null;
+			END IF;
+
+			EXIT; -- all are zombies
+		EXCEPTION WHEN lock_not_available THEN
+			-- loop after waiting for a bit
+			RAISE LOG 'could not get share lock on all children of job %', a_jobtask.job_id;
+			PERFORM pg_sleep(0.1);
+			CONTINUE;
+		END;
+	END LOOP;
 
 	RAISE LOG 'all children of % are zombies', a_jobtask.job_id;
 
