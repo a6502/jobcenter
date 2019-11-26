@@ -103,13 +103,13 @@ BEGIN
 		EXCEPTION WHEN lock_not_available THEN
 			-- loop after waiting for a bit
 			RAISE LOG 'could not get share lock on all children of job %', a_jobtask.job_id;
-			PERFORM pg_sleep(0.1 * loop_counter);
+			PERFORM pg_sleep(1 * loop_counter);
 			CONTINUE;
 		END;
 	END LOOP;
 
 	RAISE LOG 'failed to get share lock on children of %, giving up', a_jobtask.job_id;
 
-	RETURN 0;
+	RETURN null;
 END
 $function$
