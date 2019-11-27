@@ -31,7 +31,7 @@ sub _select_counts {
 	local $" = ', ';
 
 	my @det = $detailed ? (', lockvalue', ', l.lockvalue') : ('', '');
-	my $cond = @$locktypes ? "and locktype in (@qs)" : 'true';
+	my $cond = @$locktypes ? "locktype in (@qs)" : 'true';
 
 	my $result = $self->adm->pg->db->query(qq[
 		select lock, locktype $det[0], count(*) as count
