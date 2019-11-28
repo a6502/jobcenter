@@ -84,7 +84,10 @@ BEGIN
 	END IF;
 
 	BEGIN
-		PERFORM * FROM jobs WHERE parentjob_id = a_jobtask.job_id AND state <> 'zombie'
+		PERFORM * FROM jobs WHERE 
+			parentjob_id = a_jobtask.job_id
+			AND state <> 'zombie'
+			AND job_finished IS null
 			FOR KEY SHARE OF jobs NOWAIT;
 			-- using locking here can lead to deadlocks with unrelated queries (task_done)
 			-- so we try to be as gentle as possible
