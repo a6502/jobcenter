@@ -56,11 +56,11 @@ sub main {
 
 	my $job = $pgh->selectrow_hashref(q[
 		select
-			workflow_id, state, arguments, environment, job_created, job_finished, out_args,
+			workflow_id, parentjob_id, state, arguments, environment, job_created, job_finished, out_args,
 			age(job_finished, job_created) as took, task_id, out_args, variables, task_state
 		from jobs where job_id=$1
 		union all select
-			workflow_id, state, arguments, environment, job_created, job_finished, out_args,
+			workflow_id, parentjob_id, state, arguments, environment, job_created, job_finished, out_args,
 			age(job_finished, job_created) as took, null as task_id, out_args, null as variables, null as task_state
 		from jobs_archive where job_id=$2],
 		{},
@@ -79,6 +79,7 @@ sub main {
 	say "job $job_id workflow \"$wfname\" ($job->{workflow_id})";
 	say "    arguments   $job->{arguments}";
 	say "    environment $job->{environment}" if $job->{environment};
+	say "    parent job  $job->{parentjob_id}" if $job->{parentjob_id};
 	say "    started at  $job->{job_created}";
 
 	my $sth = $pgh->prepare(
