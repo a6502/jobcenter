@@ -85,7 +85,7 @@ BEGIN
 	-- todo: unify this with the non-map case
 	IF v_map IS NOT NULL THEN
 		v_array := CASE WHEN v_map LIKE 'a.%' THEN v_args->substring(v_map,3) WHEN v_map LIKE 'v.%' THEN v_vars->substring(v_map,3) END;
-		RAISE LOG 'hiero! %', v_array;
+		--RAISE LOG 'hiero! %', v_array;
 		IF v_array IS NULL THEN
 			RETURN do_raise_error(a_parentjobtask, format('map variable %s does not exist?', v_map));
 		END IF;
@@ -118,10 +118,12 @@ BEGIN
 
 			v_children = array_append(v_children, v_job_id);
 		END LOOP;
+		-- log the created child job_ids in the task_state
 		UPDATE jobs SET
-			task_state = to_jsonb(v_children)
+			task_state = jsonb_build_object('childjob_ids', to_jsonb(v_children))
 		WHERE job_id = a_parentjobtask.job_id;
-		RETURN do_task_epilogue(a_parentjobtask, false, null, v_inargs, to_jsonb(v_children));
+		-- and continue with the parentjob
+		RETURN do_task_epilogue(a_parentjobtask, false, null, v_array, null);
 	END IF;
 
 	BEGIN
@@ -149,10 +151,11 @@ BEGIN
 
 	IF v_wait AND NOT v_detach THEN
 		-- mark the parent job as waiting for a child job
+		-- and log child job_id in task_state
 		UPDATE jobs SET
 			state = 'childwait',
 			task_started = now(),
-			out_args = jsonb_build_object('childjob_id', v_job_id) -- store child job_id somewhere
+			task_state = jsonb_build_object('childjob_id', v_job_id)
 		WHERE job_id = a_parentjobtask.job_id;
 		-- and continue with the childjob
 		RETURN do_task_epilogue((v_workflow_id, v_task_id, v_job_id)::jobtask, false, null, null, null);
@@ -160,9 +163,12 @@ BEGIN
 		-- wake up the maestro for the new job
 		--RAISE NOTICE 'NOTIFY "jobtaskdone", %', (v_workflow_id::TEXT || ':' || v_task_id::TEXT || ':' || v_job_id::TEXT );
 		PERFORM pg_notify( 'jobtaskdone',  ( '(' || v_workflow_id || ',' || v_task_id || ',' || v_job_id || ')' ));
+		-- log the child job_id in the task_state field
+		UPDATE jobs SET
+			task_state = jsonb_build_object('childjob_id', v_job_id)
+		WHERE job_id = a_parentjobtask.job_id;
 		-- and continue to next task
-		-- logging the child job_id in the out_args field
-		RETURN do_task_epilogue(a_parentjobtask, false, null, v_inargs, to_jsonb(v_job_id));
+		RETURN do_task_epilogue(a_parentjobtask, false, null, v_inargs, null);
 	END IF;
 	
 	-- not reached

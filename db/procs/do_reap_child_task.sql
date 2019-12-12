@@ -138,7 +138,7 @@ BEGIN
 					task_completed,
 					v_in_args,
 					v_out_args,
-					task_state
+					jsonb_build_object('childjob_id', v_subjob_id)
 				FROM jobs
 				WHERE job_id = a_jobtask.job_id;
 
@@ -203,6 +203,11 @@ BEGIN
 	END;
 
 	RAISE NOTICE 'reap_child newvars: %', v_newvars;
+
+	-- log the child job_id in the task_state field
+	UPDATE jobs SET
+		task_state = jsonb_build_object('childjob_id', v_subjob_id)
+	WHERE job_id = a_jobtask.job_id;
 
 	RETURN do_task_epilogue(a_jobtask, v_changed, v_newvars, v_in_args, v_out_args);
 END
