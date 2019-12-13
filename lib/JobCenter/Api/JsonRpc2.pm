@@ -166,7 +166,9 @@ sub work {
 	my ($self) = @_;
 
 	local $SIG{TERM} = local $SIG{INT} = sub {
-		$self->_shutdown(@_);
+		my ($sig) = @_;
+		$self->log->info("caught sig$sig, shutting down");
+		Mojo::IOLoop->stop;
 	};
 
 	$self->log->debug('JobCenter::Api::JsonRpc starting work');
@@ -176,6 +178,7 @@ sub work {
 	#while($reactor->{running}) {
 	#	$reactor->one_tick();
 	#}
+	$self->_shutdown();
 	$self->log->info('JobCenter::Api::JsonRpc done?');
 
 	return 0;
@@ -1068,22 +1071,27 @@ sub rpc_task_done {
 
 
 sub _shutdown {
-	my($self, $sig) = @_;
-	$self->log->info("caught sig$sig, shutting down");
+	my($self) = @_;
 
-	for my $was (values %{$self->listenstrings}) {
-		for my $wa (@$was) {
-			$self->log->debug("withdrawing '$wa->{actionname}' for '$wa->{client}->{workername}'");
-			my ($res) = $self->jcpg->db->query(
-					q[select withdraw($1, $2)],
-					$wa->client->workername,
-					$wa->actionname
-				)->array;
-			die "no result" unless $res and @$res;
-		}
+	my $jcpg = $self->jcpg;
+
+	$self->log->info("stop accepting new connections");
+	for my $srv (@{$self->servers}) {
+		Mojo::IOLoop->acceptor($srv->server)->stop();
 	}
 
-	Mojo::IOLoop->stop;
+	# unlisten so we don't get any new work
+	$self->log->info("unlisten actions");
+	for my $ls (keys %{$self->listenstrings}) {
+		$jcpg->pubsub->unlisten($ls);
+	}
+	$jcpg->pubsub->unlisten('job:finished');
+
+	$self->log->info("disconnecting clients");
+	for my $client (values %{$self->clients}) {
+		$self->log->debug("disconnecting $client->{workername}'");
+		$client->close();
+	}
 }
 
 

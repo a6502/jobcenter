@@ -18,12 +18,11 @@ BEGIN
 	RETURNING
 		worker_id INTO v_worker_id;
 
-
-        RAISE LOG 'disconnect for % (%)', a_workername, v_worker_id;
-
 	IF NOT FOUND THEN
 		RETURN FALSE;
 	END IF;
+
+        RAISE LOG 'disconnect for % (%)', a_workername, v_worker_id;
 
 	DELETE FROM
 		 worker_actions
