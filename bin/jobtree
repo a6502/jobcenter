@@ -19,10 +19,25 @@ my $pgh;
 exit main(@ARGV);
 
 sub main {
-	die "usage: $0 <jobid> [<jobid>...]" unless @_;
+	die "usage: $0 <jobid> [<jobid>...] [--head]" unless @_;
 
-	my $graph = Graph::Easy->new();
-	$graph->add_nodes(@ARGV);
+	my (%opts, @job_ids, $graph);
+	for (@_) {
+		if (/^-/) {
+			if (/^(?:--head|-H)$/) {
+				$opts{head} = 1;
+			} else {
+				die "unknown option: $_";
+			}
+		} else {
+			push @job_ids, $_;
+		}
+	}
+
+	if (not $opts{head}) {
+		$graph = Graph::Easy->new();
+		$graph->add_nodes(@job_ids);
+	}
 
 	my $cfgpath = "$FindBin::Bin/../etc/jobcenter.conf";
 
@@ -48,8 +63,7 @@ sub main {
 
 	my %visited;
 	my @relationships;
-
-	my @job_ids = @ARGV;
+	my @heads;
 
 	while (@job_ids) {
 		my $job_id = shift @job_ids;
@@ -58,18 +72,27 @@ sub main {
 
 		my ($parentjob_id, $childjob_ids) = get_family($job_id);
 
-		push @job_ids, $parentjob_id if defined $parentjob_id;
+		if (defined $parentjob_id) {
+			push @job_ids, $parentjob_id;
+		} else {
+			push @heads, $job_id if $opts{head};
+		}
 
-		for (@$childjob_ids) {
-			push @relationships, [$job_id, $_];
-			push @job_ids, $_;
+		if (not $opts{head}) {
+
+			for (@$childjob_ids) {
+				push @relationships, [$job_id, $_];
+				push @job_ids, $_;
+			}
 		}
 	}
-		
 
-	$graph->add_edge (@$_) for @relationships;
-
-	print $graph->as_ascii;
+	if ($opts{head}) {
+		say for @heads;
+	} else {
+		$graph->add_edge (@$_) for @relationships;
+		print $graph->as_ascii;
+	}
 
 	return 0;
 }
