@@ -40,6 +40,8 @@ BEGIN
 		RETURN do_raise_error(a_jobtask, format('caught exception in do_inargsmap sqlstate %s sqlerrm %s', SQLSTATE, SQLERRM));
 	END;
 
+	-- todo: only call when needed
+	v_env = do_populate_env(a_jobtask, v_env);
 	-- compute action environment
 	FOR v_key IN SELECT
 				"name"
