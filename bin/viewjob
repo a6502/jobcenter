@@ -13,6 +13,8 @@ use Config::Tiny;
 use DBI;
 use DBD::Pg qw(:async);
 use JSON qw(decode_json encode_json);
+use File::Basename qw(basename);
+use Getopt::Long;
 
 # JobCenter
 #use lib "$FindBin::Bin/../lib";
@@ -21,15 +23,34 @@ use JSON qw(decode_json encode_json);
 my $pgh;
 my %actions;
 
-exit main(@ARGV);
+exit main();
+
+sub help {
+	my $prog = basename $0;
+	print <<__END;
+usage: $prog [options] <job_id>
+
+    view steps taken by a given job_id
+
+options:
+
+    -t,--time   show absolute start times
+__END
+	return 0;
+}
 
 sub main {
 	binmode(STDOUT, ":utf8");
-	if (scalar @_ != 1) {
-		die "usage: $0 <jobid>";
-	}
 
-	my ($job_id) = @_;
+	my %opts;
+	GetOptions(
+		'help'   => sub { exit help() },
+		'time'   => \$opts{time},
+	) or die "error in command line arguments\n";
+
+	exit help() unless @ARGV == 1;
+
+	my $job_id = $ARGV[0];
 
 	my $cfgpath = "$FindBin::Bin/../etc/jobcenter.conf";
 
@@ -54,17 +75,24 @@ sub main {
 	) or die "cannot connect to db: $DBI::errstr";
 	$pgh->{pg_placeholder_dollaronly} = 1;
 
-	my $job = $pgh->selectrow_hashref(q[
+	my $job = $pgh->selectrow_hashref(qq[
 		select
 			workflow_id, parentjob_id, state, arguments, environment, job_created, job_finished, out_args,
-			age(job_finished, job_created) as took, task_id, out_args, variables, task_state
-		from jobs where job_id=$1
+			age(job_finished, job_created) as took, task_id, out_args, variables, task_state,
+			${\(
+				$opts{time} 
+				? "task_entered as started"
+				: "extract(epoch from age(task_entered, job_created)) as started" 
+			)},
+			extract(epoch from age(task_started, task_entered)) as delay
+		from jobs where job_id=\$1
 		union all select
 			workflow_id, parentjob_id, state, arguments, environment, job_created, job_finished, out_args,
-			age(job_finished, job_created) as took, null as task_id, out_args, null as variables, null as task_state
-		from jobs_archive where job_id=$2],
+			age(job_finished, job_created) as took, null as task_id, out_args, null as variables, null as task_state, 
+			null as started, null as delay
+		from jobs_archive where job_id=\$2],
 		{},
-		$job_id, $job_id
+		$job_id, $job_id 
 	);
 
 	die "no job $job_id?" unless $job;
@@ -83,27 +111,36 @@ sub main {
 	say "    started at  $job->{job_created}";
 
 	my $sth = $pgh->prepare(
-		q[select
+		qq[select
 			*,
+			${\(
+				$opts{time} 
+				? "task_entered as started"
+				: "extract(epoch from age(task_entered, \$2)) as started" 
+			)},
 			extract(epoch from age(task_started, task_entered)) as delay,
 			extract(epoch from age(task_completed, task_started)) as duration
-		 from job_task_log where job_id=$1 order by job_task_log_id]
+		 from job_task_log where job_id=\$1 order by job_task_log_id]
 	);
-	$sth->execute($job_id) or die "oergh";
+	$sth->execute($job_id, $opts{time} ? () : $job->{job_created}) or die "oergh";
 
 	my $steps = ' 1';
 
 	while ( my $jt = $sth->fetchrow_hashref ) {
 		my ($action_id, $type, $name) = get_action($jt->{task_id});
 		#print Dumper($jt);
+		my @times = map { format_delay($jt->{$_}) } qw/started delay duration/;
+		@times = map { $_ // '<null>' } @times;
 		say '---------------------------------------------------------';
 		if ($type eq 'system') {
-			say "step $steps $name";
+			printf "step %s %s\n" => 
+				( $steps, $name );
 		} else {
-			$jt->{delay} = '<null>' unless defined $jt->{delay};
-			$jt->{duration} = '<null>' unless defined $jt->{duration};
-			say "step $steps call $type $name ($action_id) delay $jt->{delay} duration $jt->{duration}";
+			printf "step %s call %s %s (%s)\n" => 
+				( $steps, $type, $name, $action_id );
 		}	
+		say "        started    $times[0]" if $type eq 'system';
+		say "        started    $times[0], delay $times[1], duration $times[2]" if $type ne 'system';
 		say "        task_state $jt->{task_state}" if $jt->{task_state};
 		say "        inargs     $jt->{task_inargs}" if $jt->{task_inargs};
 		say "        outargs    $jt->{task_outargs}" if $jt->{task_outargs};
@@ -114,12 +151,14 @@ sub main {
 
 	if (not $job->{job_finished} and $job->{task_id}) {
 		my ($action_id, $type, $name) = get_action($job->{task_id});
+		my @times = map { format_delay($job->{$_}) } qw/started delay/;
 		say '---------------------------------------------------------  <--- current';
 		if ($type eq 'system') {
 			say "step $steps $name";
 		} else {
 			say "step $steps call $type $name ($action_id)";
 		}
+		say "        started    ", $times[0] // '<null>', defined $times[1] ? ", delay $times[1]" : '';
 		say "        task_state $job->{task_state}" if $job->{task_state};
 		say "        inargs     $job->{out_args}" if $job->{out_args};
 		say "        curvars    $job->{variables}" if $job->{variables};
@@ -149,5 +188,11 @@ sub get_action {
 		$actions{$task_id} = [$action_id, $type, $name];
 	}
 	return @{$actions{$task_id}};
+}
+
+sub format_delay {
+	local $_ = shift;
+	s/^(\d+(?:\.\d+)?)$/sprintf "%.6f s", $1/e if defined $_;
+	return $_;
 }
 
