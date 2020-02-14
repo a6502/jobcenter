@@ -1,0 +1,119 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+use feature 'say';
+
+use Mojo::Log;
+use Mojo::Pg;
+
+use Cwd 'realpath';
+use File::Basename qw/basename fileparse/;
+use Config::Tiny;
+use FindBin ();
+
+use constant CFGPATH => realpath("$FindBin::Bin/../etc/jobcenter.conf");
+
+our ($pg, $log, $debug);
+
+exit main();
+
+sub help {
+	my $prog = basename $0;
+	print <<__END;
+usage: 
+	$prog [job_id] ...
+
+show source for given job_id(s)
+__END
+	return 0;
+}
+
+
+sub main {
+
+	my @job_ids;
+
+	while (@ARGV) {
+		local $_ = shift @ARGV;
+		/^(?:-h|--help)$/ and return help();
+		/^-/ and die "unknown argument: $_\n";
+		push @job_ids, $_;
+	}
+
+	return help() unless @job_ids;
+
+	my $cfg = Config::Tiny->read(CFGPATH) 
+		or die "failed to read config ${\CFGPATH()}: ".Config::Tiny->errstr;
+	
+	$log = Mojo::Log->new(level => ($debug) ? 'debug' : 'info');
+	$pg = pg($cfg);
+
+	my $qs = join ', ', ("?")x@job_ids;
+
+	my $smt = $pg->db->dbh->prepare(qq[
+		select 
+			* 
+		from ( 
+			select 
+				j.job_id, j.workflow_id, a.src 
+			from 
+				jobs j 
+			join 
+				actions a 
+			on 
+				j.workflow_id = a.action_id
+			where 
+				j.job_id in ($qs) 
+			union all 
+			select 
+				j.job_id, j.workflow_id, a.src 
+			from 
+				jobs_archive j 
+			join 
+				actions a 
+			on 
+				j.workflow_id = a.action_id 
+			where 
+				j.job_id in ($qs)
+		) as x
+		order by 
+			job_id
+	]) or die "failed to prepare";
+
+	$smt->execute((@job_ids)x2) or die "failed to execute";
+
+	for (@{$smt->fetchall_arrayref}) {
+		my ($job_id, $workflow_id, $src) = @$_;
+		say    "+----------------------------------------------------------------------+";
+		printf "| %-69s|\n", "job_id: $job_id, workflow_id: $workflow_id";
+		say    "+----------------------------------------------------------------------+";
+		say "$src";
+	}
+
+	return 0;
+}
+
+sub pg { 
+	my $cfg = shift;
+	
+	$ENV{'PGAPPNAME'} = fileparse($0) . " [$$]";
+
+	my $pg = Mojo::Pg->new(
+		'postgresql://'
+		. $cfg->{admin}->{user}
+		. ':' . $cfg->{admin}->{pass}
+		. '@' . ( $cfg->{pg}->{host} // '' )
+		. ( ($cfg->{pg}->{port}) ? ':' . $cfg->{pg}->{port} : '' )
+		. '/' . $cfg->{pg}->{db}
+	);
+	$pg->on(connection => sub { 
+		my ($e, $dbh) = @_;
+		$log->debug("pg: new connection: $dbh");
+	});
+
+	return $pg;
+};
+
+
+1;
