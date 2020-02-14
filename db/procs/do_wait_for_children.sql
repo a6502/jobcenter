@@ -14,11 +14,14 @@ AS $function$DECLARE
 BEGIN
 	-- this could end up being called a lot, so try to bail out as early as possible
 
-	-- this function can be called in two ways:
-	-- 1. by do_jobtask / do_wait_for_children_task
-	-- 1. directly by the maestro in reponse to a notification
-	-- in either way the current job task should be a wait_for_children task
-	-- but the task_id might be of the create_childjob task
+
+	-- but first we need to serialize accesses to the parent job
+	-- and we need to do that before we hold any other locks
+	PERFORM pg_advisory_xact_lock(a_jobtask.job_id);
+
+	-- this function is called directly by the maestro in reponse to a notification
+	-- the current jobs task should be a wait_for_children task
+	-- but the task_id we got in the arguments might be of the create_childjob task
 	-- paranoia check
 	SELECT
 		task_id, state INTO v_task_id, v_state
@@ -38,12 +41,6 @@ BEGIN
 		-- this can happen because all children call us on finish so some other
 		-- notification might already have done this
 		RAISE LOG 'bailing out of wait_for_children job % task %', a_jobtask.job_id, a_jobtask.task_id;
-		RETURN null;
-	END IF;
-
-	--try to lock on the lower 32 bits of the job_id and the task_id we just found
-	IF NOT pg_try_advisory_xact_lock(a_jobtask.job_id::bit(32)::int, v_task_id) THEN
-		RAISE LOG 'failed to lock wait_for_children job % task %', a_jobtask.job_id, v_task_id;
 		RETURN null;
 	END IF;
 
@@ -102,6 +99,7 @@ BEGIN
 
 		-- a reap_child_job task will to the actual reaping
 		RETURN do_task_epilogue(v_waitjobtask, false, null, null, null);
+
 	EXCEPTION WHEN lock_not_available THEN
 		-- loop after waiting for a bit
 		RAISE LOG 'could not get share lock on all children of job %', a_jobtask.job_id;

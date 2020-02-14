@@ -30,6 +30,11 @@ AS $function$BEGIN
 		RAISE EXCEPTION 'do_wait_for_children called for non-do_wait_for_children-task %', a_jobtask;
 	END IF;
 
-	RETURN do_wait_for_children(a_jobtask);
+	-- we need to use the notification here as well because
+	-- otherwise we run into deadlocks in do_wait_for_children
+	RAISE LOG 'NOTIFY "wait_for_children", %', a_jobtask::text;
+	PERFORM pg_notify('wait_for_children', a_jobtask::text);
+
+	RETURN null;
 END
 $function$
