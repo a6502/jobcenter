@@ -14,7 +14,6 @@ use FindBin ();
 
 use constant CFGPATH => realpath("$FindBin::Bin/../etc/jobcenter.conf");
 
-
 our ($pg, $log, $debug);
 
 exit main();
@@ -57,7 +56,7 @@ sub main {
 			* 
 		from ( 
 			select 
-				j.job_id, a.src 
+				j.job_id, j.workflow_id, a.src 
 			from 
 				jobs j 
 			join 
@@ -68,7 +67,7 @@ sub main {
 				j.job_id in ($qs) 
 			union all 
 			select 
-				j.job_id, a.src 
+				j.job_id, j.workflow_id, a.src 
 			from 
 				jobs_archive j 
 			join 
@@ -85,10 +84,10 @@ sub main {
 	$smt->execute((@job_ids)x2) or die "failed to execute";
 
 	for (@{$smt->fetchall_arrayref}) {
-		my ($job_id, $src) = @$_;
-		say "+----------------------------------------------------------------------+";
-		say "| job_id: $job_id                                                      |";
-		say "+----------------------------------------------------------------------+";
+		my ($job_id, $workflow_id, $src) = @$_;
+		say    "+----------------------------------------------------------------------+";
+		printf "| %-69s|\n", "job_id: $job_id, workflow_id: $workflow_id";
+		say    "+----------------------------------------------------------------------+";
 		say "$src";
 	}
 
@@ -108,7 +107,6 @@ sub pg {
 		. ( ($cfg->{pg}->{port}) ? ':' . $cfg->{pg}->{port} : '' )
 		. '/' . $cfg->{pg}->{db}
 	);
-	#$pg->max_connections(5); # how much? configurable?
 	$pg->on(connection => sub { 
 		my ($e, $dbh) = @_;
 		$log->debug("pg: new connection: $dbh");
