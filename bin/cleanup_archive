@@ -1,0 +1,130 @@
+#!/usr/bin/env perl
+
+#
+# jobcenter archive_db cleanup
+#
+# removes old jobs from the seperate archive_db after 12 months
+#
+
+
+use strict;
+use warnings;
+use 5.10.0;
+
+# standard modules
+use Cwd qw(realpath);
+use Data::Dumper;
+use Fcntl qw(:seek); # SEEK_SET
+use File::Temp qw(tempfile);
+use FindBin;
+use Getopt::Long;
+use Time::Piece;
+
+# cpan
+use Config::Tiny;
+use DBI;
+use DBD::Pg;
+
+# potentially useful globals
+my $debug = 0;
+my $dry_run = 0;
+my $adb; # archive db
+
+exit main(@ARGV);
+
+sub main {
+	my $cfgpath = realpath("$FindBin::Bin/../etc/jobcenter.conf");
+
+	GetOptions(
+		'config=s' => \$cfgpath,
+		'debug!', => \$debug,
+		'dry-run!', => \$dry_run,
+	) or die "Error in command line arguments\n";
+	#my ($job_id) = @_;
+
+	my $cfg = Config::Tiny->read($cfgpath);
+	die 'failed to read config ' . $cfgpath . ': ' . Config::Tiny->errstr unless $cfg;
+
+	# make our clientname the application_name visible in postgresql
+	$ENV{'PGAPPNAME'} = "$0 [$$]";
+
+	my ($pgdsn, $pguser, $pgpass);
+
+	$pgdsn = 'dbi:Pg:dbname=' . $cfg->{cleanup}->{archive_db}
+		. (($cfg->{cleanup}->{archive_host}) ? ';host=' . $cfg->{cleanup}->{archive_host} : '')
+		. (($cfg->{cleanup}->{archive_port}) ? ';port=' . $cfg->{cleanup}->{archive_port} : '');
+	$pguser = $cfg->{cleanup}->{archive_user};
+	$pgpass = $cfg->{cleanup}->{archive_pass};
+
+
+	$adb = DBI->connect(
+		$pgdsn, $pguser, $pgpass,
+		{
+			AutoCommit => 1,
+			RaiseError => 1,
+			PrintError => 1,
+		}
+	) or die "cannot connect to archvive db: $DBI::errstr";
+	$adb->{pg_placeholder_dollaronly} = 1;
+
+	my $jobsarchiveq = $adb->prepare(<<'EOT');
+select
+	job_id
+from
+	jobs_archive
+where
+	job_finished < now() - interval '12 months'
+EOT
+
+	my $deljobarch = $adb->prepare(<<'EOT');
+delete from
+	jobs_archive
+where
+	job_id = $1
+EOT
+
+	my $fh = tempfile();
+
+	say 'cleaning up jc_archive database';
+
+	$jobsarchiveq->execute();
+
+	my $job_id;
+	my $to_delete = 0;
+
+	while( ($job_id) = $jobsarchiveq->fetchrow_array() ) {
+		say $fh $job_id;
+		$to_delete++;
+	}
+
+	say "need to clean $to_delete jobs";	
+
+	seek($fh, 0, SEEK_SET); # rewind fh
+	
+	my $batch = 100;
+	my $count = 1;
+
+	$adb->begin_work();
+	while(<$fh>) {
+		chop;
+		say "delete job_id $_" if $debug;
+		$deljobarch->execute($_) unless $dry_run;
+		if (++$count >= $batch) {
+			$adb->commit();
+			$adb->begin_work();
+			$count = 1;
+		}
+	}		
+	$adb->commit();
+
+	close $fh;
+
+	say "vacuuming";
+
+	# reclaim space
+	$adb->do('vacuum analyze jobs_archive') unless $dry_run;
+
+	say "done";
+
+	return 0;
+}
