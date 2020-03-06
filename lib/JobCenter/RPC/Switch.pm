@@ -513,7 +513,7 @@ sub _get_workflow_info {
 		q[select * from get_workflow_info($1)],
 		$workflow,
 	)->array;
-	die "worflow $workflow not found" unless $res and $res->[0];
+	die "workflow $workflow not found" unless $res and $res->[0];
 	#print "info for $workflow:", Dumper($res);
 	return decode_json($res->[0]);
 }
