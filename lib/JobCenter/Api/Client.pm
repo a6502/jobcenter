@@ -32,7 +32,7 @@ sub new {
 		# Process input chunk
 		#print '    got chunk: ', Dumper(\$chunk);
 		my @err = $con->handle($chunk);
-		die join(' ', grep defined, @err) if @err;
+		$api->log->error(join(' ', grep defined, @err)) if @err;
 		$ns->close if $err[0];
 	});
 	$ns->on(close => sub { $self->_on_close(@_) });

@@ -43,14 +43,12 @@ has [qw(
 	auth
 	cfg
 	clients
-	daemon
 	debug
 	jcpg
 	jobs
 	listenstrings
 	log
 	pending
-	pid_file
 	ping
 	pqq
 	servers
@@ -110,11 +108,12 @@ sub new {
 		my ($pubsub, $payload) = @_;
 		$self->log->debug("notify job:finished $payload");
 		#print 'jobs: ', Dumper($self->{jobs});
-		my $jobs = $self->{jobs}->{$payload};
-		return unless $jobs and @$jobs;
+		my $job = $self->{jobs}->{$payload};
+		return unless $job;
 		local $@;
 		eval {
-			$_->{lcb}->($self, $_) for @$jobs;
+			$self->log->debug("calling lcb $job->{lcb}");
+			$job->{lcb}->($self, $job);
 		};
 		$self->log->debug("pubsub cb $@") if $@;
 	});
@@ -368,7 +367,7 @@ sub rpc_create_job {
 			$rpccb->($job_id, undef);
 
 			my $job = JobCenter::Api::Job->new(
-				cb => $cb,
+				cb => [ $cb ],
 				job_id => $job_id,
 				inargs => $inargs,
 				listenstring => $listenstring,
@@ -377,7 +376,7 @@ sub rpc_create_job {
 			);
 
 			# register for the central job finished listen
-			push @{$self->{jobs}->{$job_id}}, $job;
+			$self->{jobs}->{$job_id} = $job;
 
 			my $tmr;
 			$tmr = Mojo::IOLoop->timer($timeout => sub {
@@ -422,15 +421,18 @@ sub _poll_done {
 			my ($job_id2, $outargs) = @{$res->array};
 			$res->finish;
 			return unless $outargs;
-			delete $self->{jobs}->{$job->{job_id}};
-			Mojo::IOLoop->remove($job->tmr) if $job->tmr;
-			$self->log->debug("calling cb $job->{cb} for job_id $job->{job_id} outargs $outargs");
+			my $job_id=$job->{job_id};
+			delete $self->{jobs}->{$job_id};
+			Mojo::IOLoop->remove($job->{tmr}) if $job->{tmr};
 			my $outargsp;
 			local $@;
 			eval { $outargsp = decode_json(encode_utf8($outargs)); };
 			$outargsp = { error => 'error decoding json: ' . $outargs } if $@;
-			eval { $job->cb->($job->{job_id}, $outargsp); };
-			$self->log->debug("got $@ calling callback") if $@;
+			for my $cb ( @{$job->{cb}} ) {
+				$self->log->debug("calling cb $cb for job_id $job_id outargs $outargs");
+				eval { $cb->($job_id, $outargsp); };
+				$self->log->debug("got $@ calling callback") if $@;
+			}
 			$job->delete;
 		}
 	)->catch(sub {
@@ -475,27 +477,33 @@ sub rpc_find_jobs {
 }
 
 
-# fixme: reuse _poll_done?
 sub rpc_get_job_status {
 	my ($self, $con, $i, $rpccb) = @_;
 	my $job_id = $i->{job_id} or die 'no job_id?';
+	die "invalid $job_id" unless $job_id =~ /^\d+$/;
 
+	my $job;
 	if ($i->{notify}) {
+		# registering the callback before we do the get_job_status query
+		# could lead to the job_done done notification being received by the
+		# client before we send the get_job_status rpc result. client libraries
+		# offering the notify option on get_job_status should be prepared for
+		# this
 		my $cb = sub {
 			my ($job_id, $outargs) = @_;
 			$con->notify('job_done', {job_id => $job_id, outargs => $outargs})
 				if %$con; # mild hack: the con object will be empty when
 					  # the client is already disconnected
 		};
-		$self->log->debug("get_status: listen for $job_id");
-		my $job = JobCenter::Api::Job->new(
-			cb => $cb,
+		#$self->log->debug("get_status: listen for $job_id");
+		$job = $self->{jobs}->{$job_id} // JobCenter::Api::Job->new(
+			cb => [],
 			job_id => $job_id,
 			lcb => \&_poll_done,
 		);
-		# register for the central job finished listen
-		# we have a race condition here with _poll_done?
-		push @{$self->{jobs}->{$job_id}}, $job;
+		push @{$job->{cb}}, $cb; # we might be adding to a existing job
+		# (re)register for the central job finished listen
+		$self->{jobs}->{$job_id} = $job;
 	}
 
 	Mojo::IOLoop->delay(
@@ -515,6 +523,9 @@ sub rpc_get_job_status {
 			my ($d, $err, $res) = @_;
 			if ($err) {
 				$rpccb->(undef, $err);
+				# unknown job_id.. removing the callback is save
+				#$self->log->debug("get_status: remove listen for $job_id");
+				delete $self->{jobs}->{$job_id} if $job;
 				return;
 			}
 			my ($job_id2, $outargs) = @{$res->array};
@@ -522,6 +533,17 @@ sub rpc_get_job_status {
 			$self->log->debug("got status for job_id $job_id outargs @{[ $outargs // '<null>']}");
 			$outargs = decode_json(encode_utf8($outargs)) if $outargs;
 			$rpccb->($job_id2, $outargs);
+			# if the job is finished we can remove our notify callback but we have
+			# to be careful not to remove a _poll_done callback as well, so we'll
+			# only remove if there is only one callback registered. if there is
+			# more than one the client might receive a job_done notification for
+			# a job it is (no longer) waiting for. because of the race condition
+			# mentioned above that should not be an issue
+			if ( $job and $outargs
+				and scalar @{$job->{cb}} == 1 ) {
+				#$self->log->debug("get_status: remove listen for $job_id");
+				delete $self->{jobs}->{$job_id};
+			}
 		}
 	)->catch(sub {
 		 $self->log->error("rpc_job_job_status caught $_[0]");
@@ -1012,6 +1034,9 @@ sub rpc_task_done {
 	# try to prevent used going negative..
 	$task->workeraction->slotgroup->{used}-- if $task->workeraction->slotgroup->used > 0;
 
+	# hack?
+	$outargs = [ $outargs ] unless ref $outargs;
+	# /hack?
 	local $@;
 	eval {
 		$outargs = decode_utf8(encode_json($outargs));
