@@ -50,7 +50,7 @@ BEGIN
 		action_id = v_workflow_id
 		AND destination = 'arguments'::action_input_destination;
 
-	 v_info = jsonb_insert(v_info, '{inputs}', v_tmp);
+	v_info = jsonb_insert(v_info, '{inputs}', COALESCE(v_tmp, '{}'::jsonb));
 
 	SELECT
 		json_object_agg(
@@ -65,7 +65,7 @@ BEGIN
 	WHERE
 		action_id = v_workflow_id;
 
-	 v_info = jsonb_insert(v_info, '{outputs}', v_tmp);
+	 v_info = jsonb_insert(v_info, '{outputs}', COALESCE(v_tmp, '{}'::jsonb));
 
 	RETURN v_info;
 END$function$
