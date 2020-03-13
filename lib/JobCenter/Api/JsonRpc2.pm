@@ -69,7 +69,8 @@ sub new {
 
 	my $apiname = $self->{apiname} = ($args{apiname} || fileparse($0)) . " [$$]";
 	my $debug = $self->{debug} = $args{debug} // 0; # or 1?
-	my $log = $self->{log} = $args{log} // Mojo::Log->new();
+	my $log = $self->{log} = $args{log} //
+		 Mojo::Log->new(level => ($debug) ? 'debug' : 'info');
 
 	# make our clientname the application_name visible in postgresql
 	$ENV{'PGAPPNAME'} = $apiname;
@@ -81,6 +82,7 @@ sub new {
 		. ( ($cfg->{pg}->{port}) ? ':' . $cfg->{pg}->{port} : '' )
 		. '/' . $cfg->{pg}->{db}
 	) or die 'no pg?';
+	$jcpg->log($log);
 	$jcpg->max_total_connections($cfg->{pg}->{con} // 5); # sane value?
 
 	if ($debug) {
@@ -170,7 +172,7 @@ sub work {
 		Mojo::IOLoop->stop;
 	};
 
-	$self->log->debug('JobCenter::Api::JsonRpc starting work');
+	$self->log->info('JobCenter::Api::JsonRpc starting work');
 	Mojo::IOLoop->start unless Mojo::IOLoop->is_running;
 	#my $reactor = Mojo::IOLoop->singleton->reactor;
 	#$reactor->{running}++;
@@ -204,7 +206,7 @@ sub _unlisten_client_action {
 		# not much we can do about pending jobs now..
 		delete $self->pending->{$listenstring};
 		$self->jcpg->pubsub->unlisten($listenstring);
-		$self->log->debug("unlisten $listenstring");
+		$self->log->info("unlisten $listenstring");
 	}
 }
 
@@ -221,14 +223,14 @@ sub _disconnect {
 	if ($client->worker_id) {
 		# the client was a worker at some point..
 		# let's assume things are initialized correctly
-		$self->log->debug("worker gone processing $client->{workername}");
+		$self->log->info("worker gone processing $client->{workername}");
 
 		# clean up actions
 		for my $action (keys %{$client->actions}) {
 			$self->_unlisten_client_action($client, $action);
 		}
 
-		# now delete all tasks pointing to this client
+		# now delete all tasks pointing to this worker
 		# this is expensive.. take the memleak instead?
 		my $t = $self->tasks;
 		keys %$t; # reset each;
@@ -273,13 +275,13 @@ sub rpc_hello {
 	$self->auth->authenticate($method, $client, $who, $token, sub {
 		my ($res, $msg, $reqauth) = @_;
 		if ($res) {
-			$self->log->debug("hello from $who succeeded: method $method msg $msg");
+			$self->log->info("client $client->{from}: hello from $who succeeded: method $method msg $msg");
 			$client->who($who);
 			$client->reqauth($reqauth);
 			$con->state('auth');
 			$rpccb->(JSON->true, "welcome to the clientapi $who!");
 		} else {
-			$self->log->debug("hello failed for $who: method $method msg $msg");
+			$self->log->info("client $client->{from}: hello failed for $who: method $method msg $msg");
 			$con->state(undef);
 			# close the connecion after sending the response
 			Mojo::IOLoop->next_tick(sub {
@@ -363,7 +365,9 @@ sub rpc_create_job {
 			# report back to our caller immediately
 			# this prevents the job_done notification overtaking the 
 			# 'job created' result...
-			$self->log->debug("created job_id $job_id listenstring $listenstring");
+			#$self->log->debug("job_id $job_id listenstring $listenstring");
+			$self->log->info("client $client->{from}: created job_id $job_id for $wfname with '$inargs'"
+				. (($vtag) ? " (vtag $vtag)" : ''));
 			$rpccb->($job_id, undef);
 
 			my $job = JobCenter::Api::Job->new(
@@ -427,11 +431,11 @@ sub _poll_done {
 			my $outargsp;
 			local $@;
 			eval { $outargsp = decode_json(encode_utf8($outargs)); };
-			$outargsp = { error => 'error decoding json: ' . $outargs } if $@;
+			$outargsp = { error => "$@ error decoding json: " . $outargs } if $@;
 			for my $cb ( @{$job->{cb}} ) {
-				$self->log->debug("calling cb $cb for job_id $job_id outargs $outargs");
+				$self->log->info("job $job_id done: outargs $outargs");
 				eval { $cb->($job_id, $outargsp); };
-				$self->log->debug("got $@ calling callback") if $@;
+				$self->log->warn("got $@ calling callback") if $@;
 			}
 			$job->delete;
 		}
@@ -620,17 +624,19 @@ sub rpc_announce {
 		die "no result" unless $worker_id;
 	};
 	if ($@) {
-		warn $@;
-		$rpccb->(JSON->false, $@);
+		my $err = $@;
+		$self->log->warn($err);
+		$rpccb->(JSON->false, $err);
 		return;
 	}
-	$self->log->debug("worker_id $worker_id listenstring $listenstring");
+	$self->log->info("client $client->{from} who $client->{who} workername"
+		. " '$workername' worker_id $worker_id listenstring $listenstring");
 
 	my $new;
 
 	unless ($self->listenstrings->{$listenstring}) {
 		# oooh.. a totally new action
-		$self->log->debug("listen $listenstring");
+		$self->log->info("listen $listenstring");
 		$self->jcpg->pubsub->listen( $listenstring, sub {
 			my ($pubsub, $payload) = @_;
 			local $@;
@@ -1008,8 +1014,8 @@ sub rpc_get_task {
 			# ugh.. what a hack
 			$self->{tasks}->{$cookie} = $task;
 
-			$self->log->debug("get_task sending job_id $task->{job_id} to "
-				 . "$task->{workeraction}->{client}->{worker_id} "
+			$self->log->info("get_task sending job_id $task->{job_id} to "
+				 . "worker '$workername' "
 				 . "used $task->{workeraction}->{slotgroup}->{used} "
 				 . "cookie $cookie inargs $inargsj");
 
@@ -1044,7 +1050,7 @@ sub rpc_task_done {
 	$outargs = decode_utf8(encode_json({'error' => 'cannot json encode outargs: ' . $@})) if $@;
 	$self->log->debug("task_done got $@") if $@;
 
-	$self->log->debug("worker '$client->{workername}' done with action '$task->{actionname}' for job $task->{job_id}"
+	$self->log->info("worker '$client->{workername}' done with action '$task->{actionname}' for job $task->{job_id}"
 		." slots used $task->{workeraction}->{slotgroup}->{used} outargs '$outargs'");
 
 	Mojo::IOLoop->delay(
