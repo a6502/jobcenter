@@ -78,7 +78,8 @@ sub new {
 		. ( ($cfg->{jcswitch}->{db_port}) ? ':' . $cfg->{jcswitch}->{db_port} : '' )
 		. '/' . $cfg->{jcswitch}->{db}
 	);
-	$jcpg->database_class('JobCenter::Pg::Db');
+	$jcpg->log($log);
+	#$jcpg->database_class('JobCenter::Pg::Db');
 	$jcpg->max_total_connections($cfg->{jcswitch}->{con} // 5); # sane default?
 	$jcpg->on(connection => sub { my ($e, $dbh) = @_; $log->debug("jcpg: new connection: $dbh"); });
 
@@ -239,7 +240,7 @@ sub _reconfigure {
 
 		#print 'methods to remove ', Dumper($rem);
 		for my $methodname (keys %$rem) {
-			$self->log->debug("withdrawing method $methodname from the rpcswitch");
+			$self->log->info("withdrawing method $methodname from the rpcswitch");
 			$self->withdraw_rpcs(method => $methodname);
 		}
 		
@@ -250,7 +251,7 @@ sub _reconfigure {
 
 		#print 'actions to remove ', Dumper($rem);
 		for my $actionname (keys %$rem) {
-			$self->log->debug("withdrawing action $actionname from the jobcenter");
+			$self->log->info("withdrawing action $actionname from the jobcenter");
 			$self->withdraw_jc(action => $actionname);
 		}
 
@@ -273,7 +274,7 @@ sub _reconfigure {
 	}
 
 	for my $method (keys %$methods) {
-		$self->log->debug("announcing method $method to the rpcswitch");
+		$self->log->info("announcing method $method to the rpcswitch");
 		my $err = $self->announce_rpcs(
 			method => $method,
 			workflow => $methods->{$method},
@@ -283,7 +284,7 @@ sub _reconfigure {
 	}
 
 	for my $action (keys %$actions) {
-		$self->log->debug("announcing action $action to the jobcenter");
+		$self->log->info("announcing action $action to the jobcenter");
 		my $err = $self->announce_jc(
 			action => $action,
 			method => $actions->{$action}
@@ -421,14 +422,14 @@ sub work {
 		Mojo::IOLoop->stop;
 	};
 
-	$self->log->debug(blessed($self) . ' starting work');
+	$self->log->info(blessed($self) . ' starting work');
 	$self->{_exit} = WORK_OK;
 	while (!$self->done) {
 		$self->_reconfigure($reload++);
 		Mojo::IOLoop->start;
 	}
 	$self->_shutdown(@_);
-	$self->log->debug(blessed($self) . ' done?');
+	$self->log->info(blessed($self) . ' done?');
 
 	return $self->{_exit};
 }
@@ -630,7 +631,10 @@ sub _create_job {
 			# report back to our caller immediately
 			# this prevents the job_done notification overtaking the 
 			# 'job created' result...
-			$self->log->debug("created job_id $job_id listenstring $listenstring");
+			#$self->log->debug("created job_id $job_id listenstring $listenstring");
+			$self->log->info("$vci ($impersonate): created job_id $job_id for $wfname with '$inargs'"
+				. (($vtag) ? " (vtag $vtag)" : ''));
+
 			$cb1->(RES_WAIT, "$self->{prefix}:$job_id");
 
 			my $job = {
@@ -675,16 +679,21 @@ sub _poll_done {
 			die $err if $err;
 			my ($job_id2, $outargs) = @{$res->array};
 			return unless $outargs; # job not finished
-			delete $self->{jobs}->{$job->{job_id}};
-			delete $self->{channels}->{$job->{vci}}->{$job->{job_id}} if $self->{channels}->{$job->{vci}};
-			$self->log->debug("calling cb $job->{cb} for job_id $job->{job_id} outargs $outargs");
+			my $job_id=$job->{job_id};
+			delete $self->{jobs}->{$job_id};
+			delete $self->{channels}->{$job->{vci}}->{$job_id} if $self->{channels}->{$job->{vci}};
+			#$self->log->debug("calling cb $job->{cb} for job_id $job->{job_id} outargs $outargs");
+			$self->log->info("job $job_id done: outargs $outargs");
 			my $outargsp;
 			local $@;
 			eval { $outargsp = decode_json(encode_utf8($outargs)); };
 			# should not happen?
-			$job->{cb}->(RES_ERROR, "$self->{prefix}:$job->{job_id}", 'error decoding json: ' . $outargs) if $@;
-			$job->{cb}->(RES_ERROR, "$self->{prefix}:$job->{job_id}", $outargsp->{error}) if $outargsp->{error};
-			$job->{cb}->(RES_OK, "$self->{prefix}:$job->{job_id}", $outargsp);
+			$outargsp = { error => "$@ error decoding json: " . $outargs } if $@;
+			if ($outargsp->{error}) {
+				$job->{cb}->(RES_ERROR, "$self->{prefix}:$job_id", $outargsp->{error});
+			} else {
+				$job->{cb}->(RES_OK, "$self->{prefix}:$job_id", $outargsp);
+			}
 			%$job = (); # delete
 		}
 	)->catch(sub {
