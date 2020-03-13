@@ -46,6 +46,7 @@ sub _calljobtaskproc {
 	my ($db, $proc, $arg, $retries) = @_;
 	$retries ||= 1;
 	#$log->debug("select * from $proc($arg)");
+	$log->info("$proc($arg)");
 	$db->query("select * from $proc(\$1)", $arg, sub {
 		my ($db, $err, $res) = @_;
 		$log->debug("_calljobtaskproc callback");
@@ -72,10 +73,10 @@ sub _calljobtaskproc {
 		return unless ref $r eq 'ARRAY' and defined @$r[1];
 		my ($error, $jobtask) = @$r;
 		if ($error) {
-			$log->debug("_calljobtaskproc: error condition, calling errortask $jobtask");
+			$log->info("$proc($arg): error condition, calling errortask $jobtask");
 			_calljobtaskproc($db, 'do_jobtaskerror', $jobtask);
 		} else {
-			$log->debug("do_next_cb: next: $jobtask");
+			$log->info("$proc($arg): next: $jobtask");
 			_calljobtaskproc($db, 'do_jobtask', $jobtask);
 		}
 		return;
@@ -188,7 +189,7 @@ sub main {
 	for my $listen (qw[jobtask jobtaskdone jobtaskerror ping wait_for_children]) {
 		$jcpg->pubsub->listen($listen => sub {
 			my ($pubsub, $payload) = @_;
-			$log->debug("got NOTIFY \"$listen\""
+			$log->info("got NOTIFY \"$listen\""
 				. ($payload ? ", '$payload';" : ''));
 			calljobtaskproc("do_$listen", $payload);
 		});
@@ -218,9 +219,10 @@ sub main {
 		$ioloop->stop
 	};
 
+	$log->info('maestro starting work');
 	$ioloop->start;
+	$log->info('maestro done?');
 
-	$log->info('the end is nigh!');
 	unlink $pid_file if -w $pid_file;
 
 	return 0;
