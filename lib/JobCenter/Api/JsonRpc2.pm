@@ -630,13 +630,14 @@ sub rpc_announce {
 		return;
 	}
 	$self->log->info("client $client->{from} who $client->{who} workername"
-		. " '$workername' worker_id $worker_id listenstring $listenstring");
+               . " '$workername' worker_id $worker_id action $actionname"
+               . " listenstring $listenstring");
 
 	my $new;
 
 	unless ($self->listenstrings->{$listenstring}) {
 		# oooh.. a totally new action
-		$self->log->info("listen $listenstring");
+		$self->log->info("add listen $listenstring");
 		$self->jcpg->pubsub->listen( $listenstring, sub {
 			my ($pubsub, $payload) = @_;
 			local $@;
@@ -1120,7 +1121,8 @@ sub _shutdown {
 
 	$self->log->info("disconnecting clients");
 	for my $client (values %{$self->clients}) {
-		$self->log->debug("disconnecting $client->{workername}'");
+		next unless $client->{from}; # hack to work around leaked clients
+		$self->log->debug("disconnecting $client->{from} " . ($client->{workername} // ''));
 		$client->close();
 	}
 }
