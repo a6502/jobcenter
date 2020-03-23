@@ -76,6 +76,9 @@ BEGIN
 		
 		-- omap also initializes oldvars to empty, but then we would log a change if newvars is also empty
 		v_oldvars := COALESCE(v_oldvars, '{}'::jsonb);
+		
+		-- otherwise the variables get clobbered if there were no childjobs:
+		v_newvars := v_oldvars;
 
 		v_env = do_populate_env(a_jobtask, v_env);
 
