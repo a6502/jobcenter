@@ -172,6 +172,8 @@ sub work {
 		Mojo::IOLoop->stop;
 	};
 
+	local $SIG{HUP} = "IGNORE";
+
 	$self->log->info('JobCenter::Api::JsonRpc starting work');
 	Mojo::IOLoop->start unless Mojo::IOLoop->is_running;
 	#my $reactor = Mojo::IOLoop->singleton->reactor;
