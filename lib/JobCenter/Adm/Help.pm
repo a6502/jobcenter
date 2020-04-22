@@ -34,12 +34,12 @@ Usage: jcadm [opts] <cmd> ...
 
 Subcomands:
 
+apijobs                         : prints current api jobs
 clients                         : prints connected api clients
 jobs   [-vv?] [states]          : prints things about jobs
 errors [-vv?] [workflows]       : prints things about job errors
 locks  [-vv?] [locktypes]       : prints things about job locks
 help                            : this help
-pending                         : prints api pending flags
 tasks                           : prints current api tasks
 workers                         : prints worker status from the db
 

@@ -1,4 +1,4 @@
-package JobCenter::Adm::Tasks;
+package JobCenter::Adm::Apijobs;
 
 use Mojo::Base 'JobCenter::Adm::Cmd';
 
@@ -7,7 +7,7 @@ sub do_cmd {
 	
 	my $client = $self->adm->client();
 	
-	my ($result) = $client->get_api_status('tasks');
+	my ($result) = $client->get_api_status('jobs');
 	
 	unless ($result) {
 		say 'no result from api?';

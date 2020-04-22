@@ -23,14 +23,23 @@ sub do_cmd {
 		say '=' x 64;
 		say 'who : ', $c->{who} // '<unknown>', '(', $c->{from} // 'somewhere' ,')';
 		say 'workername: ', $c->{workername} // 'none';
-		my $a = $c->{actions};
-		if ($a and %$a) {
-			my @keys = qw(slotgroup slots used filter);
+		my $wa = $c->{workeractions};
+		if ($wa and %$wa) {
+			my @keys = qw(slotgroup filter);
 			my @rows = ['actionname', @keys];
-			push @rows, [$_, @{$a->{$_}}{@keys}] for keys %$a;
-			$self->tablify(\@rows, 'actions:');
+			push @rows, [$_, @{$wa->{$_}}{@keys}] for keys %$wa;
+			$self->tablify(\@rows, 'workeractions:');
 		} else {
-			say 'actions: none';
+			say 'workeractions: none';
+		}
+		my $sg = $c->{slotgroups};
+		if ($sg and %$sg) {
+			my @keys = qw(slots used);
+			my @rows = ['name', @keys];
+			push @rows, [$_, @{$sg->{$_}}{@keys}] for keys %$sg;
+			$self->tablify(\@rows, 'slotgroup:');
+		} else {
+			say 'slotgroups: none';
 		}
 		print "\n";
 	}
