@@ -50,6 +50,8 @@ host    all             all             ::1/128                 md5
     *   Config::Tiny
         * debian: libconfig-tiny-perl
         * rhel: perl-Config-Tiny
+    *   Data::Printer
+	* debian: libdata-printer-perl
     *   JSON::MaybeXS, Cpanel::JSON::XS (preferred) or JSON::XS
         * debian: libjson-maybexs-perl, libcpanel-json-xs-perl
     *   Mojolicious (>= 6.66)
