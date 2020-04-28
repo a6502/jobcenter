@@ -18,17 +18,18 @@ use Mojo::Log;
 use Cwd qw(realpath);
 use Data::Dumper;
 use Encode qw(encode_utf8 decode_utf8);
-use File::Basename;
-use FindBin;
+use File::Basename qw(fileparse);
 use Ref::Util qw(is_arrayref is_hashref);
 use Scalar::Util qw(refaddr);
 
 # cpan
 use Config::Tiny;
+use Data::Printer;
 use JSON::MaybeXS;
 use JSON::RPC2::TwoWay;
 
 # JobCenter
+use JobCenter::Api::Action;
 use JobCenter::Api::Auth;
 use JobCenter::Api::Job;
 use JobCenter::Api::Server;
@@ -36,6 +37,7 @@ use JobCenter::Api::SlotGroup;
 use JobCenter::Api::Task;
 use JobCenter::Api::WorkerAction;
 use JobCenter::Pg;
+use JobCenter::Util qw(rm_ref_from_arrayref);
 
 has [qw(
 	actionnames
@@ -48,7 +50,6 @@ has [qw(
 	jobs
 	listenstrings
 	log
-	pending
 	ping
 	pqq
 	servers
@@ -149,15 +150,16 @@ sub new {
 	}
 
 	# keep sorted
-	$self->{actionnames} = {};
-	$self->{clients} = {};
-	$self->{listenstrings} = {}; # connected workers, grouped by listenstring
-	$self->{pending} = {}; # pending tasks flags for listenstrings
-	$self->{ping} = $args{ping} || 60;
-	$self->{pqq} = undef; # ping query queue
-	$self->{servers} = \@servers;
-	$self->{tasks} = {};
+	$self->{actionnames} = {};    # low level announced actions by actionname
+	$self->{clients} = {};        # connected clients
+	$self->{jobs} = {};           # currently active jobs
+	$self->{listenstrings} = {};  # low level announced actions by listenstrings
+	$self->{ping} = $args{ping} || 60; # how often to ping workers
+	$self->{pqq} = undef;         # ping query queue
+	$self->{servers} = \@servers; # network ports
+	$self->{tasks} = {};          # tasks currently beging processed
 	$self->{timeout} = $args{timeout} // 60; # 0 is a valid timeout?
+	$self->{tmr} = Mojo::IOLoop->recurring( $self->{ping}, sub { $self->_poll_tasks() } );
 
 	return $self;
 }
@@ -172,6 +174,8 @@ sub work {
 		Mojo::IOLoop->stop;
 	};
 
+	local $SIG{HUP} = "IGNORE";
+
 	$self->log->info('JobCenter::Api::JsonRpc starting work');
 	Mojo::IOLoop->start unless Mojo::IOLoop->is_running;
 	#my $reactor = Mojo::IOLoop->singleton->reactor;
@@ -185,28 +189,25 @@ sub work {
 	return 0;
 }
 
+
 sub _unlisten_client_action {
-	my ($self, $client, $action) = @_;
+	my ($self, $client, $wa) = @_;
 	#
 	# remove this action from the clients action list
-	my $wa = delete $client->actions->{$action} 
-		or die "worker action not found: $action";
 
-	my $listenstring = $wa->listenstring or die "unknown listenstring";
-
+	my $action = $wa->action;
+	my $l = $action->workeractions;
 	# now remove this workeraction from the listenstring workeraction list
-	my $l = $self->listenstrings->{$listenstring};
-	my @idx = grep { refaddr $$l[$_] == refaddr $wa } 0..$#$l;
-	splice @$l, $_, 1 for @idx;
+	rm_ref_from_arrayref($l, $wa);
 
-	# delete if the listenstring client list is now empty
+	# unlisten if the action->workeraction list is now empty
 	unless (@$l) {
+		my $listenstring = $action->listenstring;
 		delete $self->listenstrings->{$listenstring};
-		delete $self->actionnames->{$action};
-		# not much we can do about pending jobs now..
-		delete $self->pending->{$listenstring};
+		delete $self->actionnames->{$action->actionname};
 		$self->jcpg->pubsub->unlisten($listenstring);
-		$self->log->info("unlisten $listenstring");
+		$self->log->info("unlisten $listenstring for $action->{actionname}");
+		$action->delete(); # done with action
 	}
 }
 
@@ -225,12 +226,7 @@ sub _disconnect {
 		# let's assume things are initialized correctly
 		$self->log->info("worker gone processing $client->{workername}");
 
-		# clean up actions
-		for my $action (keys %{$client->actions}) {
-			$self->_unlisten_client_action($client, $action);
-		}
-
-		# now delete all tasks pointing to this worker
+		# delete all tasks pointing to this worker
 		# this is expensive.. take the memleak instead?
 		my $t = $self->tasks;
 		keys %$t; # reset each;
@@ -241,12 +237,23 @@ sub _disconnect {
 		# do not modify hash while iterating
 		delete @$t{@d};
 
+		# clean up workeractions
+		for my $wa (values %{$client->{workeractions}}) {
+			$self->_unlisten_client_action($client, $wa);
+			$wa->delete();
+		}
+		delete $client->{workeractions};
+
+		# ditto for slotgroups
+		$_->delete() for values %{$client->slotgroups};
+
 		# todo: non-blocking?
 		my ($res) = $self->jcpg->db->dollar_only->query(
 				q[select disconnect($1)],
 				$client->workername,
 			)->array;
 		die "no result" unless $res and @$res;
+		$self->log->debug("done cleaning up worker?");
 	}
 
 	# the client might have a active timer if it was a worker
@@ -256,6 +263,8 @@ sub _disconnect {
 	}
 
 	delete $self->clients->{$addr};
+	$client->con->close;
+	$client->delete();
 }
 
 
@@ -330,74 +339,78 @@ sub rpc_create_job {
 	# create_job throws an error when:
 	# - wfname does not exist
 	# - inargs not valid
-	Mojo::IOLoop->delay(
-		sub {
-			my ($d) = @_;
-			$self->jcpg->queue_query($d->begin(0));
-		},
-		sub {
-			my ($d, $db) = @_;
-			#($job_id, $listenstring) = @{
-			$db->dollar_only->query(
-				q[select * from create_job(wfname := $1, args := $2, tag := $3, impersonate := $4, env := $5)],
-				$wfname,
-				$inargs,
-				$vtag,
-				$impersonate,
-				$env,
-				$d->begin
-			);
-		},
-		sub {
-			my ($d, $err, $res) = @_;
+	Mojo::IOLoop->delay(sub {
+		my ($d) = @_;
+		$self->jcpg->queue_query($d->begin(0));
+	},
+	sub {
+		my ($d, $db) = @_;
+		#($job_id, $listenstring) = @{
+		$db->dollar_only->query(
+			q[select * from create_job(
+				wfname := $1,
+				args := $2,
+				tag := $3,
+				impersonate := $4,
+				env := $5
+			)],
+			$wfname,
+			$inargs,
+			$vtag,
+			$impersonate,
+			$env,
+			$d->begin
+		);
+	},
+	sub {
+		my ($d, $err, $res) = @_;
 
-			if ($err) {
-				$rpccb->(undef, $err);
-				return;
-			}
-			my ($job_id, $listenstring) = @{$res->array};
-			$res->finish; # free up db con..
-			unless ($job_id) {
-				$rpccb->(undef, "no result from call to create_job");
-				return;
-			}
-
-			# report back to our caller immediately
-			# this prevents the job_done notification overtaking the 
-			# 'job created' result...
-			#$self->log->debug("job_id $job_id listenstring $listenstring");
-			$self->log->info("client $client->{from}: created job_id $job_id for $wfname with '$inargs'"
-				. (($vtag) ? " (vtag $vtag)" : ''));
-			$rpccb->($job_id, undef);
-
-			my $job = JobCenter::Api::Job->new(
-				cb => [ $cb ],
-				job_id => $job_id,
-				inargs => $inargs,
-				listenstring => $listenstring,
-				vtag => $vtag,
-				wfname => $wfname,
-			);
-
-			# register for the central job finished listen
-			$self->{jobs}->{$job_id} = $job;
-
-			my $tmr;
-			$tmr = Mojo::IOLoop->timer($timeout => sub {
-				# request failed, cleanup
-				delete $self->{jobs}->{$job_id};
-				# the cb might fail if the connection is gone..
-				eval { &$cb($job_id, {'error' => 'timeout'}); };
-				$job->delete;
-			}) if $timeout > 0;
-			#$self->log->debug("setting tmr: $tmr") if $tmr;
-
-			$job->update(tmr => $tmr, lcb => \&_poll_done);
-
-			# do one poll first..
-			$self->_poll_done($job);
+		if ($err) {
+			$rpccb->(undef, $err);
+			return;
 		}
-	)->catch(sub {
+		my ($job_id, $listenstring) = @{$res->array};
+		$res->finish; # free up db con..
+		unless ($job_id) {
+			$rpccb->(undef, "no result from call to create_job");
+			return;
+		}
+
+		# report back to our caller immediately
+		# this prevents the job_done notification overtaking the 
+		# 'job created' result...
+		#$self->log->debug("job_id $job_id listenstring $listenstring");
+		$self->log->info("client $client->{from}: created job_id $job_id for $wfname with '$inargs'"
+			. (($vtag) ? " (vtag $vtag)" : ''));
+		$rpccb->($job_id, undef);
+
+		my $job = JobCenter::Api::Job->new(
+			cb => [ $cb ],
+			job_id => $job_id,
+			inargs => $inargs,
+			listenstring => $listenstring,
+			vtag => $vtag,
+			wfname => $wfname,
+		);
+
+		# register for the central job finished listen
+		$self->{jobs}->{$job_id} = $job;
+
+		my $tmr;
+		$tmr = Mojo::IOLoop->timer($timeout => sub {
+			# request failed, cleanup
+			delete $self->{jobs}->{$job_id};
+			# the cb might fail if the connection is gone..
+			eval { $cb->($job_id, {'error' => 'timeout'}); };
+			$job->delete;
+		}) if $timeout > 0;
+		#$self->log->debug("setting tmr: $tmr") if $tmr;
+
+		$job->update(tmr => $tmr, lcb => \&_poll_done);
+
+		# do one poll first..
+		$self->_poll_done($job);
+	})->catch(sub {
 		my ($err) = @_;
 		$rpccb->(undef, $err);
 	});
@@ -406,40 +419,38 @@ sub rpc_create_job {
 
 sub _poll_done {
 	my ($self, $job) = @_;
-	Mojo::IOLoop->delay(
-		sub {
-			my ($d) = @_;
-			$self->jcpg->queue_query($d->begin(0));
-		},
-		sub {
-			my ($d, $db) = @_;
-			$db->dollar_only->query(
-				q[select * from get_job_status($1)],
-				$job->job_id,
-				$d->begin
-			);
-		},
-		sub {
-			my ($d, $err, $res) = @_;
-			die $err if $err;
-			my ($job_id2, $outargs) = @{$res->array};
-			$res->finish;
-			return unless $outargs;
-			my $job_id=$job->{job_id};
-			delete $self->{jobs}->{$job_id};
-			Mojo::IOLoop->remove($job->{tmr}) if $job->{tmr};
-			my $outargsp;
-			local $@;
-			eval { $outargsp = decode_json(encode_utf8($outargs)); };
-			$outargsp = { error => "$@ error decoding json: " . $outargs } if $@;
-			for my $cb ( @{$job->{cb}} ) {
-				$self->log->info("job $job_id done: outargs $outargs");
-				eval { $cb->($job_id, $outargsp); };
-				$self->log->warn("got $@ calling callback") if $@;
-			}
-			$job->delete;
+	Mojo::IOLoop->delay(sub {
+		my ($d) = @_;
+		$self->jcpg->queue_query($d->begin(0));
+	},
+	sub {
+		my ($d, $db) = @_;
+		$db->dollar_only->query(
+			q[select * from get_job_status($1)],
+			$job->job_id,
+			$d->begin
+		);
+	},
+	sub {
+		my ($d, $err, $res) = @_;
+		die $err if $err;
+		my ($job_id2, $outargs) = @{$res->array};
+		$res->finish;
+		return unless $outargs;
+		my $job_id=$job->{job_id};
+		delete $self->{jobs}->{$job_id};
+		Mojo::IOLoop->remove($job->{tmr}) if $job->{tmr};
+		my $outargsp;
+		local $@;
+		eval { $outargsp = decode_json(encode_utf8($outargs)); };
+		$outargsp = { error => "$@ error decoding json: " . $outargs } if $@;
+		for my $cb ( @{$job->{cb}} ) {
+			$self->log->info("job $job_id done: outargs $outargs");
+			eval { $cb->($job_id, $outargsp); };
+			$self->log->warn("got $@ calling callback") if $@;
 		}
-	)->catch(sub {
+		$job->delete;
+	})->catch(sub {
 		 $self->log->error("_poll_done caught $_[0]");
 	});
 }
@@ -448,34 +459,32 @@ sub _poll_done {
 sub rpc_find_jobs {
 	my ($self, $con, $i, $rpccb) = @_;
 	my $filter = $i->{filter} or die 'no job_id?';
-	Mojo::IOLoop->delay(
-		sub {
-			my ($d) = @_;
-			$self->jcpg->queue_query($d->begin(0));
-		},
-		sub {
-			my ($d, $db) = @_;
-			$db->dollar_only->query(
-				q[select find_jobs($1)],
-				$filter,
-				$d->begin
-			);
-		},
-		sub {
-			my ($d, $err, $res) = @_;
-			if ($err) {
-				$rpccb->(undef, $err);
-				return;
-			}
-			my ($jobs) = @{$res->array};
-			unless (is_arrayref($jobs)) {
-				$rpccb->(undef, undef);
-				return;
-			}
-			$self->log->debug("found jobs for filter $filter: " . join(' ,', @$jobs));
-			$rpccb->($jobs);
+	Mojo::IOLoop->delay(sub {
+		my ($d) = @_;
+		$self->jcpg->queue_query($d->begin(0));
+	},
+	sub {
+		my ($d, $db) = @_;
+		$db->dollar_only->query(
+			q[select find_jobs($1)],
+			$filter,
+			$d->begin
+		);
+	},
+	sub {
+		my ($d, $err, $res) = @_;
+		if ($err) {
+			$rpccb->(undef, $err);
+			return;
 		}
-	)->catch(sub {
+		my ($jobs) = @{$res->array};
+		unless (is_arrayref($jobs)) {
+			$rpccb->(undef, undef);
+			return;
+		}
+		$self->log->debug("found jobs for filter $filter: " . join(' ,', @$jobs));
+		$rpccb->($jobs);
+	})->catch(sub {
 		 $self->log->error("rpc_find_jobs caught $_[0]");
 	});
 }
@@ -510,46 +519,44 @@ sub rpc_get_job_status {
 		$self->{jobs}->{$job_id} = $job;
 	}
 
-	Mojo::IOLoop->delay(
-		sub {
-			my ($d) = @_;
-			$self->jcpg->queue_query($d->begin(0));
-		},
-		sub {
-			my ($d, $db) = @_;
-			$db->dollar_only->query(
-				q[select * from get_job_status($1)],
-				$job_id,
-				$d->begin
-			);
-		},
-		sub {
-			my ($d, $err, $res) = @_;
-			if ($err) {
-				$rpccb->(undef, $err);
-				# unknown job_id.. removing the callback is save
-				#$self->log->debug("get_status: remove listen for $job_id");
-				delete $self->{jobs}->{$job_id} if $job;
-				return;
-			}
-			my ($job_id2, $outargs) = @{$res->array};
-			$res->finish;
-			$self->log->debug("got status for job_id $job_id outargs @{[ $outargs // '<null>']}");
-			$outargs = decode_json(encode_utf8($outargs)) if $outargs;
-			$rpccb->($job_id2, $outargs);
-			# if the job is finished we can remove our notify callback but we have
-			# to be careful not to remove a _poll_done callback as well, so we'll
-			# only remove if there is only one callback registered. if there is
-			# more than one the client might receive a job_done notification for
-			# a job it is (no longer) waiting for. because of the race condition
-			# mentioned above that should not be an issue
-			if ( $job and $outargs
-				and scalar @{$job->{cb}} == 1 ) {
-				#$self->log->debug("get_status: remove listen for $job_id");
-				delete $self->{jobs}->{$job_id};
-			}
+	Mojo::IOLoop->delay(sub {
+		my ($d) = @_;
+		$self->jcpg->queue_query($d->begin(0));
+	},
+	sub {
+		my ($d, $db) = @_;
+		$db->dollar_only->query(
+			q[select * from get_job_status($1)],
+			$job_id,
+			$d->begin
+		);
+	},
+	sub {
+		my ($d, $err, $res) = @_;
+		if ($err) {
+			$rpccb->(undef, $err);
+			# unknown job_id.. removing the callback is save
+			#$self->log->debug("get_status: remove listen for $job_id");
+			delete $self->{jobs}->{$job_id} if $job;
+			return;
 		}
-	)->catch(sub {
+		my ($job_id2, $outargs) = @{$res->array};
+		$res->finish;
+		$self->log->debug("got status for job_id $job_id outargs @{[ $outargs // '<null>']}");
+		$outargs = decode_json(encode_utf8($outargs)) if $outargs;
+		$rpccb->($job_id2, $outargs);
+		# if the job is finished we can remove our notify callback but we have
+		# to be careful not to remove a _poll_done callback as well, so we'll
+		# only remove if there is only one callback registered. if there is
+		# more than one the client might receive a job_done notification for
+		# a job it is (no longer) waiting for. because of the race condition
+		# mentioned above that should not be an issue
+		if ( $job and $outargs
+			and scalar @{$job->{cb}} == 1 ) {
+			#$self->log->debug("get_status: remove listen for $job_id");
+			delete $self->{jobs}->{$job_id};
+		}
+	})->catch(sub {
 		 $self->log->error("rpc_job_job_status caught $_[0]");
 	});
 }
@@ -568,6 +575,7 @@ sub rpc_create_slotgroup {
 
 	$client->slotgroups->{$name} = JobCenter::Api::SlotGroup->new(
 		name => $name,
+		pending => [],
 		slots => $slots,
 		used => 0,
 	);
@@ -595,6 +603,7 @@ sub rpc_announce {
 			unless $slots > 0;
 		$slotgroup = JobCenter::Api::SlotGroup->new(
 			name => "_$actionname",
+			pending => [],
 			slots => $slots,
 			used => 0,
 		);
@@ -633,38 +642,43 @@ sub rpc_announce {
                . " '$workername' worker_id $worker_id action $actionname"
                . " listenstring $listenstring");
 
-	my $new;
+	my ($action, $new);
 
-	unless ($self->listenstrings->{$listenstring}) {
+	unless ($action = $self->listenstrings->{$listenstring}) {
 		# oooh.. a totally new action
 		$self->log->info("add listen $listenstring");
-		$self->jcpg->pubsub->listen( $listenstring, sub {
+		# assumption 1:1 relation actionname:listenstring
+		$action = JobCenter::Api::Action->new(
+			actionname => $actionname,
+			listenstring => $listenstring,
+			workeractions => [],
+		);
+		$self->jcpg->pubsub->listen($listenstring, sub {
 			my ($pubsub, $payload) = @_;
 			local $@;
-			eval { $self->_task_ready($listenstring, $payload) };
+			eval { $self->_task_ready($action, $payload) };
 			warn $@ if $@;
 		});
-		# assumption 1:1 relation actionname:listenstring
-		$self->actionnames->{$actionname} = $listenstring;
-		$self->listenstrings->{$listenstring} = [];
+		$self->actionnames->{$actionname} = $action;
+		$self->listenstrings->{$listenstring} = $action;
 		# let's assume there are pending jobs, this will trigger a ping
 		$new++;
 	}		
 
 
 	my $wa = JobCenter::Api::WorkerAction->new(
-		actionname => $actionname,
+		action => $action,
 		client => $client,
-		listenstring => $listenstring,
 		slotgroup => $slotgroup,
 		filter => $filter,
 	);
 
 	$client->workername($workername);
 	$client->worker_id($worker_id);
-	$client->actions->{$actionname} = $wa;
-	# note that this client is interested in this listenstring
-	push @{$self->listenstrings->{$listenstring}}, $wa;
+	$client->workeractions->{$actionname} = $wa;
+	# now make the wa callable
+	push @{$action->workeractions}, $wa;
+	#$slotgroup->workeractions->{$actionname} = $wa;
 
 	# set up a ping timer to the client after the first succesfull announce
 	unless ($client->tmr) {
@@ -674,6 +688,10 @@ sub rpc_announce {
 	# reply to the client/worker first:
 	$rpccb->(JSON->true, 'success');
 
+	# need to rethink this: we only want to do a ping after the announces are finished
+	# a minute might be a bit long but otherwise we have to introduce a oneshot timer..
+
+=pod
 	# before potentially sending any pending work:
 	# if this is a new action or this worker has a filter
 	# or there is work pending anyways do a premature 'ping'
@@ -692,6 +710,7 @@ sub rpc_announce {
 			$res->finish;
 		});
 	}
+=cut
 
 	return;
 }
@@ -702,7 +721,12 @@ sub rpc_withdraw {
 	my $client = $con->owner;
 	my $actionname = $i->{actionname} or die 'actionname required';
 
-	$self->_unlisten_client_action($client, $actionname);
+	my $wa = delete $client->workeractions->{$actionname}
+		or die "actionname $actionname not announced?";
+
+	$self->_unlisten_client_action($client, $wa);
+	$wa->reset_pending(); # remove from slotgroup pending list
+	$wa->delete();
 
 	my ($res) = $self->jcpg->db->query(
 			q[select withdraw($1, $2)],
@@ -711,7 +735,7 @@ sub rpc_withdraw {
 		)->array;
 	die "no result" unless $res and @$res;
 	
-	if (not %{$client->actions} and $client->tmr) {
+	if (not %{$client->workeractions} and $client->tmr) {
 		# cleanup ping timer if client has no more actions
 		$self->log->debug("remove tmr $client->{tmr}");
 		Mojo::IOLoop->remove($client->tmr);
@@ -794,95 +818,171 @@ sub _ppqq {
 }
 
 
-sub _find_free_worker_slots {
-	my ($self, $l, $workers, $tofind) = @_;
-	$tofind //= 1;
+sub _poll_tasks {
+	my ($self) = @_;
 
-	my @was;
-
-	# now try to find enough free slots picking 1 free slot per worker per round
-	WHILE: while ($tofind > 0) {
-		my $found;
-		FOR: for my $wa (@$l) {
-			my $worker_id = $wa->client->worker_id;
-			if ($workers) {
-				unless ($workers->{$worker_id}) {
-					$self->log->debug("skipping $worker_id because of filter");
-					next FOR;
-				}
-			}
-			my $sg = $wa->slotgroup or die "no slogroup in worker $worker_id!?";
-			$self->log->debug("worker $worker_id slotgroup $sg->{name}"
-				 ." has $sg->{used} of $sg->{slots} used");
-			next FOR unless $sg->used < $sg->slots;
-			push @was, $wa;
-			$sg->{used}++; # mark as used for now
-			$tofind--;
-			$found++;
-			last WHILE unless $tofind > 0;
-		}
-		last WHILE unless $found;
+	# fixme: cache this?
+	my @worker_ids;
+	for (values %{$self->clients}) {
+		push @worker_ids, $_->{worker_id} if $_->{worker_id};
 	}
 
-	return wantarray ? @was : $was[0];
+	$self->log->debug('_poll_tasks({' . join(',', @worker_ids) . '})');
+
+	Mojo::IOLoop->delay(sub {
+		my ($d) = @_;
+		$self->jcpg->queue_query($d->begin(0));
+	},
+	sub {
+		my ($d, $db) = @_;
+		$db->dollar_only->query(
+			q[select * from poll_tasks($1)],
+			'{' . join(',', @worker_ids) . '}',
+			$d->begin
+		);
+	},
+	sub {
+		my ($d, $err, $res) = @_;
+		if ($err) {
+			$self->log->error("_poll threw $err");
+			return;
+		}
+		my $rows = $res->sth->fetchall_arrayref();
+		$res->finish;
+		$self->log->debug('_process_poll: ' . Dumper(@$rows));
+		$self->_process_poll($rows) if @$rows;
+	})->catch(sub {
+		 $self->log->error("_poll caught $_[0]");
+	});
+
 }
 
 
-sub _task_ready {
-	my ($self, $listenstring, $payload) = @_;
-	
-	die '_task_ready: no payload?' unless $payload; # whut?
-	$self->log->debug("_task_ready $listenstring payload $payload");
+sub _process_poll {
+	my ($self, $rows) = @_;
 
-	my $l = $self->listenstrings->{$listenstring};
-	return unless $l; # should not happen? maybe unlisten here?
+	while (@$rows) {
+		my ($ls, $worker_ids, $count) = @{shift @$rows};
+		$self->log->debug("row: $ls, ", ($worker_ids // 'null'), " $count");
+		my $action =  $self->listenstrings->{$ls};
+		next unless $action; # die?
+
+		my $workers;
+		%$workers = map { $_ => 1 } @{$worker_ids} if is_arrayref $worker_ids;
+
+		my $wa = $self->_find_free_worker_slot($action, $workers, 1);
+		next unless $wa;
+
+		# fixme: dup with check_pending
+		my $actionname = $action->actionname;
+
+		my $task = JobCenter::Api::Task->new(
+			action => $action,
+			job_id => "please_$actionname",
+			workeraction => $wa,
+		);
+
+		$self->log->debug("sending task ready to worker \"$wa->{client}->{workername}\""
+			 . " for \"$actionname\" ($task)") if $self->{debug};
+
+		$wa->client->con->notify('task_ready',
+			{actionname => $actionname, job_id => "$task"});
+
+		$self->{tasks}->{"$task"} = $task;
+
+		$count--;
+		push @$rows, [$ls, $worker_ids, $count] if $count > 0;
+	}
+}
+
+
+sub _find_free_worker_slot {
+	my ($self, $action, $workers, $set_pending) = @_;
+
+	$self->log->debug("_find_free_worker_slot $action->{actionname}");
+
+	my $l = $action->workeractions;
+	return unless @$l;
+	push @$l, shift @$l if $#$l; # rotate list of workeractions
+
+	my $debug = $self->{debug};
+
+	my $found;
+	FOR: for my $wa (@$l) {
+		my $worker_id = $wa->client->worker_id;
+		if ($workers and not $workers->{$worker_id}) {
+			$self->log->debug("skipping $worker_id because of filter");
+			next FOR;
+		}
+		my $sg = $wa->slotgroup or die "no slogroup in worker $worker_id!?";
+		$self->log->debug("worker \"$wa->{client}->{workername}\" ($worker_id)"
+			. " slotgroup $sg->{name} has "
+			. $sg->free . " of $sg->{slots} free") if $debug;
+		next unless $sg->free;
+		$found = $wa;
+		$sg->used(1); # mark as used for now
+		last if $found;
+	}
+
+	if (not $found and $set_pending) {
+		if ($workers) {
+			for my $wa (@$l) {
+				next unless $workers->{$wa->client->worker_id};
+				$wa->set_pending();
+			}
+		} else {
+			$_->set_pending() for @$l;
+		}
+	}
+
+	return $found;
+}
+
+
+#
+# the maestro notifies us that a task has just entered the ready state, look
+# for a available worker slot
+#
+sub _task_ready {
+	my ($self, $action, $payload) = @_;
+	die '_task_ready: no payload?' unless $payload; # whut?
+
+	my $actionname = $action->actionname;
+	$self->log->debug("_task_ready $actionname payload $payload");
 
 	$payload = decode_json($payload);
 	my $job_id = $payload->{job_id};
-	my $poll = $payload->{poll};
-	my $count = $payload->{count} // 1;
 
 	my $workers;
 	%$workers = map { $_ => 1 } @{$payload->{workers}} if is_arrayref $payload->{workers};
 
-	push @$l, shift @$l if @$l and $count == 1; # rotate listenstrings list (list of workeractions)
+	my $wa = $self->_find_free_worker_slot($action, $workers, 1);
 
-	my @was = $self->_find_free_worker_slots($l, $workers, $count);
-
-	my $notfound = $count - scalar @was;
-	if ($notfound) {
-		$self->log->debug("failed to find $notfound slots for $listenstring, setting pending flag");
-		# fixme: multiple filtered workers with queues?
-		$self->pending->{$listenstring} = $workers ? $workers : {'*' => 1};
-	}
-
-	unless (@was) {
-		$self->log->debug("no free slots for $listenstring!?");
+	unless ($wa) {
+		$self->log->debug("no free slots for $actionname!?");
 		# we'll do a poll when a worker becomes available
 		# and the maestro will bother us again later anyways
 		return;
 	}
 
 	my $tmr;
-	$tmr = Mojo::IOLoop->timer(10 => sub { $self->_task_ready_next($job_id) } ) if $job_id;
+	$tmr = Mojo::IOLoop->timer(10 => sub { $self->_task_ready_next($job_id) } );
 
-	for my $wa (@was) {
-		my $task = JobCenter::Api::Task->new(
-			actionname => $wa->actionname,
-			job_id => $job_id // $poll,
-			listenstring => $listenstring,
+	my $task = JobCenter::Api::Task->new(
+			action => $action,
+			job_id => $job_id,
 			workeraction => $wa,
 			workers => $workers,
 			($tmr ? (tmr => $tmr) : ()),
-		);
+	);
 
-		$self->log->debug("sending task ready to worker $wa->{client}->{worker_id}"
-			 . " for $wa->{actionname} (" . ($job_id // $task) .")");
+	$self->log->debug("sending task ready to worker $wa->{client}->{worker_id}"
+		 . " for $action->{actionname} ($job_id)");
 
-		$wa->client->con->notify('task_ready', {actionname => $wa->actionname, job_id => $job_id // "$task"});
+	$wa->client->con->notify('task_ready',
+		{actionname => $action->actionname, job_id => $job_id});
 
-		$self->{tasks}->{$job_id // "$task"} = $task;
-	}
+	$self->{tasks}->{$job_id} = $task;
 }
 
 
@@ -892,24 +992,17 @@ sub _task_ready_next {
 	my $task = delete $self->{tasks}->{$job_id};
 	return unless $task;
 
-	$task->workeraction->slotgroup->{used}--; # this worker didn't take the job
-	my $workers = $task->workers;
+	$task->workeraction->slotgroup->free(1); # this worker didn't take the job
 	
-	$self->log->debug("try next client for $task->{listenstring} for $task->{job_id}");
+	$self->log->debug("try next client for $task->{action}->{actionname} for $task->{job_id}");
 
-	my $l = $self->listenstrings->{$task->listenstring};
-	return unless $l; # could happen if the last worker disconnected in the meantime
-
-	push @$l, shift @$l if @$l; # rotate listenstrings list (list of workeractions)
-
-	my $wa = $self->_find_free_worker_slots($l, $workers);
+	my $wa = $self->_find_free_worker_slot($task->action, $task->workers);
 
 	unless ($wa) {
-		$self->log->debug("no free slots for $task->{listenstring}!?");
-		my @workers = keys %{$task->workers};
-		$self->pending->{$task->listenstring} = $workers ? $workers : {'*' => 1};
+		$self->log->debug("_task_ready_next : no free slots for $task->{action}->{actionname}!?");
 		# we'll do a poll when a worker becomes available
 		# and the maestro will bother us again later anyways
+		$task->delete(); # done with task
 		return;
 	}
 
@@ -917,20 +1010,19 @@ sub _task_ready_next {
 		$self->log->debug("no other worker for $task->{listenstring}!?");
 		# no other workers available than the one we already tried?
 		# give up for now and let the retry mechanisms cope with this
-		$wa->slotgroup->{used}--;
+		$wa->slotgroup->free(1);
 		# but don't forget to reduce the used count..
+		$task->delete(); # done with task
 		return;
 	}
 
-	$wa->client->con->notify('task_ready', {actionname => $wa->actionname, job_id => $job_id});
+	$wa->client->con->notify('task_ready', {actionname => $wa->action->actionname, job_id => $job_id});
 
-	my $tmr = Mojo::IOLoop->timer(3 => sub { $self->_task_ready_next($job_id) } );
+	my $tmr = Mojo::IOLoop->timer(10 => sub { $self->_task_ready_next($job_id) } );
 
 	$task->update(
-		#client => $client,
 		tmr => $tmr,
 		workeraction => $wa,
-		#job_id => $job_id,
 	);
 }
 
@@ -959,72 +1051,103 @@ sub rpc_get_task {
 	# (yeah it's a hack)
 	$job_id = undef if $job_id !~ /^\d+/;
 
-	Mojo::IOLoop->delay(
-		sub {
-			my ($d) = @_;
-			$self->jcpg->queue_query($d->begin(0));
-		},
-		sub {
-			my ($d, $db) = @_;
-			$db->dollar_only->query(
-				q[select * from get_task($1, $2, $3)],
-				$workername, $actionname, $job_id,
-				$d->begin
-			);
-		},
-		sub {
-			my ($d, $err, $res) = @_;
-			if ($err) {
-				$self->log->error("get_task threw $err");
-				$rpccb->();
-				return;
-			}
-			#$res = $res->array;
-			my ($job_id2, $cookie, $inargsj, $env);
-			($job_id2, $cookie, $inargsj, $env) = @{$res->array}; # if ref $res;
-			$res->finish;
-			unless ($cookie) {
-				$self->log->debug("no cookie?");
-				$rpccb->();
-				if (my $p = $self->pending->{$task->listenstring}) {
-					if ($p->{'*'}) {
-						$self->log->debug("resetting pending flag for $task->{listenstring}");
-						delete $self->pending->{$task->listenstring};
-					} elsif ($p->{$client->worker_id}) {
-						$self->log->debug("resetting pending flag for $task->{listenstring}"
-							." for worker_id $client->{worker_id}");
-						delete $p->{$client->worker_id};
-						delete $self->pending->{$task->listenstring} unless %$p;
-					}
-				}
-				# no need to consider the worker busy then..
-				$task->workeraction->slotgroup->{used}--;
-				return;
-			}
-
-			#say 'HEX ', join(' ', unpack('(H2)*', encode_utf8($inargsj)));
-			my $inargs = decode_json(encode_utf8($inargsj)); # unless $self->json;
-			$env = decode_json(encode_utf8($env)) if $env;
-
-			$task->update(
-				job_id => $job_id2, # for a poll this will change
-				cookie => $cookie,
-				inargs => $inargs,
-			);
-
-			# ugh.. what a hack
-			$self->{tasks}->{$cookie} = $task;
-
-			$self->log->info("get_task sending job_id $task->{job_id} to "
-				 . "worker '$workername' "
-				 . "used $task->{workeraction}->{slotgroup}->{used} "
-				 . "cookie $cookie inargs $inargsj");
-
-			$rpccb->($job_id2, $cookie, $inargs, $env);
+	Mojo::IOLoop->delay(sub {
+		my ($d) = @_;
+		$self->jcpg->queue_query($d->begin(0));
+	},
+	sub {
+		my ($d, $db) = @_;
+		$db->dollar_only->query(
+			q[select * from get_task($1, $2, $3)],
+			$workername, $actionname, $job_id,
+			$d->begin
+		);
+	},
+	sub {
+		my ($d, $err, $res) = @_;
+		if ($err) {
+			$self->log->error("get_task threw $err");
+			$rpccb->();
+			return;
 		}
-	)->catch(sub {
+		#$res = $res->array;
+		my ($job_id2, $cookie, $inargsj, $env);
+		($job_id2, $cookie, $inargsj, $env) = @{$res->array}; # if ref $res;
+		$res->finish;
+		unless ($cookie) {
+			$self->log->debug("no cookie?");
+			$rpccb->();
+
+			my $wa = $task->workeraction;
+			$task->delete(); # done with task
+
+			$wa->reset_pending();
+
+			# check for (other) work in this slotgroup
+			$self->_check_pending($wa, 'get_task');
+
+			return;
+		}
+
+		#say 'HEX ', join(' ', unpack('(H2)*', encode_utf8($inargsj)));
+		my $inargs = decode_json(encode_utf8($inargsj)); # unless $self->json;
+		$env = decode_json(encode_utf8($env)) if $env;
+
+		$task->update(
+			job_id => $job_id2, # for a poll this will change
+			cookie => $cookie,
+			inargs => $inargs,
+		);
+
+		$self->{tasks}->{$cookie} = $task;
+
+		$self->log->info("get_task sending job_id $task->{job_id} to "
+			 . "worker '$workername' "
+			 . "used $task->{workeraction}->{slotgroup}->{used} "
+			 . "cookie $cookie inargs $inargsj");
+
+		$rpccb->($job_id2, $cookie, $inargs, $env);
+	})->catch(sub {
 		 $self->log->error("rpc_get_task caught $_[0]");
 	});
+}
+
+
+# check for work for this client and this slotgroup
+sub _check_pending {
+	my ($self, $wa, $from) = @_;
+
+	$from //= '_check_pending';
+
+	my $l = $wa->slotgroup->pending;
+
+	unless (@$l) {
+		# wait until now to free the slotgroup slot so that new
+		# task_ready notifications don't steal the slot..
+		$wa->slotgroup->free(1);
+		return;
+	}
+
+	push @$l, shift @$l if $#$l; # round-robin
+
+	$wa = $l->[0];
+
+	# fixme: dup with _process_poll
+	my $actionname = $wa->action->actionname;
+
+	my $task = JobCenter::Api::Task->new(
+		action => $wa->action,
+		job_id => "please_$actionname",
+		workeraction => $wa,
+	);
+
+	$self->log->debug("sending task ready to worker \"$wa->{client}->{workername}\""
+		 . " for \"$actionname\" ($task)") if $self->{debug};
+
+	$wa->client->con->notify('task_ready',
+		{actionname => $actionname, job_id => "$task"});
+
+	$self->{tasks}->{"$task"} = $task;
 }
 
 
@@ -1032,14 +1155,12 @@ sub rpc_task_done {
 	#my ($self, $task, $outargs) = @_;
 	my ($self, $con, $i, $rpccb) = @_;
 	my $client = $con->owner;
-	my $cookie = $i->{cookie} or die 'no cookie!?';
-	my $outargs = $i->{outargs} or die 'no outargs!?';
+	my $cookie = $i->{cookie} or die 'task_done: no cookie!?';
+	my $outargs = $i->{outargs} or die 'task_done: no outargs!?';
 
 	my $task = delete $self->{tasks}->{$cookie};
 	return unless $task; # really?	
 	Mojo::IOLoop->remove($task->tmr) if $task->tmr;
-	# try to prevent used going negative..
-	$task->workeraction->slotgroup->{used}-- if $task->workeraction->slotgroup->used > 0;
 
 	# hack?
 	$outargs = [ $outargs ] unless ref $outargs;
@@ -1051,51 +1172,37 @@ sub rpc_task_done {
 	$outargs = decode_utf8(encode_json({'error' => 'cannot json encode outargs: ' . $@})) if $@;
 	$self->log->debug("task_done got $@") if $@;
 
-	$self->log->info("worker '$client->{workername}' done with action '$task->{actionname}' for job $task->{job_id}"
-		." slots used $task->{workeraction}->{slotgroup}->{used} outargs '$outargs'");
+	$self->log->info("worker '$client->{workername}' done with action '$task->{action}->{actionname}'"
+		. " for job $task->{job_id} slots used $task->{workeraction}->{slotgroup}->{used}"
+		. " outargs '$outargs'");
 
-	Mojo::IOLoop->delay(
-		sub {
-			my ($d) = @_;
-			$self->jcpg->queue_query($d->begin(0));
-		},
-		sub {
-			my ($d, $db) = @_;
-			$db->dollar_only->query(
-				q[select task_done($1, $2)],
-				$cookie, $outargs, $d->begin
-			);
-		},
-		sub {
-			my ($d, $err, $res) = @_;
-			if ($err) {
-				$self->log->error("task_done threw $err");
-				return;
-			}
-			#$self->log->debug("task_done_callback!");
-			my $p = $self->pending->{$task->workeraction->listenstring} // {};
-			if ($p->{'*'}) {
-				$self->log->debug("calling _task_ready from task_done_callback!");
+	my $wa = $task->workeraction;
+	$task->delete(); # done with task
 
-				$self->_task_ready(
-					$task->workeraction->listenstring,
-					encode_json({
-						poll => "please_$task->{actionname}",
-					})
-				);
-			} elsif ($p->{$client->{worker_id}}) {
-				$self->log->debug("calling _task_ready from task_done_callback for $client->{worker_id}!");
+	Mojo::IOLoop->delay(sub {
+		my ($d) = @_;
+		$self->jcpg->queue_query($d->begin(0));
+	},
+	sub {
+		my ($d, $db) = @_;
+		$db->dollar_only->query(
+			q[select task_done($1, $2)],
+			$cookie, $outargs, $d->begin
+		);
+	},
+	sub {
+		my ($d, $err, $res) = @_;
+		$res->finish();
 
-				$self->_task_ready(
-					$task->workeraction->listenstring,
-					encode_json({
-						poll => "please_$task->{actionname}:$client->{worker_id}",
-						workers => [$client->{worker_id}],
-					})
-				);
-			}
-		},
-	)->catch(sub {
+		if ($err) {
+			$self->log->error("task_done threw $err");
+			$wa->slotgroup->free(1);
+			return;
+		}
+	
+		# now check for more work...
+		$self->_check_pending($wa, '_task_done');
+	})->catch(sub {
 		 $self->log->error("rpc_task done caught $_[0]");
 	});
 	return;
@@ -1137,41 +1244,42 @@ sub rpc_get_api_status {
 
 	if ($what eq 'clients') {
 		my @out;
-
 		for my $c (values %{$self->clients}) {
 			next unless $c;
-			my %actions;
-			if ($c->actions) {
-				for my $a (values %{$c->actions}) {
-					my $sg = $a->slotgroup;
-					$actions{$a->actionname} = {
-						filter => $a->filter,
-						slotgroup => $sg->name,
-						slots => $sg->slots,
-						used => $sg->used,
-					};
-				}
-			}
-			push @out, {
-				actions => \%actions,
+			my %h = (
 				from => $c->from,
 				who => $c->who,
 				workername => $c->workername,
+			);
+			if (%{$c->workeractions}) {
+				my %was;
+				for my $wa (values %{$c->workeractions}) {
+					my $sg = $wa->slotgroup;
+					$was{$wa->action->actionname} = {
+						filter => $wa->filter,
+						slotgroup => $wa->slotgroup->name,
+					};
+				}
+				$h{workeractions} = \%was;
 			}
+			if (%{$c->slotgroups}) {
+				my %sgs;
+				for my $sg (values %{$c->slotgroups}) {
+					$sgs{$sg->name} = {
+						used => $sg->used,
+						slots => $sg->slots,
+						pending => [ map { $_->action->actionname } @{$sg->pending} ],
+					}
+				}
+				$h{slotgroups} = \%sgs;
+			}
+			push @out, \%h;
 		}
-
 		return \@out;
-	} elsif ($what eq 'pending') {
-		my %out;
-		for my $l (keys %{$self->pending}) {
-			my $wa = $self->listenstrings->{$l}[0];
-			$out{$wa->actionname} = encode_json($self->pending->{$l});
-		}
-
-		return \%out;
+	} elsif ($what eq 'jobs') {
+		return np($self->jobs);
 	} elsif ($what eq 'tasks') {
-		my @out = keys %{$self->tasks};
-		return \@out;
+		return np($self->tasks);
 	} else {
 		return "no status for $what";
 	}
@@ -1179,3 +1287,4 @@ sub rpc_get_api_status {
 }
 
 1;
+

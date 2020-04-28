@@ -12,16 +12,14 @@ sub update {
 	return $self;
 }
 
-# clean up all (circular) references so that perl can do 
+# clean up all (circular) references so that perl can do
 # the real destroying
 sub delete {
-	my $self = shift;
-	%$self = ();
+	%{$_[0]} = ();
 }
 
 #sub DESTROY {
-#	my $self = shift;
-#	say 'destroying ', $self;
+#	say 'destroying ', $_[0];
 #}
 
 1;

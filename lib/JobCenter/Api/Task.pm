@@ -1,8 +1,8 @@
 package JobCenter::Api::Task;
 use Mojo::Base -base;
 
-has [qw(actionname client cookie inargs job_id listenstring outargs tmr
-	workers  workeraction)];
+has [qw(action client cookie inargs job_id outargs tmr
+	workers workeraction)];
 
 sub update {
 	my ($self, %attr) = @_;
@@ -13,9 +13,14 @@ sub update {
 	return $self;
 }
 
+# clean up all (circular) references so that perl can do
+# the real destroying
+sub delete {
+	%{$_[0]} = ();
+}
+
 #sub DESTROY {
-#	my $self = shift;
-#	say 'destroying ', $self;
+#	say 'destroying ', $_[0];
 #}
 
 1;
