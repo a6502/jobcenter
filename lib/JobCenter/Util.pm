@@ -3,11 +3,16 @@ package JobCenter::Util;
 use strict;
 use warnings;
 
-our @EXPORT_OK = qw(check_pid daemonize ensure_pid_file hdiff slurp);
+our @EXPORT_OK = qw(
+	check_pid daemonize ensure_pid_file hdiff rm_ref_from_arrayref
+	slurp
+);
 our %EXPORT_TAGS = ('daemon' => [qw(check_pid daemonize ensure_pid_file)]);
 
 use parent qw(Exporter);
 use Carp qw(croak);
+use POSIX qw();
+use Scalar::Util qw(refaddr);
 
 # copied from Mojo::Server
 sub daemonize {
@@ -83,6 +88,13 @@ sub hdiff {
 	}
 
 	return (\%add, \%rem);
+}
+
+sub rm_ref_from_arrayref {
+	# arrayref, item to remove
+	my ($l, $i) = @_;
+	my $addr = refaddr $i;
+	splice @$l, $_, 1 for grep(refaddr $$l[$_] == $addr, 0..$#$l);
 }
 
 1;
