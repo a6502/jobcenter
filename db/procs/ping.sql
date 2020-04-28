@@ -16,36 +16,5 @@ AS $function$BEGIN
 		RETURN null;
 	END IF;
 
-	-- see if there is some work for this worker
-	PERFORM
-		pg_notify(
-			'action:' || wa.action_id || ':ready',
-			CASE WHEN wa.filter IS NOT NULL THEN
-				jsonb_build_object(
-					'poll', ('prettyplease_' || a.name::text || ':' || a_worker_id::text),
-					'workers', array[a_worker_id],
-					'count', count(*)
-				)::text
-			ELSE
-				jsonb_build_object(
-					'poll', ('prettyplease_' || wa.action_id::text),
-					'count', count(*)
-				)::text
-			END
-		)
-	FROM
-		jobs j
-		JOIN tasks t USING (workflow_id, task_id)
-		JOIN actions a USING (action_id)
-		JOIN worker_actions wa USING (action_id)
-	WHERE
-		wa.worker_id = a_worker_id
-		AND j.state = 'ready'
-		AND j.task_entered < now() - interval '1 minute'
-		AND ( wa.filter IS NULL
-		      OR j.out_args @> wa.filter )
-	GROUP BY
-		wa.action_id, wa.filter, a.name;
-
 	RETURN 'pong';
 END;$function$
