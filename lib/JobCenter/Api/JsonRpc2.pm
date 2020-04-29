@@ -566,6 +566,7 @@ sub rpc_create_slotgroup {
 	my ($self, $con, $i) = @_;
 	my $client = $con->owner;
 	my $name = $i->{name} or die 'slotgroup name required';
+	die 'invalid slotgroup name' if $name =~ /^_/;
 	my $slots = $i->{slots} // 1;
 	die 'slots should be a positive number'
 		unless $slots > 0;
@@ -580,7 +581,7 @@ sub rpc_create_slotgroup {
 		used => 0,
 	);
 
-	return JSON->true;
+	return '';
 }
 
 
@@ -607,6 +608,7 @@ sub rpc_announce {
 			slots => $slots,
 			used => 0,
 		);
+		$client->slotgroups->{"_$actionname"} = $slotgroup;
 	}
 	die 'no slotgroup?' unless $slotgroup;
 	my $workername = $i->{workername} // $client->workername // $client->who;
