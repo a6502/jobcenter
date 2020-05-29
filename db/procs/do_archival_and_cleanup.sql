@@ -49,10 +49,19 @@ BEGIN
 	-- move finished jobs to the jobs_archive table
 	WITH jobrecords AS (
 		DELETE FROM
-			jobs
+			jobs p
 		WHERE
 			state = 'finished'
 			AND job_finished < now() - interval '1 minute'
+			AND NOT EXISTS (
+				SELECT
+					true
+				FROM
+					jobs c
+				WHERE
+					c.parentjob_id=p.job_id
+				LIMIT 1
+			)
 		RETURNING
 			job_id,
 			workflow_id,
