@@ -217,8 +217,6 @@ sub _disconnect {
 	$self->log->info('oh my.... ' . ($client->who // 'somebody')
 		. ' (' . $client->from. ') disonnected..');
 
-	return unless $client->who;
-
 	my $addr = refaddr($client);
 
 	if ($client->worker_id) {
@@ -263,7 +261,7 @@ sub _disconnect {
 	}
 
 	delete $self->clients->{$addr};
-	$client->con->close;
+	$client->con->close if $client->con; # paranoia
 	$client->delete();
 }
 
@@ -1247,7 +1245,7 @@ sub rpc_get_api_status {
 	if ($what eq 'clients') {
 		my @out;
 		for my $c (values %{$self->clients}) {
-			next unless $c;
+			next unless is_hashref($c) and %$c;
 			my %h = (
 				from => $c->from,
 				who => $c->who,
@@ -1277,15 +1275,31 @@ sub rpc_get_api_status {
 			}
 			push @out, \%h;
 		}
-		return \@out;
+		return np(@out);
+	} elsif ($what eq 'clientsraw') {
+		return np($self->clients);
 	} elsif ($what eq 'jobs') {
 		return np($self->jobs);
+	} elsif ($what eq 'stats') {
+		my $clients = $self->clients;
+		my ($dead, $workers) = (0,0);
+		for my $c (values %{$self->clients}) {
+			unless (is_hashref($c) and %$c) {
+				$dead++;
+				next;
+			}
+			$workers++ if %{$c->{workeractions}};
+		}
+		return {
+			clients => scalar keys %$clients,
+			dead => $dead,
+			workers => $workers,
+		};
 	} elsif ($what eq 'tasks') {
 		return np($self->tasks);
 	} else {
 		return "no status for $what";
 	}
-
 }
 
 1;

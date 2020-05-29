@@ -34,13 +34,15 @@ Usage: jcadm [opts] <cmd> ...
 
 Subcomands:
 
-apijobs                         : prints current api jobs
-clients                         : prints connected api clients
+api-clients                     : prints connected api clients
+api-clientsraw                  : dump of the clients hash
+api-jobs                        : prints current api jobs
+api-stats                       : prints current api tasks
+api-tasks                       : prints current api tasks
 jobs   [-vv?] [states]          : prints things about jobs
 errors [-vv?] [workflows]       : prints things about job errors
 locks  [-vv?] [locktypes]       : prints things about job locks
 help                            : this help
-tasks                           : prints current api tasks
 workers                         : prints worker status from the db
 
 Use 'jcadm <cmd> help' for more information about a subcommand.
