@@ -29,9 +29,8 @@ use DBI;
 use DBD::Pg;
 
 # potentially useful globals
-my $archive;
+my $cfg;
 my $debug = 0;
-my $pgh;
 
 exit main(@ARGV);
 
@@ -46,7 +45,7 @@ sub main {
 	) or die "Error in command line arguments\n";
 	#my ($job_id) = @_;
 
-	my $cfg = Config::Tiny->read($cfgpath);
+	$cfg = Config::Tiny->read($cfgpath);
 	die 'failed to read config ' . $cfgpath . ': ' . Config::Tiny->errstr unless $cfg;
 
 	my $pgdsn = 'dbi:Pg:dbname=' . $cfg->{pg}->{db}
@@ -55,18 +54,10 @@ sub main {
 	my $pguser = $cfg->{admin}->{user};
 	my $pgpass = $cfg->{admin}->{pass};
 
-	if ($cfg->{cleanup}->{archivepath}) {
-		my $t = localtime;
-		my $fn = $cfg->{cleanup}->{archivepath} . '/cleanup.'
-			 . $t->strftime('%F');
-		open $archive, '>>', $fn or
-			die "could not open archive file $fn for writing: $!";
-	}
-
 	# make our clientname the application_name visible in postgresql
 	$ENV{'PGAPPNAME'} = "$0 [$$]";
 
-	$pgh = DBI->connect(
+	my $pgh = DBI->connect(
 		$pgdsn, $pguser, $pgpass,
 		{
 			AutoCommit => 1,
@@ -114,6 +105,7 @@ limit
 	1000
 EOT
 
+=pod
 	my $purgeq = $pgh->prepare(<<'EOT');
 -- $1 job_id
 -- $2 job_finished
@@ -133,6 +125,7 @@ from
 where
 	job_id = $1
 EOT
+=cut
 
 	my $deljobarch = $pgh->prepare(<<'EOT');
 delete from
@@ -140,6 +133,7 @@ delete from
 where
 	job_id = $1
 returning
+	to_char(job_created, 'YYYY-MM-DD'),
 	jsonb_pretty(row_to_json(jobs_archive)::jsonb)
 EOT
 
@@ -149,6 +143,7 @@ delete from
 where
 	job_id = $1
 returning
+	to_char(job_created, 'YYYY-MM-DD'),
 	jsonb_pretty(row_to_json(jobs)::jsonb)
 EOT
 
@@ -179,15 +174,14 @@ EOT
 
 			#say "last_job_id: $last_job_id";
 
-			$purgeq->execute(@$j);
-			my ($purge) = $purgeq->fetchrow_array();
+			#$purgeq->execute(@$j);
+			#my ($purge) = $purgeq->fetchrow_array();
 
-			#next unless $purge;
-			unless ($purge) {
-				say "skipping $last_job_id" if $debug;
-				$jak++;
-				next;
-			}
+			#unless ($purge) {
+			#	say "skipping $last_job_id" if $debug;
+			#	$jak++;
+			#	next;
+			#}
 
 			say "need to purge $last_job_id" if $debug;
 			$jap++;
@@ -195,20 +189,18 @@ EOT
 			$pgh->begin_work();
 			$deltasks->execute($last_job_id);
 			$deljobarch->execute($last_job_id);
-			my ($job) = $deljobarch->fetchrow_array();
-			$deljobarch->finish();
+			my ($ds, $job) = $deljobarch->fetchrow_array();
+			#$deljobarch->finish();
 			$pgh->commit();
 
-			archprint($job) if $archive;
+			archprint($ds, $job);
 		}
 	}
 
 	if ($count) {
 		say "purged from jobs_archive: $jap";
-		say "    kept in jobs_archive: $jak";
+		#say "    kept in jobs_archive: $jak";
 	}
-
-	$pgh->do('vacuum jobs_archive');
 
 	say 'cleaning up jobs table';
 
@@ -227,15 +219,14 @@ EOT
 
 			#say "last_job_id: $last_job_id";
 
-			$purgeq->execute(@$j);
-			my ($purge) = $purgeq->fetchrow_array();
+			#$purgeq->execute(@$j);
+			#my ($purge) = $purgeq->fetchrow_array();
 
-			#next unless $purge;
-			unless ($purge) {
-				say "skipping $last_job_id" if $debug;
-				$jk++;
-				next;
-			}
+			#unless ($purge) {
+			#	say "skipping $last_job_id" if $debug;
+			#	$jk++;
+			#	next;
+			#}
 
 			say "need to purge $last_job_id" if $debug;
 			$jp++;
@@ -243,20 +234,21 @@ EOT
 			$pgh->begin_work();
 			$deltasks->execute($last_job_id);
 			$deljob->execute($last_job_id);
-			my ($job) = $deljob->fetchrow_array();
-			$deljob->finish();
+			my ($ds, $job) = $deljob->fetchrow_array();
+			#$deljob->finish();
 			$pgh->commit();
 
-			archprint($job) if $archive;
+			archprint($ds, $job);
 		}
 	}
 
-	$pgh->do('vacuum jobs');
-	$pgh->do('vacuum job_task_log');
+	$pgh->do('vacuum analyze jobs');
+	$pgh->do('vacuum analyze jobs_archive');
+	$pgh->do('vacuum analyze job_task_log');
 
 	if ($count) {
 		say "        purged from jobs: $jp";
-		say "            kept in jobs: $jk";
+		#say "            kept in jobs: $jk";
 	}
 
 	return 0;
@@ -264,7 +256,17 @@ EOT
 
 sub archprint {
 	use bytes;
-	my $o = shift;
-	printf $archive "%u:\n%s\n\n", length($o)+2, $o;
+	my ($ds, $o) = @_;
+	state $ods = '';
+	state $af;
+	if ($ds ne $ods) {
+		my $fn = $cfg->{cleanup}->{archivepath} . "/cleanup.$ds.xz";
+		close($af) if $af;
+		open($af, '|-', "xz - >> $fn") or
+			die "could not open archive file $fn for writing: $!";
+		$ods = $ds;
+	}
+	
+	printf $af "%u:\n%s\n\n", length($o)+2, $o;
 }
 
