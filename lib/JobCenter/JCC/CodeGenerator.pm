@@ -1048,11 +1048,13 @@ sub make_term {
 		return '(' . make_rhs($val) . ')';
 	} elsif ($key eq 'variable') {
 		return make_variable($val);
-	} elsif ($key eq 'number' ){
+	} elsif ($key eq 'number' ) {
 		return $val;
-	} elsif ($key eq 'boolean' ){
+	} elsif ($key eq 'boolean' ) {
 		return ($val =~ /true/i) ? '$TRUE' : '$FALSE';
-	} elsif ($key eq 'single_quoted_string' or $key eq 'double_quoted_string'  ){
+	} elsif ($key eq 'null' ) {
+		return 'undef';
+	} elsif ($key eq 'single_quoted_string' or $key eq 'double_quoted_string'  ) {
 		$val =~ s/'/\\'/g;
 		return "'" . $val . "'";
 	} elsif ($key eq 'functioncall') {
