@@ -281,6 +281,8 @@ EOT
 		}
 	}
 
+	# make vacuum less agressive like autovacuum
+	$jdb->do('set vacuum_cost_delay=20');
 	# reclaim space
 	$jdb->do('vacuum analyze jobs_archive');
 	$jdb->do('vacuum analyze jobs');

@@ -121,6 +121,8 @@ EOT
 
 	say "vacuuming";
 
+	# make vacuum less agressive like autovacuum
+	$adb->do('set vacuum_cost_delay=20');
 	# reclaim space
 	$adb->do('vacuum analyze jobs_archive') unless $dry_run;
 
