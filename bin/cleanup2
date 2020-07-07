@@ -244,7 +244,7 @@ EOT
 
 	# make vacuum less agressive almost like autovacuum
 	# (autovacuum uses 20)
-	$jdb->do('set vacuum_cost_delay=10');
+	$pgh->do('set vacuum_cost_delay=10');
 	# reclaim space
 	$pgh->do('vacuum analyze jobs');
 	$pgh->do('vacuum analyze jobs_archive');
