@@ -40,6 +40,7 @@ api-jobs                        : prints current api jobs
 api-stats                       : prints current api tasks
 api-tasks                       : prints current api tasks
 jobs   [-vv?] [states]          : prints things about jobs
+stale  [-vv?] [workflows]       : prints running jobs with stale workflows
 errors [-vv?] [workflows]       : prints things about job errors
 locks  [-vv?] [locktypes]       : prints things about job locks
 help                            : this help
