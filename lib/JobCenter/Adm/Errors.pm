@@ -18,8 +18,8 @@ sub do_cmd {
 	my @names;
 	while (@_) {
 		local $_ = shift @_;
-		/^-vv$/ and do { $verbose += 2; next };
-		/^(?:-v|--verbose)$/ and do { $verbose++; next };
+		/^--verbose$/ and do { $verbose++; next };
+		/^-(v+)$/     and do { $verbose += length $1; next };
 		/^(?:-c|--cutoff)(?:(=)(.*))?$/ and do { 
 			$cutoff = $1 ? $2 : shift @_;
 			next;

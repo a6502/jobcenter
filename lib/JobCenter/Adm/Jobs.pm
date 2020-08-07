@@ -9,8 +9,8 @@ sub do_cmd {
 	my @states;
 	for (@_) {
 		/^(?:-v|--verbose)$/ and do { $verbose++; next };
-		/^-vv$/ and do { $verbose += 2; next };
-		/^-/   and do { die "unknown flag: $_\n" };
+		/^-(v+)$/            and do { $verbose += length $1; next };
+		/^-/                 and do { die "unknown flag: $_\n" };
 		push @states, $_;
 	}
 	

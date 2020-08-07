@@ -9,8 +9,8 @@ sub do_cmd {
 	my @locktypes;
 	while (@_) {
 		local $_ = shift @_;
-		/^(?:-v|--verbose)$/ and do { $verbose++; next };
-		/^(?:-vv)$/ and do { $verbose += 2; next };
+		/^--verbose$/ and do { $verbose++; next };
+		/^-(v+)$/     and do { $verbose += length $1; next };
 		/^-/ and die "unknown flag: $_\n";
 		push @locktypes, $_;
 	}
