@@ -11,6 +11,7 @@ use Data::Dumper;
 use Digest::MD5 qw(md5_hex);
 use List::Util qw( any );
 #use Scalar::Util qw(blessed);
+use Ref::Util qw(is_arrayref is_hashref);
 
 has [qw(db debug dry_run fixup labels locks oetid tags wfid)];
 
@@ -552,18 +553,19 @@ sub gen_call {
 		$tags = '{' . join(',', @tags) . '}';
 	}
 
-	die 'no call_name' unless $call->{call_name};
+	my $call_name = $call->{call_name}
+		 or die 'no call_name?';
 
 	if ($map) {
 		die 'no using clause in map?' unless $map = $call->{map_using};
-		die 'invalid using clause in map' unless ref $map eq 'ARRAY';
+		die 'invalid using clause in map' unless is_arrayref $map;
 		$map = join('.', @$map);
 		die "invalid using clause $map in map" unless $map =~ /^(\w+|\w\.\w+)$/;
 	}
 
-	my $aid = $self->qs( <<'EOF', $call->{call_name}, $types, $tags);
+	my ($aid, $config) = $self->qs( <<'EOF', $call_name, $types, $tags);
 SELECT
-	action_id
+	action_id, config
 FROM
 	actions
 	LEFT JOIN action_version_tags USING (action_id)
@@ -574,7 +576,14 @@ WHERE
 	ORDER BY array_position($3, tag), version DESC LIMIT 1;
 EOF
 
-	die "action $call->{call_name} not found?" unless $aid;
+	die "action $call_name not found?" unless $aid;
+
+	$config = from_json($config) if $config;
+
+	print 'config: ', Dumper($config) if $config;
+
+	die "action $call_name is disabled" if
+		is_hashref($config) and $config->{disabled};
 
 	my $imap = make_perl($call->{imap}, IMAP);
 	my $omap = make_perl($call->{omap}, OMAP);
@@ -1239,9 +1248,9 @@ sub qs {
 	my $as = join(',', map { $_ // '' } @a);
 	print "query: $q [$as]";
 	my $res = $self->{db}->dollar_only->query($q, @a)->array;
-	die "query $q [$as] failed\n" unless $res and @$res and @$res[0];
+	die "query $q [$as] failed\n" unless is_arrayref($res) and defined @$res[0];
 	say " => @$res[0]";
-	return @$res[0];
+	return wantarray ? @$res : @$res[0];
 }
 
 sub set_next {
