@@ -1,7 +1,6 @@
 CREATE OR REPLACE FUNCTION jobcenter.disable_action(an_action_id integer, a_reason text DEFAULT ''::text)
  RETURNS text
  LANGUAGE plpgsql
- SECURITY DEFINER
  SET search_path TO jobcenter, pg_catalog, pg_temp
 AS $function$DECLARE
 	v_job_count integer;
