@@ -1,0 +1,376 @@
+#!/usr/bin/env perl
+#
+no lib '.';
+use Mojo::Base -base;
+
+use open ':std' => ':utf8';
+
+# mojo
+use Mojo::Pg;
+
+# stdperl
+use FindBin;
+use File::Temp;
+
+# cpan
+use Config::Tiny;
+use Text::Table::Tiny 'generate_table';
+use Graph::Easy;
+
+# return help string
+sub help {
+	return <<END
+Usage: $FindBin::Script [Options] [Action:Tag]/[ActionID]
+
+Show the tree for action / workflow.
+
+    ActionID      action ID for which to find latest
+    Action        action names for which to find latest
+    Tag           optional tag for action to find latest
+
+Options:
+
+    -h,   --help         show this help messgae
+    -d,   --dot          output dot file
+    -i,   --inactive     show inactive nodes
+END
+}
+
+exit main(@ARGV);
+
+sub main {
+
+	my %opts = ( 
+		verbose => 0, 
+		active  => 1,
+	 );
+	my @action_ids;
+	my @actions;
+
+	for (@ARGV) {
+		/^(?:-h|--help)$/          and do { print help(); exit 0 };
+		/^-(v+)$/                  and do { $opts{verbose} += length $1; next };
+		/^-verbose$/               and do { $opts{verbose}++; next };
+		/^(?:-d|--dot)$/           and do { $opts{dot} = 1; next };
+		/^(?:-i|--inactive)$/      and do { $opts{active} = 0; next };
+		/^-/                       and do { die "unknown option: $_\n" };
+		/^\d+$/                    and do { push @action_ids, $_; next };
+		/^([^ :]+)(?::([^ :]+))?$/ and do { push @actions, {name => $1, tag => $2}; next };
+		die "bad action or action id: $_\n";
+	}
+
+	if (not @actions and not @action_ids) {
+		print help();
+		exit 0;
+	}
+
+	my $cfg = Config::Tiny->read("$FindBin::Bin/../etc/jobcenter.conf");
+	die 'Config Errror: ' . Config::Tiny->errstr() unless $cfg;
+
+	my $pg = Mojo::Pg->new(
+		'postgresql://'
+		. $cfg->{admin}->{user}
+		. ':' . $cfg->{admin}->{pass}
+		. '@' . ( $cfg->{pg}->{host} // '' )
+		. ( ($cfg->{pg}->{port}) ? ':' . $cfg->{pg}->{port} : '' )
+		. '/' . $cfg->{pg}->{db}
+	);
+
+	# find out of date references matching actions or all
+	my $links = _select(
+		%opts,
+		db         => $pg->db,
+		actions    => \@actions,
+		action_ids => \@action_ids,
+	);
+
+	if (@$links) {
+
+		say "creating graph:";
+
+		my $graph = Graph::Easy->new(timeout => 480);
+		my %found;
+		for (@$links) {
+			next if $found{$_->[1]}++;
+			$graph->add_node($_->[1])->set_attributes({
+				label => _label(@$_),
+			});
+		}
+		$graph->add_edge(@{$_}[0,1]) for grep { $_->[0] } @$links;
+
+		if ($opts{dot}) {
+			my $fh = File::Temp->new( UNLINK => 0, SUFFIX => '.dot' );
+			print $fh $graph->as_graphviz();
+			say "wrote: ", $fh->filename;
+		} else {
+			print $graph->as_boxart;
+		}
+
+	} else {
+
+		say "not found:";
+	}
+
+	return 0;
+}
+
+sub _select {
+	my %opts = @_;
+	my ($db, $actions, $action_ids) = @opts{qw/db actions action_ids/};
+
+	my @nodes = @$action_ids;
+	my %found;
+
+	# find action_ids from actions as nodes
+
+	for (@$actions) {
+
+		my ($name, $tag) = @{$_}{qw/name tag/};
+
+		my $sql = <<_SQL;
+SELECT 
+	max(a.action_id) action_id
+FROM 
+	actions a
+LEFT JOIN
+	action_version_tags avt
+ON
+	avt.action_id = a.action_id
+WHERE
+	a.name = ? AND
+	coalesce(avt.tag, 'default') = ?
+_SQL
+
+		my $res = $db->query($sql, $name, $tag || 'default');
+		$res->hashes->each(sub {
+			push @nodes, $_[0]{action_id} if $_[0]{action_id};
+		});
+		
+	}
+
+	my @primary = @nodes;
+
+	# find all linked nodes
+	
+	while (@nodes) {
+	
+		my $action_id = shift @nodes;
+
+		next if $found{$action_id}++;
+
+		my $sql = <<_SQL;
+SELECT
+	t.action_id other_id
+FROM
+	tasks t
+WHERE
+	t.action_id > 0 AND
+	t.workflow_id > 0 AND
+	t.workflow_id = ?
+UNION ALL
+SELECT
+	t.workflow_id other_id
+FROM
+	tasks t
+WHERE
+	t.action_id > 0 AND
+	t.workflow_id > 0 AND
+	t.action_id = ?
+_SQL
+
+		my $res = $db->query($sql, $action_id, $action_id);
+		$res->hashes->each(sub {
+			push @nodes, $_[0]{other_id};
+		});
+		
+	}
+
+	# info and workflow_ids for node
+
+	my %nodes;
+
+	for (keys %found) {
+
+		my $sql = <<_SQL;
+WITH latest_actions AS (
+	SELECT 
+		max(a.action_id) action_id, 
+		a.name, 
+		a.type,
+		avt.tag
+	FROM 
+		actions a
+	LEFT JOIN 
+		action_version_tags avt
+	ON
+		a.action_id = avt.action_id
+	GROUP BY 
+		a.name, 
+		a.type, 
+		avt.tag
+)
+SELECT
+	a.action_id,
+	array_agg(t.workflow_id) workflow_ids,
+	a.type,
+	(
+		la.action_id IS NOT NULL AND 
+		NOT coalesce(a.config->'disabled' = 'true'::jsonb, false)
+	) active
+FROM
+	actions a
+LEFT JOIN
+	tasks t
+ON
+	t.action_id = a.action_id
+LEFT JOIN
+	latest_actions la
+ON
+	la.action_id = a.action_id
+WHERE
+	a.action_id = ?
+GROUP BY
+	a.action_id,
+	a.type,
+	active
+_SQL
+
+		my $res = $db->query($sql, $_);
+		$res->hashes->each(sub {
+			$nodes{$_[0]{action_id}} = $_[0];
+		});
+	}
+
+	# lookup for workflow -> action
+
+	my %reverse; 
+
+	for (values %nodes) {
+		next unless my $action_id = $_->{action_id};
+		for (@{$_->{workflow_ids}}) {
+			next unless $_;
+			$reverse{$_}{$action_id}++;
+		}
+	}
+
+	# filter for active
+
+	my @inactive = grep { !$_->{active} } values %nodes;
+
+	# while there are inactive nodes that need looking at
+
+	while (@inactive) {
+		my $node = shift @inactive;
+		my $action_id = $node->{action_id};
+
+		# any of the workflows for this node are active then mark as active
+
+		for (@{$node->{workflow_ids}}) {
+			next unless $_ and $nodes{$_} and $nodes{$_}{active};
+			$node->{active} = 1;
+			$node->{stale} = 1;
+			last;
+		}
+
+		if ($node->{active}) {
+
+			# find all nodes that are inactive that point to this node and add them back
+
+			push @inactive, map { 
+				$nodes{$_} && !$nodes{$_}{active} 
+				? $nodes{$_} : () 
+			} keys %{$reverse{$action_id}||{}};
+		}
+	}
+
+	# crawl from primary to find linked active nodes
+
+	@nodes = @primary;
+	%found = ();
+
+	while (@nodes) {
+		local $_ = shift @nodes;
+		next unless $_ and my $node = $nodes{$_};
+		next if not $node->{active} or $found{$node->{action_id}}++;
+		push @nodes, keys %{$reverse{$node->{action_id}}||{}};
+		push @nodes, @{$node->{workflow_ids}};
+	}
+
+	# flag all nodes not linked to primary as not active
+	
+	for (keys %nodes) {
+		next if $found{$_};
+		$nodes{$_}{active} = 0;
+	}
+
+	# flag primary nodes
+
+	for (@primary) {
+		next unless $nodes{$_};
+		$nodes{$_}{primary} = 1;
+	}
+
+	# find active links
+
+	for my $node (values %nodes) {
+		$node->{linked} = [];
+		next if $opts{active} and not $node->{active};
+		for (@{$node->{workflow_ids}}) {
+			next unless $_ and $nodes{$_};
+			next if $opts{active} and not $nodes{$_}{active};
+			push @{$node->{linked}}, $_;
+		}
+	}
+
+	# find links, with deduplication
+
+	my %links;
+	for my $node (values %nodes) {
+		next if $opts{active} and not $node->{active};
+		my $linked = $node->{linked};
+		for (@$linked) {
+			next unless $_ and $nodes{$_};
+			$links{$_}{$node->{action_id}}++; 
+		}
+		if (not @$linked) {
+			$links{''}{$node->{action_id}}++; 
+		}
+	}
+
+	my @links;
+	for my $workflow_id (keys %links) {
+		for my $action_id (keys %{$links{$workflow_id}}) {
+			$workflow_id = $workflow_id ? $workflow_id : undef;
+			my $node = $nodes{$action_id};
+			push @links, [ $workflow_id, $action_id, { 
+				map { $_ => $node->{$_} } qw/
+					primary
+					stale 
+					active
+				/
+			 } ];
+		}
+	}
+
+	# sort on action_id, workflow_id
+
+	@links = sort { 
+		$a->[1]//0 <=> $b->[1]//0 or 
+		$a->[0]//0 <=> $b->[0]//0 
+	} @links;
+
+	return \@links;
+}
+
+sub _label {
+	my (undef, $action_id, $flags) = @_;
+	my $label = $flags->{primary} ? '*' : '';
+	$label .= $action_id;
+	if($flags->{stale}) {
+		$label .= ' (stale)';
+	} elsif (not $flags->{active}) {
+		$label .= ' (inactive)';
+	}
+	return $label;
+}
+

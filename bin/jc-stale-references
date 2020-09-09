@@ -20,11 +20,18 @@ use JobCenter::JCC::VersionChecker;
 # return help string
 sub help {
 	return <<END
-Usage: $FindBin::Script [Worklows]
+Usage: $FindBin::Script [Options] [Actions/ActionIDs]
 
 Look for stale references in workflows that need updating.
 
-    Workflows   Limit results to one or more workflows
+    Actions       Limit results to one or more action names
+    ActionIDs     Limit results to one or more action IDs
+
+Options:
+
+    -h,   --help         show this help messgae
+    -N,   --no-names     do not show names
+    -vv*, --verbose      set verbosity level
 END
 }
 
@@ -32,11 +39,18 @@ exit main(@ARGV);
 
 sub main {
 
+	my %opts = ( verbose => 0 );
+	my @action_ids;
+	my @actions;
+
 	for (@ARGV) {
-		if ($_ eq '-h' || $_ eq '--help') {
-			print help();
-			return 0;
-		}
+		/^(?:-h|--help)$/     and do { print help(); exit 0 };
+		/^(?:-N|--no-names)$/ and do { $opts{no_names}++; next };
+		/^-(v+)$/             and do { $opts{verbose} += length $1; next };
+		/^-verbose$/          and do { $opts{verbose}++; next };
+		/^-/                  and do { die "unknown option: $_\n" };
+		/^\d+$/               and do { push @action_ids, $_; next };
+		push @actions, $_;
 	}
 
 	my $cfg = Config::Tiny->read("$FindBin::Bin/../etc/jobcenter.conf");
@@ -51,14 +65,17 @@ sub main {
 		. '/' . $cfg->{pg}->{db}
 	);
 
-	my $jvc = JobCenter::JCC::VersionChecker->new(db => $pg->db);
+	my $jvc = JobCenter::JCC::VersionChecker->new(db => $pg->db, %opts);
 
-	# find out of date references in workflows or all
-	my $res = $jvc->out_of_date(workflows => \@ARGV);
+	# find out of date references matching actions or all
+	my $rows = $jvc->out_of_date(
+		action_ids   => \@action_ids,  # match against actions / workflows
+		actions      => \@actions,
+		workflow_ids => \@action_ids,  # match against owning workflow as well
+		workflows    => \@actions,
+	);
 
-	if ($res->rows) {
-
-		my $rows = [ $res->columns, @{$res->arrays->to_array} ];
+	if (@$rows > 1) {
 
 		say "stale references found:";
 
