@@ -125,21 +125,9 @@ sub reference_version_check {
 	my $jvc = JobCenter::JCC::VersionChecker->new(db => $pg->db);
 
 	# find workflows referencing this out of date action / workflow
-	my $res = $jvc->out_of_date(actions => [$wf->{workflow_name}]);
+	my $rows = $jvc->out_of_date(actions => [$wf->{workflow_name}]);
 
-	if ($res->rows) {
-
-		my @cols = qw/
-			workflow_name 
-			workflow_id 
-			action_id 
-			version 
-			latest_action_id 
-			latest_version
-		/;
-
-		my $body = $res->hashes->map(sub { [ @{$_}{@cols} ] });
-		my $rows = [ \@cols, @{$body->to_array} ];
+	if (@$rows > 1) {
 
 		say "";
 		say "stale references found for \"$wf->{workflow_name}\":";

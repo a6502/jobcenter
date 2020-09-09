@@ -1,0 +1,178 @@
+#!/usr/bin/env perl
+#
+no lib '.';
+use Mojo::Base -base;
+
+# postgres
+use DBD::Pg;
+
+# stdperl
+use FindBin;
+
+# cpan
+use Config::Tiny;
+use Text::Table::Tiny 'generate_table';
+
+use constant OK => 0;
+use constant ERROR => -1;
+
+# return help string
+sub help {
+	return <<END
+Usage: $FindBin::Script [Options] [Action:Tag]/[ActionID]
+
+Disable actions / workflows 
+
+    ActionID    action ID to disable
+    Action      actions to disable
+    Tag         optional tag for action to disable
+
+Options:
+
+    -h, --help      show this help message
+END
+}
+
+exit main(@ARGV);
+
+sub main {
+
+	my @action_ids;
+	my @actions;
+
+	for (@ARGV) {
+		/^(-h\|--help)$/           and do { print help(); return OK };
+		/^-/                       and do { die "unknown option: $_\n" };
+		/^\d+$/                    and do { push @action_ids, $_; next };
+		/^([^ :]+)(?::([^ :]+))?$/ and do { push @actions, {name => $1, tag => $2}; next };
+		die "bad action or action id: $_\n";
+	}
+
+	if (not @action_ids and not @actions) {
+		print help();
+		return OK;
+	}
+
+	return disable_actions(
+		action_ids => \@action_ids, 
+		actions    => \@actions,
+	) ? OK : ERROR;
+}
+
+sub disable_actions {
+	my %args = @_;
+
+	my @action_ids = @{$args{action_ids}||[]};
+
+	my $cfg = Config::Tiny->read("$ENV{HOME}/jobcenter/etc/jobcenter.conf") # "$FindBin::Bin/../etc/jobcenter.conf")
+		or die 'Config Errror: ' . Config::Tiny->errstr();
+
+	my $connstr = "dbi:Pg:" . join ';', map {
+		$cfg->{pg}{$_->[1]}
+		? "$_->[0]=$cfg->{pg}{$_->[1]}"
+		: ()
+	} [ dbname => 'db' ], [ host => 'host' ], [ port => 'port' ];
+
+	my $dbh = DBI->connect($connstr, @{$cfg->{admin}||{}}{qw/user pass/}, { AutoCommit => 0 })
+		or die "cannot connect to db: $DBI::errstr";
+
+	# find action_ids from actions
+	
+	for (@{$args{actions}||[]}) {
+
+		my ($name, $tag) =  @{$_}{qw/name tag/};
+
+		my $sql = <<_SQL;
+SELECT 
+	max(a.action_id)
+FROM 
+	actions a
+LEFT JOIN
+	action_version_tags avt
+ON 
+	a.action_id = avt.action_id
+WHERE
+	a.name = ? AND
+	coalesce(avt.tag, 'default') = ?
+_SQL
+
+		my @bind = ($name, $tag || 'default');
+
+		my $sth = $dbh->prepare_cached($sql) or die "cannot prepare statement: ".$dbh->errstr;
+
+		$sth->execute(@bind) or die "cannot execute statement: ".$dbh->errstr;
+
+		$sth->bind_columns(\my $action_id) or die "cannot bind parameters: ".$dbh->errstr;
+
+		while ($sth->fetch) {
+			
+			if (not $action_id) {
+				$dbh->rollback;
+				die sprintf "action not found: %s%s\n", => 
+					( $name, length $tag ? ":$tag" : "" ) 
+			}
+
+			push @action_ids, $action_id;
+		}
+	}
+
+	# disable action_ids
+
+	my %res;
+	my $warned;
+	
+	{
+		my $qs = join '),(', ('?')x(@action_ids);
+
+		my $sql = <<_SQL;
+SELECT 
+	disable_action(i.action_id::integer) result,
+	a.name
+FROM 
+	(values ($qs)) AS i (action_id)
+LEFT JOIN
+	actions a
+ON 
+	a.action_id = i.action_id::integer
+_SQL
+
+		local $SIG{__WARN__} = sub {
+			my $w = shift;
+			if ($w =~ /^NOTICE:\s+(.*)$/) {
+				warn "$1\n";
+			} else {
+				warn "$w\n";
+			}
+			$warned++;
+		};
+
+		my $sth = $dbh->prepare($sql) or die "cannot prepare statement: ".$dbh->errstr;
+
+		$sth->execute(@action_ids) or die "cannot execute statement: ".$dbh->errstr;
+
+		$sth->bind_columns(\my $res, \my $name) or die "cannot bind parameters: ".$dbh->errstr;
+
+		while ($sth->fetch) {
+			
+			if ($res =~ /^(?<msg>.+): (?<action_id>\d+)$/) {
+				$res{$+{msg}}{$name}{$+{action_id}}++;
+			} else {
+				warn $res;
+			}
+		}
+	}
+
+	$dbh->commit or die "cannot commit: ".$dbh->errstr;
+
+	for my $res (sort keys %res) {
+		say "" if $warned;
+		say "$res:";
+		say "";
+		for my $name (sort keys %{$res{$res}}) {
+			say "  $name: ", join ', ', sort { $a <=> $b } keys %{$res{$res}{$name}};
+		}
+	}
+
+	return %{$res{disabled}||{}} ? 1 : 0;
+}
+

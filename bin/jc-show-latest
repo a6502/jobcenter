@@ -1,0 +1,260 @@
+#!/usr/bin/env perl
+#
+no lib '.';
+use Mojo::Base -base;
+
+# mojo
+use Mojo::Pg;
+
+# stdperl
+use FindBin;
+use open ':std' => ':utf8';
+
+# cpan
+use Config::Tiny;
+use Text::Table::Tiny 'generate_table';
+
+# return help string
+sub help {
+	return <<END
+Usage: $FindBin::Script [Options] [Action:Tag]/[ActionID]
+
+Show the latest version for action / workflow.
+
+    ActionID      action ID for which to find latest
+    Action        action names for which to find latest
+    Tag           optional tag for action to find latest
+
+Options:
+
+    -h,   --help         show this help messgae
+END
+}
+
+exit main(@ARGV);
+
+sub main {
+
+	my %opts = ( verbose => 0 );
+	my @action_ids;
+	my @actions;
+
+	for (@ARGV) {
+		/^(?:-h|--help)$/          and do { print help(); exit 0 };
+		/^-(v+)$/                  and do { $opts{verbose} += length $1; next };
+		/^--verbose$/              and do { $opts{verbose} += length $1; next };
+		/^-/                       and do { die "unknown option: $_\n" };
+		/^\d+$/                    and do { push @action_ids, $_; next };
+		/^([^ :]+)(?::([^ :]+))?$/ and do { push @actions, {name => $1, tag => $2}; next };
+		die "bad action or action id: $_\n";
+	}
+
+	if (not @actions and not @action_ids) {
+		print help();
+		exit 0;
+	}
+
+	my $cfg = Config::Tiny->read("$FindBin::Bin/../etc/jobcenter.conf");
+	die 'Config Errror: ' . Config::Tiny->errstr() unless $cfg;
+
+	my $pg = Mojo::Pg->new(
+		'postgresql://'
+		. $cfg->{admin}->{user}
+		. ':' . $cfg->{admin}->{pass}
+		. '@' . ( $cfg->{pg}->{host} // '' )
+		. ( ($cfg->{pg}->{port}) ? ':' . $cfg->{pg}->{port} : '' )
+		. '/' . $cfg->{pg}->{db}
+	);
+
+	# find out of date references matching actions or all
+	my $rows = _select(
+		%opts,
+		db         => $pg->db,
+		actions    => \@actions,
+		action_ids => \@action_ids,
+	);
+
+	if (@$rows > 1) {
+
+		say "latest version found:";
+
+		say generate_table(rows => $rows, header_row => 1);
+
+	} else {
+
+		say "not found:";
+	}
+
+	return 0;
+}
+
+sub _select {
+	my %opts = @_;
+	my ($db, $actions, $action_ids) = @opts{qw/db actions action_ids/};
+
+	my %rows;
+
+	for (@$actions) {
+
+		my ($name, $tag) = @{$_}{qw/name tag/};
+
+		my $sql = <<_SQL;
+WITH actions_with_tags AS (
+	SELECT
+		a.action_id,
+		a.version,
+		a.name,
+		a.type,
+		avt.tag
+	FROM
+		actions a
+	LEFT JOIN
+		action_version_tags avt
+	ON
+		avt.action_id = a.action_id
+)
+SELECT
+	at.action_id latest_id,
+	at.version latest_version,
+	at.name latest_name,
+	at.tag latest_tag,
+	l.action_ids action_ids
+FROM
+	actions_with_tags at
+JOIN
+	(
+		SELECT 
+			max(at.action_id) latest_id,
+			array_agg(at.action_id) action_ids
+		FROM
+			actions_with_tags at
+		WHERE 
+			at.action_id = ? AND
+			coalesce(at.tag, 'default') = ?
+		GROUP BY
+			at.name,
+			at.type,
+			at.tag
+	) l
+ON
+	l.latest_id = at.action_id
+_SQL
+
+		my $res = $db->query($sql, $name, $tag || 'default');
+		$res->hashes->each(sub {
+			$rows{$_[0]{latest_id}} //= $_[0];
+		});
+		
+	}
+
+	for (@$action_ids) {
+
+		my $sql = <<_SQL;
+WITH actions_with_tags AS (
+	SELECT
+		a.action_id,
+		a.version,
+		a.name,
+		a.type,
+		avt.tag
+	FROM
+		actions a
+	LEFT JOIN
+		action_version_tags avt
+	ON
+		avt.action_id = a.action_id
+)
+SELECT
+	at.action_id latest_id,
+	at.version latest_version,
+	at.name latest_name,
+	at.tag latest_tag,
+	l.action_ids action_ids
+FROM
+	actions_with_tags at
+JOIN
+	(
+		SELECT 
+			max(at2.action_id) latest_id,
+			array_agg(at2.action_id) action_ids
+		FROM
+			actions_with_tags at
+		JOIN
+			actions_with_tags at2
+		ON
+			at2.name = at.name AND
+			at2.type = at.type AND
+			coalesce(at2.tag, 'default') = coalesce(at.tag, 'default') 
+		WHERE 
+			at.action_id = ?
+		GROUP BY
+			at2.name,
+			at2.type,
+			at2.tag
+	) l
+ON
+	l.latest_id = at.action_id
+_SQL
+		my $res = $db->query($sql, $_);
+		$res->hashes->each(sub {
+			$rows{$_[0]{latest_id}} //= $_[0];
+		});
+	}
+
+	# format table
+
+	my %widths = (
+		latest_id      => 0,
+		latest_version => 0,
+	);
+
+	for my $id (keys %rows) {
+		for (qw/latest_id latest_version/) {
+			$widths{$_} = length $rows{$id}{$_} > $widths{$_} 
+				? length $rows{$id}{$_} 
+				: $widths{$_};
+		}
+	}
+
+	my @rows = [qw/
+		action_id
+		latest
+		tag
+	/];
+
+	$rows[0][3] = 'other_action_ids' if $opts{verbose} >= 1;
+
+	for (sort keys %rows) {
+		my $n = $rows{$_};
+		my $row = [ 
+			$n->{latest_name},
+			sprintf(
+				"%-$widths{latest_id}s%$widths{latest_version}s", 
+				$n->{latest_id}, 
+				$n->{latest_version} 
+				? " v$n->{latest_version}" 
+				: ""
+			),
+			$n->{latest_tag},
+		];
+		if ($opts{verbose} >= 1) {
+			my $other_ids = join ', ', grep { $_ ne $n->{latest_id} } @{$n->{action_ids}};
+			$row->[3] = _crop($other_ids, ',', 42);
+		}
+		push @rows, $row;
+	}
+
+	return \@rows;
+}
+
+sub _crop {
+	my ($str, $char, $max) = @_;
+	$max -= 2; 
+	if (length $str > $max) {
+		$str = substr $str, 0, $max, '';
+		my $i = rindex($str, $char) // 0;
+		$i++ if $i;
+		substr $str, $i, $max - $i, " \N{HORIZONTAL ELLIPSIS}";
+	}
+	return $str;
+}
