@@ -129,7 +129,7 @@ JOIN
 		FROM
 			actions_with_tags at
 		WHERE 
-			at.action_id = ? AND
+			at.name = ? AND
 			coalesce(at.tag, 'default') = ?
 		GROUP BY
 			at.name,
