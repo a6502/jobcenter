@@ -695,7 +695,10 @@ EOT
 		my $acl = $f->{proacl} ? join(',', @{$f->{proacl}}) : '';
 		#print STDERR Dumper($f);
 		if ($f->{lanname} eq 'plpgsql' or $f->{lanname} eq 'sql') {
-			if ($f->{procowner} ne 'jc_system') {
+			if ($f->{procowner} eq 'postgres') {
+				say "-- ignoring postgres owned $f->{proc}";
+				next;
+			} elsif ($f->{procowner} ne 'jc_system') {
 				$sql .= <<"EOT";
 ALTER FUNCTION $f->{proc} OWNER TO $JCSYSTEM;
 EOT
@@ -740,7 +743,9 @@ GRANT ALL ON FUNCTION $f->{proc} TO $JCPERL;
 EOT
 			}
 		} elsif ($f->{lanname} eq 'plperlu') {
-				die '-> plperlu should not be!';
+			die '-> plperlu should not be!';
+		} elsif ($f->{lanname} eq 'c') {
+			say "-- ignoring c function $f->{proc}";
 		} else {
 			die "uh? how did we get here?"
 		}
