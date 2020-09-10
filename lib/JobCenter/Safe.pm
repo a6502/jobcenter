@@ -6,7 +6,7 @@ use warnings;
 use Safe;
 
 our @permits = qw(
-	gmtime localtime padany refgen rv2gv time
+	gmtime localtime padany ref refgen rv2gv time
 	:base_core :base_loop :base_math :base_mem
 );
 
