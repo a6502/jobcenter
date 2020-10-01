@@ -231,7 +231,7 @@ funcname: identifier
 
 funcarg: rhs ( - ( COMMA | COLON ) - rhs )*
 
-regexmatch: / - TILDE - SLASH (.+) SLASH /
+regexmatch: / - TILDE - SLASH ( ANY+? ) SLASH /
 
 case: / 'case' + / +case-expression colon (+when | .ignorable)* case-else?
 
