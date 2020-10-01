@@ -6,6 +6,8 @@ use Mojo::Base -base;
 # stdperl
 use Carp qw(croak);
 
+use constant CUTOFF => 80;
+
 has [qw(db debug verbose no_names)];
 
 sub new {
@@ -18,6 +20,96 @@ sub new {
 	$self->{no_names} = $args{no_names} // 0;
 
 	return $self;
+}
+
+sub workers {
+	my ($self, %args) = @_;
+
+	my $verbose  = $self->verbose;
+	my $no_names = $self->no_names;
+	my $cutoff = $args{cutoff} // CUTOFF;
+
+	my $sql = <<_SQL;
+WITH tagged_actions AS (
+	SELECT 
+		a.action_id,
+		a.name,
+		a.type,
+		avt.tag
+	FROM
+		actions a
+	LEFT JOIN
+		action_version_tags avt
+	ON
+		avt.action_id = a.action_id
+)
+SELECT 
+	wa.action_id,
+	ta1.name action_name,
+	wa.worker_id,
+	w.name worker_name
+FROM
+	worker_actions wa
+JOIN 
+	workers w
+ON
+	w.worker_id = wa.worker_id
+JOIN
+	tagged_actions ta1
+ON 
+	ta1.action_id = wa.action_id
+LEFT JOIN 
+	tagged_actions ta2
+ON
+	ta2.type = ta1.type and 
+	ta2.name = ta1.name and
+	coalesce(ta2.tag, 'default') = coalesce(ta1.tag, 'default')
+WHERE
+	ta2.action_id > ta1.action_id
+GROUP BY
+	wa.worker_id,
+	w.name,
+	wa.action_id,
+	ta1.name
+_SQL
+
+	my $res = $self->{db}->query($sql);
+	my $col = $res->hashes;
+	my @rows;
+	push @rows, [
+		$verbose >= 2 || $no_names ? (qw/
+			action_id
+		/) : (),
+		$verbose >= 0 && !$no_names ? (qw/
+			action_name
+		/) : (),
+		$verbose >= 1 || $no_names ? (qw/ 
+			worker_id
+		/) : (),
+		$verbose >= 0 && !$no_names ? (qw/
+			worker_name              
+		/) : (),
+	];
+
+	$col->each(sub {
+		my $r = shift;
+		push @rows, [
+			$verbose >= 2 || $no_names ? (
+				$r->{action_id},
+			) : (),
+			$verbose >= 0 && !$no_names ? (
+				_cutoff($r->{action_name}, $cutoff)
+			) : (),
+			$verbose >= 1 || $no_names ? (
+				$r->{worker_id}
+			) : (),
+			$verbose >= 0 && !$no_names ? (
+				_cutoff($r->{worker_name}, $cutoff)
+			) : (),
+		];
+	});
+
+	return \@rows;
 }
 
 # find any out of date actions / workflows in the actions table filter by 
@@ -34,6 +126,7 @@ sub out_of_date {
 
 	my $verbose  = $self->verbose;
 	my $no_names = $self->no_names;
+	my $cutoff = $args{cutoff} // CUTOFF;
 
 	my @rows;
 	my %widths;
@@ -146,19 +239,19 @@ _SQL
 		my $r = shift;
 		push @rows, [
 			$verbose >= 3 && !$no_names ? (
-				$r->{top_level_name},
+				_cutoff($r->{top_level_name}, $cutoff)
 			) : (),
 			$verbose >= 3 ? (
 				sprintf("%$widths{top_level_id}s v%s", @{$r}{qw/top_level_id top_level_version/}),
 			) : (),
 			$verbose >= 0 && !$no_names ? (
-				$r->{workflow_name},
+				_cutoff($r->{workflow_name}, $cutoff)
 			) : (),
 			$verbose >= 0 ? (
 				sprintf("%$widths{workflow_id}s v%s", @{$r}{qw/workflow_id workflow_version/}),
 			) : (),
 			$verbose >= 0 && !$no_names ? (
-				$r->{name},
+				_cutoff($r->{name}, $cutoff)
 			) : (),
 			$verbose >= 0 ? (
 				sprintf("%$widths{action_id}s v%s", @{$r}{qw/action_id version/}),
@@ -167,7 +260,7 @@ _SQL
 				sprintf("%$widths{latest_action_id}s v%s", @{$r}{qw/latest_action_id latest_version/}),
 			) : (),
 			$verbose >= 2 ? (
-				$r->{tag},
+				_cutoff($r->{tag}, $cutoff)
 			) : (),
 			$verbose >= 4 ? (
 				$r->{type},
@@ -178,6 +271,14 @@ _SQL
 	$res->finish;
 
 	return \@rows;
+}
+
+sub _cutoff {
+	my ($str, $cutoff) = @_;
+	my $len = length $str;
+	substr $str, $cutoff, $len - $cutoff, "\N{HORIZONTAL ELLIPSIS}" 
+		if $cutoff and $len >= $cutoff;
+	return $str;
 }
 
 1;

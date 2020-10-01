@@ -3,6 +3,8 @@
 no lib '.';
 use Mojo::Base -base;
 
+use open ':std', ':utf8';
+
 # mojo
 use Mojo::Pg;
 
@@ -31,6 +33,7 @@ Options:
 
     -h,   --help         show this help messgae
     -N,   --no-names     do not show names
+    -w,   --workers      show workers announced for stale actions
     -vv*, --verbose      set verbosity level
 END
 }
@@ -43,9 +46,12 @@ sub main {
 	my @action_ids;
 	my @actions;
 
-	for (@ARGV) {
+	while (@_) {
+		local $_ = shift;
 		/^(?:-h|--help)$/     and do { print help(); exit 0 };
 		/^(?:-N|--no-names)$/ and do { $opts{no_names}++; next };
+		/^(?:-w|--workers)$/  and do { $opts{workers}++; next };
+		/^(?:-c|--cutoff)$/   and do { $opts{cutoff} = shift; next };
 		/^-(v+)$/             and do { $opts{verbose} += length $1; next };
 		/^-verbose$/          and do { $opts{verbose}++; next };
 		/^-/                  and do { die "unknown option: $_\n" };
@@ -54,7 +60,8 @@ sub main {
 	}
 
 	my $cfg = Config::Tiny->read("$FindBin::Bin/../etc/jobcenter.conf");
-	die 'Config Errror: ' . Config::Tiny->errstr() unless $cfg;
+	die 'config errror: ' . Config::Tiny->errstr() unless $cfg;
+	die 'cutoff expects number' if defined $opts{cutoff} and $opts{cutoff} !~ /^\d+$/;
 
 	my $pg = Mojo::Pg->new(
 		'postgresql://'
@@ -68,12 +75,17 @@ sub main {
 	my $jvc = JobCenter::JCC::VersionChecker->new(db => $pg->db, %opts);
 
 	# find out of date references matching actions or all
-	my $rows = $jvc->out_of_date(
-		action_ids   => \@action_ids,  # match against actions / workflows
-		actions      => \@actions,
-		workflow_ids => \@action_ids,  # match against owning workflow as well
-		workflows    => \@actions,
-	);
+	my $rows = $opts{workers} 
+		? $jvc->workers(
+			cutoff       => $opts{cutoff}
+		)
+		: $jvc->out_of_date(
+			cutoff       => $opts{cutoff},
+			action_ids   => \@action_ids,  # match against actions / workflows
+			actions      => \@actions,
+			workflow_ids => \@action_ids,  # match against owning workflow as well
+			workflows    => \@actions,
+		);
 
 	if (@$rows > 1) {
 
