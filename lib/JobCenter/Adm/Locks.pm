@@ -30,28 +30,76 @@ sub _select_counts {
 	my @qs   = ("?")x@$locktypes;
 	local $" = ', ';
 
-	my @det = $detailed ? (', lockvalue', ', l.lockvalue') : ('', '');
-	my $cond = @$locktypes ? "locktype in (@qs)" : 'true';
+	my $lockv = $detailed ? ', lockvalue' : '';
 
-	my $result = $self->adm->pg->db->query(qq[
-		select lock, locktype $det[0], count(*) as count
-		from (
-			select 'waiting' as lock, l.locktype $det[1]
-			from jobs j 
-			join locks l 
-			on j.task_state->>'waitforlocktype' = l.locktype 
-				and j.task_state->>'waitforlockvalue' = l.lockvalue 
-				and j.state = 'lockwait' 
-			union all 
-			select 'held' as lock, l.locktype $det[1]
-			from jobs j 
-			join locks l 
-			on j.job_id = l.job_id
-		) as ja 
-		where $cond
-		group by lock, locktype $det[0]
-		order by lock, locktype $det[0]
-	], @$locktypes);
+	my $sql = <<_SQL;
+		WITH waiting AS (
+			SELECT 
+				j.job_id,
+				'waiting'::text AS lock, 
+				l.locktype, 
+				l.lockvalue
+			FROM 
+				jobs j 
+			JOIN 
+				locks l 
+			ON 
+				j.task_state->>'waitforlocktype' = l.locktype AND
+				j.task_state->>'waitforlockvalue' = l.lockvalue AND
+				j.state = 'lockwait' 
+		)
+		SELECT 
+			lock, 
+			locktype 
+			$lockv, 
+			count(*) AS count, 
+			CASE waiting
+				WHEN 0 THEN ''
+				ELSE waiting::text
+			END AS waiting
+		FROM 
+			(
+				SELECT 
+					0 AS waiting,
+					w1.lock,
+					w1.locktype,
+					w1.lockvalue
+				FROM 
+					waiting w1
+				UNION ALL 
+				SELECT 
+					(
+						SELECT count(*)
+						FROM   waiting w
+						WHERE  
+							w.locktype = l.locktype AND 
+							w.lockvalue = l.lockvalue AND
+							w.job_id != j.job_id
+					) AS waiting, 
+					'held' AS lock, 
+					l.locktype, 
+					l.lockvalue
+				FROM 
+					jobs j 
+				JOIN 
+					locks l 
+				ON 
+					j.job_id = l.job_id
+			) AS ja 
+		WHERE 
+			${\(@$locktypes ? "locktype IN (@qs)" : 'true')}
+		GROUP BY 
+			lock, 
+			locktype 
+			$lockv,
+			waiting
+		ORDER BY 
+			lock, 
+			locktype 
+			$lockv
+_SQL
+
+	my $result = $self->adm->pg->db->query($sql, @$locktypes);
 
 	return $result;
 }
@@ -68,42 +116,60 @@ sub _verbose {
 		my $result = $self->adm->pg->db->query(
 			$jobs->{lock} eq 'waiting' 
 			? qq[
-				select
-					j.job_id as job_id,
-					j.workflow_id as workflow_id,
-					wf.name as workflow_name,
-					to_char(j.job_created, 'yyyy-mm-dd HH24:MI:SS') as created,
-					to_char(j.task_entered, 'yyyy-mm-dd HH24:MI:SS') as lock_wait
-				from jobs as j 
-				join actions as wf
-				on j.workflow_id = wf.action_id
-				join locks as l
-				on j.task_state->>'waitforlocktype' = l.locktype 
-					and j.task_state->>'waitforlockvalue' = l.lockvalue 
-					and j.state = 'lockwait' 
-				where l.locktype = ? and l.lockvalue = ?
-				order by j.job_id desc, j.workflow_id
+				SELECT
+					j.job_id AS job_id,
+					j.workflow_id AS workflow_id,
+					wf.name AS workflow_name,
+					to_char(j.job_created, 'yyyy-mm-dd HH24:MI:SS') AS created,
+					to_char(j.task_entered, 'yyyy-mm-dd HH24:MI:SS') AS lock_wait
+				FROM 
+					jobs AS j 
+				JOIN 
+					actions AS wf
+				ON 
+					j.workflow_id = wf.action_id
+				JOIN 
+					locks AS l
+				ON 
+					j.task_state->>'waitforlocktype' = l.locktype AND
+					j.task_state->>'waitforlockvalue' = l.lockvalue AND
+					j.state = 'lockwait' 
+				WHERE 
+					l.locktype = ? AND l.lockvalue = ?
+				ORDER BY 
+					j.job_id DESC, j.workflow_id
 			]
 			: qq[
-				select
-					j.job_id as job_id,
-					j.workflow_id as workflow_id,
-					wf.name as workflow_name,
-					to_char(j.job_created, 'yyyy-mm-dd HH24:MI:SS') as created
-				from jobs as j 
-				join actions as wf
-				on j.workflow_id = wf.action_id
-				join locks as l
-				on j.job_id = l.job_id
-				where l.locktype = ? and l.lockvalue = ?
-				order by j.job_id desc, j.workflow_id
+				SELECT
+					j.job_id AS job_id,
+					j.workflow_id AS workflow_id,
+					wf.name AS workflow_name,
+					to_char(j.job_created, 'yyyy-mm-dd HH24:MI:SS') AS created
+				FROM 
+					jobs AS j 
+				JOIN 
+					actions AS wf
+				ON 
+					j.workflow_id = wf.action_id
+				JOIN 
+					locks AS l
+				ON 
+					j.job_id = l.job_id
+				WHERE 
+					l.locktype = ? AND l.lockvalue = ?
+				ORDER BY 
+					j.job_id DESC, j.workflow_id
 			], @{$jobs}{qw/locktype lockvalue/});
 
 		my @rows = ($result->columns, @{$result->arrays});
 
 		if (@rows > 1) {
 			$found = 1;
-			$self->tablify(\@rows, "\njob locks ($jobs->{lock}): $jobs->{locktype}=$jobs->{lockvalue} ($jobs->{count})");
+			my $waiting = $jobs->{waiting} ? "/$jobs->{waiting}" : '';
+			$self->tablify(\@rows, 
+				sprintf "\njob locks (%s): %s=%s (%s%s)" => 
+				( @{$jobs}{qw/lock locktype lockvalue count/}, $waiting )
+			);
 		}
 	}
 
