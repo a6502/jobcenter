@@ -1,0 +1,150 @@
+%YAML 1.2
+---
+name: Jobcenter
+file_extensions: [ac, wf]
+scope: source.ac
+
+contexts:
+  main:
+    - match: ^(action|workflow)
+      captures:
+        1: invalid
+      push: headline
+
+    - match: ^(in|out|wfomap|do|role|config)
+      push: tags
+
+    - match: ^\s+(if|else)
+      push: if_else
+
+    - match: ([a-zA-Z_]+)\s+(string|array|object|boolean)
+      captures:
+        1: keyword.control.class
+      push: data_types
+
+    - match: (<)
+      push: shortcuts
+
+    - match: (\[\[)
+      scope: punctuation.definition.tag.html
+      push: brackets
+
+    - match: ^\s+(call|into|eval)
+      push: call_into_eval
+
+    - match: ([a-zA-Z_]+)\s
+      scope: keyword.control.class
+
+    - match: ([a-zA-Z_]+)(\s+)?\(
+      captures:
+        1: entity.name.tag
+      push: function_name
+
+    - match: (\s+|\(|\[|\{)([a-zA-Z0-9]+\.)
+      captures:
+        2: entity.name.tag
+      push: selectors
+
+    - match: ('|")(.+)('|")
+      captures:
+        1: punctuation.definition.tag.html
+        3: punctuation.definition.tag.html
+
+  function_name:
+    - meta_scope: punctuation.definition.tag.html
+    - match: (a\.|v\.|o\.|i\.)
+      captures:
+        1: entity.name.tag
+      push: selectors
+    - match: (\))
+      scope: punctuation.definition.tag.html
+      pop: true
+
+  brackets:
+    - match: (%a|%v|%o|%i|\$a|\$v|\$o|\$i)
+      scope: entity.name.tag
+
+    - match: (\{)(\s+)?([a-z-A-Z0-9_]+)(\s+)?(\})
+      captures:
+        1: entity.name.tag
+        3: keyword
+        5: entity.name.tag
+
+    - match: ('|")
+      scope: punctuation.definition.tag.html
+
+    - match: (\]\])
+      scope: punctuation.definition.tag.html
+      pop: true
+
+
+  call_into_eval:
+    - meta_scope: keyword.control.match
+    - match: ([a-zA-Z0-1_\.])
+      scope: keyword.control.class
+    - match: (:)
+      pop: true
+
+  if_else:
+    - meta_scope: keyword
+    - match: (a\.|v\.|o\.|i\.)
+      scope: entity.name.tag
+
+    - match: (\s+)(and|or|xor)(\s+)
+      scope: keyword
+
+    - match: ([a-zA-Z0-1_\.]+)
+      scope: keyword.control.class
+
+    - match: (:)
+      scope: keyword.operator.comparison
+      pop: true
+
+  selectors:
+    - match: ([a-zA-Z0-1_]+)
+      scope: keyword.control.class
+      pop: true
+
+  shortcuts:
+    - meta_scope: punctuation.definition.tag.html
+    - match: ([a-zA-Z0-1_])
+      scope: keyword.control.class
+    - match: (>)
+      pop: true
+
+  data_types:
+    - meta_scope: constant.character.escape
+    - match: (\s+)(optional|null)
+      scope: keyword
+    - match: (\n)
+      pop: true
+
+  tags:
+    - meta_scope: entity.name.tag
+
+    - match: (:)
+      scope: keyword.operator.comparison
+      pop: true
+
+  headline:
+    - match: ('|")
+      scope: punctuation.definition.tag.html
+      push: headline_name
+    - match: (:)
+      scope: keyword.operator.comparison
+      pop: true
+
+  headline_name:
+    - meta_scope: keyword.control.class
+    - match: ([a-zA-Z0-1\.-])
+    - match: ('|")
+      scope: punctuation.definition.tag.html
+      pop: true
+
+# invalid - roter bg
+# keyword.control.tmp, keyword - gelb
+# entity.name.tag, variable - blau
+# constant.character.escape - rot
+# keyword.control.class - orange
+# punctuation.definition.tag.html - dunkel grau
+
