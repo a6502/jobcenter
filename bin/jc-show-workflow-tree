@@ -33,6 +33,8 @@ Options:
     -h,   --help         show this help messgae
     -d,   --dot          output dot file
     -i,   --inactive     show inactive nodes
+    -n,   --names        show names
+    -I,   --ids          show ids
 END
 }
 
@@ -53,6 +55,8 @@ sub main {
 		/^-verbose$/               and do { $opts{verbose}++; next };
 		/^(?:-d|--dot)$/           and do { $opts{dot} = 1; next };
 		/^(?:-i|--inactive)$/      and do { $opts{active} = 0; next };
+		/^(?:-n|--names)$/         and do { $opts{names} = 1; next };
+		/^(?:-I|--ids)$/           and do { $opts{ids} = 1; next };
 		/^-/                       and do { die "unknown option: $_\n" };
 		/^\d+$/                    and do { push @action_ids, $_; next };
 		/^([^ :]+)(?::([^ :]+))?$/ and do { push @actions, {name => $1, tag => $2}; next };
@@ -93,12 +97,14 @@ sub main {
 		for (@$links) {
 			next if $found{$_->[1]}++;
 			$graph->add_node($_->[1])->set_attributes({
-				label => _label(@$_),
+				label => _label(@$_, \%opts),
 			});
 		}
 		$graph->add_edge(@{$_}[0,1]) for grep { $_->[0] } @$links;
 
 		if ($opts{dot}) {
+			# XXX hack to set graphviz property not supported by Graph::Easy
+			$graph->{att}{graph}{overlap} = 'false'; 
 			my $fh = File::Temp->new( UNLINK => 0, SUFFIX => '.dot' );
 			print $fh $graph->as_graphviz();
 			say "wrote: ", $fh->filename;
@@ -211,6 +217,7 @@ WITH latest_actions AS (
 )
 SELECT
 	a.action_id,
+	a.name action_name,
 	array_agg(t.workflow_id) workflow_ids,
 	a.type,
 	(
@@ -347,8 +354,9 @@ _SQL
 					primary
 					stale 
 					active
+					action_name
 				/
-			 } ];
+			} ];
 		}
 	}
 
@@ -363,9 +371,13 @@ _SQL
 }
 
 sub _label {
-	my (undef, $action_id, $flags) = @_;
+	my (undef, $action_id, $flags, $opts) = @_;
 	my $label = $flags->{primary} ? '*' : '';
-	$label .= $action_id;
+	$label .= $opts->{names} && $opts->{ids}
+		? "[$action_id] $flags->{action_name}"
+		: $opts->{names}
+		? $flags->{action_name}
+		: $action_id;
 	if($flags->{stale}) {
 		$label .= ' (stale)';
 	} elsif (not $flags->{active}) {
