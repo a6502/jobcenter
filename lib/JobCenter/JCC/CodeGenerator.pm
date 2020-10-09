@@ -8,12 +8,14 @@ use Mojo::Util qw(quote);
 # stdperl
 use Carp qw(croak);
 use Data::Dumper;
+use DDP { output => 'stdout' };
 use Digest::MD5 qw(md5_hex);
 use List::Util qw( any );
 #use Scalar::Util qw(blessed);
 use Ref::Util qw(is_arrayref is_hashref);
 
-has [qw(db debug dry_run fixup labels locks oetid tags wfid)];
+has [qw(db debug dry_run fixup force_recompile labels locks oetid
+	replace tags wfid)];
 
 # perl block types
 use constant {
@@ -59,15 +61,13 @@ our %cfgcfg = (
 	}
 );
 
+our $debug; # cheating a lot..
+
 # code
 sub new {
-	my ($class, %args) = @_;
-	my $self = $class->SUPER::new();
-
-	$self->{db} = $args{db} or croak 'no db?';
-	$self->{debug} = $args{debug} // 0; # or 1?
-	$self->{dry_run} = $args{dry_run};
-
+	my $class = shift;
+	my $self = $class->SUPER::new(@_);
+	$debug = $self->debug;
 	return $self;
 }
 
@@ -77,7 +77,7 @@ sub generate {
 	croak 'no wfast?' unless $args{wfast};
 
 	my ($what, $wf) = get_type($args{wfast});
-	croak "don't know how to generate $what" unless $what eq 'action' or $what eq 'workflow';
+	croak "don't know how to generate $what" unless $what =~ /^(action|workflow)$/;
 	if ($what eq 'workflow') {
 		$self->generate_workflow(%args);
 	} else {
@@ -104,25 +104,39 @@ sub generate_workflow {
 	# add the magic end label
 	$self->{labels}->{'!!the end!!'} = undef;
 
-	say "\nbegin";
-	my $tx  = $self->db->begin;
-
+	my $wfid; # for staleness check
 	my $version = 1;
+	my $oldsrcmd5;
 	# find out if a version alreay exists, if so increase version
 	# FIXME: race condition when multiples jcc's compile the same wf at the same time..
 	{
 		my $res = $self->db->dollar_only->query(
-			q|select version from actions
+			q|select action_id, version, srcmd5 from actions
 				where name = $1 and type = 'workflow'
 				order by version desc limit 1|,
 			$wf->{workflow_name}
 		)->array;
-		#print 'res: ', Dumper($res);
-		if ( $res and @$res and @$res[0] >= 0 ) {
-			$version = @$res[0] + 1;
+		print 'res: ', Dumper($res) if $debug;
+		if ($res and @$res) {
+			($wfid, $version, $oldsrcmd5) = @$res;
+			$oldsrcmd5 //= '<null>';
+			$version++;
 		}
 	}
-	say 'version: ', $version;
+
+	my $newsrcmd5 = md5_hex($$wfsrc);
+	# convert to postgresql uuid format
+	$newsrcmd5 =~ s/^(\w{8})(\w{4})(\w{4})(\w{4})(\w{12})$/$1-$2-$3-$4-$5/;
+
+	say "version: $version oldsrcmd5: $oldsrcmd5 newsrcmd5: $newsrcmd5";
+
+	if (($oldsrcmd5 eq $newsrcmd5) and not ($self->{dry_run} or $self->{force_recompile})) {
+		my $res = $self->db->query('select * from get_stale_actions()')->hashes;
+		#print 'stale check: ', Dumper($res) if $debug;
+		my @res = grep {$_->{workflow_id} = $wfid and $_->{workflow_name} eq $wf->{workflow_name}} @$res;
+		#print 'stale check2: ', Dumper(\@res) if $debug;
+		die "workflow $wf->{workflow_name} hasn't changed and isn't stale?\n" unless @res;
+	}
 
 	my $role;
 	if ($wf->{role}) {
@@ -135,7 +149,7 @@ sub generate_workflow {
 
 	my $wfenv = $self->gen_wfenv($wf->{wfenv});
 
-	my $wfid = $self->qs(
+	$wfid = $self->qs(
 		q|insert into actions (name, type, version, wfenv, rolename, config, src, srcmd5)
 		  values ($1, 'workflow', $2, $3, $4, $5, $6, $7) returning action_id|,
 		$wf->{workflow_name}, $version, $wfenv, $role, $config, $$wfsrc, md5_hex($$wfsrc)
@@ -207,7 +221,7 @@ sub generate_workflow {
 
 	my ($lockfirst, $locklast) = $self->gen_locks($wf->{locks}); # first and last task_id of locks
 
-	say 'calling get_do';
+	say 'calling get_do' if $debug;
 	my ($first, $last) = $self->gen_do($wf->{do}); # first and last task_id of block
 
 	my $start = $self->instask(T_START, next_task_id => (($lockfirst) ? $lockfirst : $first)); # magic start task to first real task
@@ -232,14 +246,6 @@ sub generate_workflow {
 
 	# maybe move this to a deferred trigger on actions?
 	$self->qs(q|select do_sanity_check_workflow($1)|, $wfid);
-
-	if ($self->dry_run) {
-		say "rollback";
-		# just let $tx go out of scope..
-	} else {
-		say "commit";
-		$tx->commit;
-	}
 }
 
 sub generate_action {
@@ -250,25 +256,34 @@ sub generate_action {
 	my $what = $wf->{action_type};
 	my $tags = $args{tags};
 	
-	say "\nbegin";
-	my $tx  = $self->db->begin;
-
+	my $wfid; # for replace
 	my $version = 1;
+	my $oldsrcmd5;
 	# find out if a version alreay exists, if so increase version
 	# FIXME: race condition when multiples jcc's compile the same wf at the same time..
 	{
 		my $res = $self->db->dollar_only->query(
-			q|select version from actions
+			q|select action_id, version, srcmd5 from actions
 				where name = $1 and type = $2
 				order by version desc limit 1|,
 			$wf->{workflow_name}, $what
 		)->array;
-		#print 'res: ', Dumper($res);
-		if ( $res and @$res and @$res[0] >= 0 ) {
-			$version = @$res[0] + 1;
+		print 'res: ', Dumper($res) if $debug;
+		if ($res and @$res) {
+			($wfid, $version, $oldsrcmd5) = @$res;
+			$oldsrcmd5 //= '<null>';
 		}
 	}
-	say 'version: ', $version;
+
+	my $newsrcmd5 = md5_hex($$wfsrc);
+	# convert to postgresql uuid format
+	$newsrcmd5 =~ s/^(\w{8})(\w{4})(\w{4})(\w{4})(\w{12})$/$1-$2-$3-$4-$5/;
+
+	say "(existing) version: $version oldsrcmd5: $oldsrcmd5 newsrcmd5: $newsrcmd5";
+
+	if (($oldsrcmd5 eq $newsrcmd5) and not ($self->{dry_run} or $self->{force_recompile})) {
+		die "action $wf->{workflow_name} hasn't changed?\n";
+	}
 
 	my $role;
 	if ($wf->{role}) {
@@ -281,12 +296,43 @@ sub generate_action {
 
 	my $wfenv;
 
-	my $wfid = $self->qs(
-		q|insert into actions (name, type, version, wfenv, rolename, config, src, srcmd5)
-		  values ($1, $2, $3, $4, $5, $6, $7, $8) returning action_id|,
-		$wf->{workflow_name}, $what,  $version, $wfenv, $role, $config, $$wfsrc, md5_hex($$wfsrc)
-	);
-	say "wfid: $wfid";
+	if ($self->{replace}) {
+		die "nothing to replace?" unless $wfid;
+		my $dummy = $self->qs(q|
+			update actions set
+				rolename = $1,
+				config = $2,
+				src = $3,
+				srcmd5 = $4
+			where 
+			 	action_id = $5
+			returning
+				 type
+			|, $role, $config, $$wfsrc, $newsrcmd5, $wfid
+		);
+		die 'uh?' unless $dummy eq $what;		
+		$self->qdo(q|delete from action_inputs where action_id=$1|, $wfid);
+		$self->qdo(q|delete from action_outputs where action_id=$1|, $wfid);
+		$self->qdo(q|delete from action_version_tags where action_id=$1|, $wfid);
+		say "replacing action_id $wfid";
+	} else {
+		$version++;
+		$wfid = $self->qs(
+			q|insert into actions (name, type, version, wfenv, rolename, config, src, srcmd5)
+			  values ($1, $2, $3, $4, $5, $6, $7, $8) returning action_id|,
+			$wf->{workflow_name}, $what,  $version, $wfenv, $role, $config, $$wfsrc, md5_hex($$wfsrc)
+		);
+		say "new action_id: $wfid with version $version";
+	}
+
+	if ($self->{tags}) {
+		for my $tag (split /:/, $self->{tags}) {
+			$self->qs(
+				q|insert into action_version_tags (action_id, tag) values ($1, $2) returning action_id|,
+				$wfid, $tag
+			);
+		}
+	}
 
 	if ($wf->{interface}) {
 		die "interface conlicts with in/out/env"
@@ -349,23 +395,6 @@ sub generate_action {
 			);
 		}
 
-	}
-
-	if ($self->{tags}) {
-		for my $tag (split /:/, $self->{tags}) {
-			$self->qs(
-				q|insert into action_version_tags (action_id, tag) values ($1, $2) returning action_id|,
-				$wfid, $tag
-			);
-		}
-	}
-
-	if ($self->dry_run) {
-		say "rollback";
-		# just let $tx go out of scope..
-	} else {
-		say "commit";
-		$tx->commit;
 	}
 }
 
@@ -810,7 +839,7 @@ sub gen_lock {
 sub gen_map {
 	my ($self, $map) = @_;
 	# a 'loose' map is just a implicit split-join
-	say "\tcalling gen_split";
+	say "\tcalling gen_split" if $debug;
 	return $self->gen_split([{map => $map}]);
 }
 
@@ -870,7 +899,7 @@ sub gen_split {
 	for my $se (@$split) {
 		my $t;
 		($t, $se) = get_type($se);
-		say "se $t: ", Dumper($se);
+		say "se $t: ", Dumper($se) if $debug;
 		my $tid = $self->gen_call($se, $t); # give gen_call some extra magic
 		push @childtids, { tid => $tid, type => $t };
 		$firsttid = $tid unless $firsttid;
@@ -987,7 +1016,7 @@ sub gen_while {
 # note: not a method
 sub get_type {
 	my ($ast) = @_;
-	print 'get_type ', Dumper($ast);
+	print 'get_type ', Dumper($ast) if $debug;
 	die 'expected a hashref' unless $ast and ref $ast eq 'HASH';
 	die 'more than 1 key in hashref' unless scalar keys %$ast == 1;
 	# the keys above conveniently resets the each iterator
@@ -999,7 +1028,7 @@ sub get_type {
 sub assignments_to_hashref {
 	my ($ast) = @_;
 
-	print 'assignments_to_hashref: ', Dumper($ast);
+	print 'assignments_to_hashref: ', Dumper($ast) if $debug;
 
 	my %h;
 
@@ -1011,7 +1040,7 @@ sub assignments_to_hashref {
 		$h{$lhs} = $val;
 	}
 
-	print 'assignments_to_hashref: ', Dumper(\%h);
+	print 'assignments_to_hashref: ', Dumper(\%h) if $debug;
 
 	return \%h;
 }
@@ -1021,7 +1050,7 @@ sub assignments_to_hashref {
 sub make_rhs {
 	my ($ast, $default) = @_;
 	$ast = [ $ast ] if $ast and ref $ast eq 'HASH';
-	say "rhs: ", Dumper(\$ast);
+	say "rhs: ", Dumper(\$ast) if $debug;
 	die 'expected a array' unless $ast and ref $ast eq 'ARRAY';
 	my @rhs = @$ast; # a copy to consume
 	my $perl = '';
@@ -1047,7 +1076,7 @@ sub make_rhs {
 # note: not a method
 sub make_term {
 	my ($ast, $default) = @_;
-	say "term: ", Dumper(\$ast);
+	say "term: ", Dumper(\$ast) if $debug;
 	die 'expected a hashref with 1 key' unless $ast and ref $ast eq 'HASH' and keys %$ast == 1;
 	my ($key, $val) = each(%$ast);
 	if ($key eq 'unop_term') {
@@ -1082,7 +1111,7 @@ sub make_term {
 sub make_literal {
 	my ($ast) = @_;
 	return undef unless $ast;
-	say "literal: ", Dumper(\$ast);
+	say "literal: ", Dumper(\$ast) if $debug;
 	my ($key, $val) = get_type($ast);
 	if ($key eq 'number'
 	    or $key eq 'boolean'
@@ -1100,7 +1129,7 @@ sub make_literal {
 # note: not a method
 sub make_variable {
 	my ($ast, $what) = @_;
-	say "variable: ", Dumper(\$ast);
+	say "variable: ", Dumper(\$ast) if $debug;
 	my $default;
 	my $toplevel = qr/^[aeiovt]$/;
 	if ($what) {
@@ -1125,7 +1154,7 @@ sub make_variable {
 				$perl .= "{'$_'}";
 			}
 		}
-		say "make_variable: $perl";
+		say "make_variable: $perl" if $debug;
 		return $perl;
 	} else {
 		die "huh?";
@@ -1175,7 +1204,7 @@ sub make_func {
 sub make_perl {
 	my ($ast, $what) = @_;
 	return '' unless $ast and ref $ast;
-	say "make_perl $what: ", Dumper($ast);
+	say "make_perl $what: ", Dumper($ast) if $debug;
 	if (ref $ast eq 'HASH' and $ast->{perl_block}) {
 		# the easy way
 		my $perl = $ast->{perl_block};
@@ -1218,7 +1247,7 @@ sub make_perl {
 				push @perl, make_variable($lhs, $what) . " $op " . make_rhs($rhs) . ';';
 			}
 		}
-		say "perl for $what: ", join(' ', @perl);
+		say "perl for $what: ", join(' ', @perl) if $debug;
 		return '' . join("\n", @perl);
 	} elsif (any { $what eq $_ } qw( bool string )) {
 		return make_rhs($ast) . ';';
@@ -1242,20 +1271,29 @@ sub instask {
 	return $self->qs($q, @v);
 }
 
+# 'do' query
+sub qdo {
+	my ($self, $q, @a) = @_;
+	my $as = join(',', map { $_ // '' } @a);
+	print "query: $q [$as]" if $debug;
+	my $res = $self->{db}->dollar_only->query($q, @a);
+	say ' => ok' if $debug;
+}
+
 # query with single return value
 sub qs {
 	my ($self, $q, @a) = @_;
 	my $as = join(',', map { $_ // '' } @a);
-	print "query: $q [$as]";
+	print "query: $q [$as]" if $debug;
 	my $res = $self->{db}->dollar_only->query($q, @a)->array;
 	die "query $q [$as] failed\n" unless is_arrayref($res) and defined @$res[0];
-	say " => @$res[0]";
+	say " => @$res[0]" if $debug;
 	return wantarray ? @$res : @$res[0];
 }
 
 sub set_next {
 	my ($self, $f, $t) = @_;
-	say "update tasks set next_task_id = $t where task_id = $f";
+	say "update tasks set next_task_id = $t where task_id = $f" if $debug;
 	my $res = $self->{db}->dollar_only->query(q|update tasks set next_task_id = $1 where task_id = $2|, $t, $f);
 	die "update next_task_id of task_id $f failed" unless $res;
 }

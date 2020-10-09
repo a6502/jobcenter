@@ -4,6 +4,7 @@ use Pegex::Base;
 use base 'Pegex::Base';
 extends 'Pegex::Grammar';
 
+has debug => 0;
 has indent => [];
 has tabwidth => 8;
  
@@ -20,29 +21,31 @@ my $NOTHING = qr//;
 sub rule_block_indent_real {
 	my ($self, $parser, $buffer, $pos) = @_;
 	return if $pos >= length($$buffer);
+	my $debug = $self->{debug};
 	my $indents = $self->{indent};
 	my $tabwidth = $self->{tabwidth};
 	pos($$buffer) = $pos;
 	my $len = @$indents ? $indents->[-1] + 1 : 1;
-	say "need indent of at least $len";
+	say "need indent of at least $len" if $debug;
 	my ($indent) = $$buffer =~ /\G^(\s+)\S/cgm or return;
 	# expand tabs
 	$indent =~ s/\t/' ' x $tabwidth/eg; # todo: optimize?
 	$indent = length($indent);
-	say "found indent of ", $indent;
+	say "found indent of ", $indent if $debug;
 	return if $indent < $len;
 	push @$indents, $indent;
-	say "indents now ", join(', ', @$indents);
+	say "indents now ", join(', ', @$indents) if $debug;
 	return $parser->match_rule($pos);
 }
  
 # consume indentation and check that the indentation level is still the same
 sub rule_block_ondent {
 	my ($self, $parser, $buffer, $pos) = @_;
+	my $debug = $self->{debug};
 	my $indents = $self->{indent};
 	my $tabwidth = $self->{tabwidth};
 	my $len = $indents->[-1];
-	say "need indent of $len";
+	say "need indent of $len" if $debug;
 	pos($$buffer) = $pos;
 	my ($indent) = $$buffer =~ /\G^(\s+)(?=\S)/cgm or return; # no indent no match
 	# expand tabs
@@ -55,11 +58,12 @@ sub rule_block_ondent {
 # check that the indentation level decreases by one step but do not consume
 sub rule_block_undent {
 	my ($self, $parser, $buffer, $pos) = @_;
+	my $debug = $self->{debug};
 	my $indents = $self->{indent};
 	return unless @$indents;
 	my $tabwidth = $self->{tabwidth};
 	my $len = $indents->[-1];
-	say "need indent of less than $len";
+	say "need indent of less than $len" if $debug;
 	pos($$buffer) = $pos;
 	my ($indent) = $$buffer =~ /(?:\G^(\s*)\S)|\z/cgm; # always matches?
 	if ($indent) {
@@ -69,7 +73,7 @@ sub rule_block_undent {
 	} else {
 		$indent = 0;
 	}
-	say "found indent of ", $indent;
+	say "found indent of ", $indent if $debug;
 	return unless $indent < $len;
 	pop @$indents;
 	return $parser->match_rule($pos);
