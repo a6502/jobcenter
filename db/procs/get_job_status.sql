@@ -30,7 +30,7 @@ BEGIN
 		END IF;
 	END IF;	
 
-	IF v_state NOT IN ('error', 'finished') THEN
+	IF v_state NOT IN ('error', 'finished', 'zombie') THEN
 		a_job_id := null;
 		o_out_args := null;
 	ELSIF v_state = 'error' AND o_out_args IS NULL THEN
