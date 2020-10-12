@@ -13,6 +13,7 @@ use Cwd qw(realpath);
 use Data::Dumper;
 use FindBin;
 use Getopt::Long qw();
+use Pod::Usage;
 use Time::HiRes qw(time);
 
 # cpan
@@ -29,36 +30,95 @@ use JobCenter::JCC::Receiver;
 use JobCenter::JCC::VersionChecker;
 use JobCenter::Util qw(slurp);
 
+# cheating with globals
+my $db;
+
+# and global options
+my $config = realpath("$FindBin::Bin/../etc/jobcenter.conf");
+my ($debug, $dry_run , $force_recompile, $help, $man, $parseonly, $really,
+	$replace, $tags);
+
 exit main(@ARGV);
 
 sub main {
-	my $config = realpath("$FindBin::Bin/../etc/jobcenter.conf");
-	my $debug = 1;
-	my $dry_run = 0;
-	my $help = 0;
-	my $parseonly = 0;
-	my $tags;
-
 	Getopt::Long::Configure(qw( bundling posix_default ));
 	Getopt::Long::GetOptionsFromArray(
 		\@_,
 		'config=s' => \$config,
 		'debug|d' => \$debug,
-		'dry-run|n' => \$dry_run,
-		'help|h' => \$help,
-		'parseonly|p' => \$parseonly,
+		'dry-run|no-commit|n' => \$dry_run,
+		'force-recompile' => \$force_recompile,
+		'help|h|?' => \$help,
+		'man' => \$man,
+		'parse-only|p' => \$parseonly,
+		'really' =>  \$really,
+		'replace' => \$replace,
 		'tags=s' => \$tags
-	) or return usage();
-	return usage() if $help;
+	) or pod2usage();
+	pod2usage(-exitval => 0) if $help;
+	pod2usage(-exitval => 0, verbose => 2) if $man;
+	pod2usage(-message => 'Nothing to do?') unless @_;
 
+	unless ($really) {
+		die "refusing --force-recompile without --really" if $force_recompile;
+		die "refusing --replace without --really" if $replace;
+	}
+
+	my ($pg, $tx);
+	unless ($parseonly) {
+		# what do we call ourselves
+		my $clientname = "$0 [$$]";
+
+		# make our application_name in postgresql our clientname
+		$ENV{'PGAPPNAME'} = $clientname;
+
+		my $cfg = Config::Tiny->read("$FindBin::Bin/../etc/jobcenter.conf");
+		die 'Config Errror: ' . Config::Tiny->errstr() unless $cfg;
+		#print Dumper($cfg);
+
+		my $pg = Mojo::Pg->new(
+			'postgresql://'
+			. $cfg->{admin}->{user}
+			. ':' . $cfg->{admin}->{pass}
+			. '@' . ( $cfg->{pg}->{host} // '' )
+			. ( ($cfg->{pg}->{port}) ? ':' . $cfg->{pg}->{port} : '' )
+			. '/' . $cfg->{pg}->{db}
+		);
+
+		$db = $pg->db() or die 'db?';
+		$tx  = $db->begin;
+		# prevent multiple jcc's runnign concurrently
+		$db->query(q|SELECT pg_advisory_lock(25068)|);
+		# 25068 base 10 = jcc base 36
+		say "begin" if $debug;
+	}
+
+	compile1($_) for (@_);
+
+	if ($tx) {
+		if ($dry_run) {
+			say "rollback";
+			# force $tx to go out of scope..
+			$tx = undef;
+		} else {
+			say "commit";
+			$tx->commit;
+		}
+	}
+
+	say "the end is nigh!";
+	return 0;
+}
+
+sub compile1 {
 	my $wff = shift;
-	return usage() unless $wff;
-	
 	my $wfsrc = decode('UTF-8', slurp($wff));
 	
-	my $grammar = JobCenter::JCC::Grammar->new;
+	my $grammar = JobCenter::JCC::Grammar->new(
+		debug => $debug,
+	);
 
-	print Dumper($grammar->tree);
+	print Dumper($grammar->tree) if $debug;
 
 	my $receiver = JobCenter::JCC::Receiver->new;
 
@@ -72,34 +132,23 @@ sub main {
 	my $wfast = $parser->parse(Pegex::Input->new(stringref => \$wfsrc));
 	my $took = time() - $start;
 
-	print Dumper($wfast);
-	print Dumper($receiver->{labels});
-	printf("took %0.3f\n", $took);
-	return 0 if $parseonly;
+	if ($debug) {
+		print Dumper($wfast);
+		print Dumper($receiver->{labels});
+		printf("took %0.3f\n", $took);
+	}
 
-	# what do we call ourselves
-	my $clientname = "$0 [$$]";
-
-	# make our application_name in postgresql our clientname
-	$ENV{'PGAPPNAME'} = $clientname;
-
-	my $cfg = Config::Tiny->read("$FindBin::Bin/../etc/jobcenter.conf");
-	die 'Config Errror: ' . Config::Tiny->errstr() unless $cfg;
-	#print Dumper($cfg);
-
-	my $pg = Mojo::Pg->new(
-		'postgresql://'
-		. $cfg->{admin}->{user}
-		. ':' . $cfg->{admin}->{pass}
-		. '@' . ( $cfg->{pg}->{host} // '' )
-		. ( ($cfg->{pg}->{port}) ? ':' . $cfg->{pg}->{port} : '' )
-		. '/' . $cfg->{pg}->{db}
-	);
+	if ($parseonly) {
+		say "done parsing $wff";
+		return;
+	}
 
 	my $jcg = JobCenter::JCC::CodeGenerator->new(
-		db => $pg->db,
+		db => $db,
 		debug => $debug,
 		dry_run => $dry_run,
+		force_recompile => $force_recompile,
+		replace => $replace,
 	);
 
 	$jcg->generate(
@@ -109,26 +158,26 @@ sub main {
 		tags => $tags,
 	);
 
-	reference_version_check($pg, $wfast);
+	reference_version_check($db, $wfast);
 
-	say "the end is nigh!";
-	return 0;
+	say "done with $wff?";
 }
+
+
 
 # check the versions of references to newly compiled
 sub reference_version_check {
-	my ($pg, $wfast) = @_;
+	my ($db, $wfast) = @_;
 
 	# extract the workflow details
 	my ($wf) = values %$wfast;
 
-	my $jvc = JobCenter::JCC::VersionChecker->new(db => $pg->db);
+	my $jvc = JobCenter::JCC::VersionChecker->new(db => $db);
 
 	# find workflows referencing this out of date action / workflow
 	my $rows = $jvc->out_of_date(actions => [$wf->{workflow_name}]);
 
 	if (@$rows > 1) {
-
 		say "";
 		say "stale references found for \"$wf->{workflow_name}\":";
 		say generate_table(rows => $rows, header_row => 1);
@@ -136,15 +185,83 @@ sub reference_version_check {
 	}
 }
 
-sub usage {
-	print <<'EOT';
-jcc [options] <filename>
-	--config=<file>	specify config file
--d	--debug		enable debugging
--n	--dry-run       do not commit
--p	--parseonly	stop after parsing
-	--tags		':' seperated version tags
-EOT
-	return 1;
-}
+__END__
 
+=head1 NAME
+
+jcc - JobCenter Language Compiler
+
+=head1 SYNOPSIS
+
+jcc [options] <filename> [<filename> ..]
+
+	--config=<file>        specify config file
+  -d	--debug	               enable debugging
+  -n	--dry-run              do not commit
+	--force-recompile      recompile non-changed / non-stale
+	--no-commit            do not commit
+  -p	--parse-only           stop after parsing
+	--really               are you serious?
+	--replace              replace earlier action version
+	--tags                 ':' seperated version tags
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<config>
+
+Specify the location of the jobcenter configuration file.
+Defaults to "$FindBin::Bin/../etc/jobcenter.conf".
+
+=item B<debug>
+
+Enable debugging
+
+=item B<dry-run>
+
+The same as --no-commit
+
+=item B<force-recompile>
+
+Force recompilation even if:
+
+=over
+
+=item - the action-source did not change
+
+=item - the workflow-source did not change and the workflow is not stale
+
+=back
+
+(but you should really mean it).
+
+=item B<no-commit>
+
+Roll back transaction at the end.
+
+=item B<parse-only>
+
+Stop after generating the parse-tree.
+
+=item B<really>
+
+You really mean to do potentially dangerous things
+
+=item B<replace>
+
+Update existing actions, replacing the previous version instead of creating a new version.
+
+=item B<tags>
+
+Version tags
+
+=back
+
+=head1 DESCRIPTION
+
+The 'jcc' command tries to compile all the filenames passed in as arguments
+in a single transaction.  On any error the whole transaction gets rolled
+back.
+
+=cut
