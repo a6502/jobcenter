@@ -53,6 +53,11 @@ BEGIN
 		PERFORM do_unlock(v_locktype, v_lockvalue, v_contended, a_jobtask.job_id, v_parentjob_id, v_top_level_job_id);
 	END LOOP;
 
+	-- let any interested and waiting clients know
+	RAISE NOTICE 'NOTIFY job:%:finished', a_jobtask.job_id;
+	PERFORM pg_notify('job:finished', a_jobtask.job_id::TEXT);
+	PERFORM pg_notify('job:' || a_jobtask.job_id || ':finished', '42');
+
 	-- done cleaning up?
 	RETURN;
 END$function$

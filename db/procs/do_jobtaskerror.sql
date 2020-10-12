@@ -73,9 +73,6 @@ BEGIN
 
 	IF v_parentjob_id IS NULL THEN
 		-- throw error to the client
-		RAISE NOTICE 'job:%:finished', a_jobtask.job_id;
-		PERFORM pg_notify('job:finished', a_jobtask.job_id::TEXT);
-		PERFORM pg_notify('job:' || a_jobtask.job_id || ':finished', '42');
 		RETURN NULL;
 	END IF;
 

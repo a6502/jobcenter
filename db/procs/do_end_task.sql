@@ -104,10 +104,6 @@ BEGIN
 	PERFORM do_cleanup_on_finish(a_jobtask);
 
 	IF v_parentjob_id IS NULL THEN
-		-- and let any waiting clients know
-		RAISE NOTICE 'NOTIFY job:%:finished', a_jobtask.job_id;
-		PERFORM pg_notify('job:finished', a_jobtask.job_id::TEXT);
-		PERFORM pg_notify('job:' || a_jobtask.job_id || ':finished', '42');
 		RETURN null; -- no next task
 	END IF;
 
