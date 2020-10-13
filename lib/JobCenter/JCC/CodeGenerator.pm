@@ -119,10 +119,11 @@ sub generate_workflow {
 		print 'res: ', Dumper($res) if $debug;
 		if ($res and @$res) {
 			($wfid, $version, $oldsrcmd5) = @$res;
-			$oldsrcmd5 //= '<null>';
 			$version++;
 		}
 	}
+
+	$oldsrcmd5 //= '<null>';
 
 	my $newsrcmd5 = md5_hex($$wfsrc);
 	# convert to postgresql uuid format
@@ -271,9 +272,10 @@ sub generate_action {
 		print 'res: ', Dumper($res) if $debug;
 		if ($res and @$res) {
 			($wfid, $version, $oldsrcmd5) = @$res;
-			$oldsrcmd5 //= '<null>';
 		}
 	}
+
+	$oldsrcmd5 //= '<null>';
 
 	my $newsrcmd5 = md5_hex($$wfsrc);
 	# convert to postgresql uuid format
