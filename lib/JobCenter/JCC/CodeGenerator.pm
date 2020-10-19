@@ -1183,10 +1183,10 @@ sub make_func {
 		return "(0 + ($arg))";
 	} elsif ($name eq 'tojson') {
 		$arg = make_rhs($arg);
-		return "to_json($arg)";
+		return "\$JSON->encode($arg)";
 	} elsif ($name eq 'fromjson') {
 		$arg = make_rhs($arg);
-		return "from_json($arg)";
+		return "\$JSON->decode($arg)";
 	} elsif ($name eq 'array') {
 		return '[ ' . join(', ', (map { make_rhs([$_]) } @$arg)) . ' ]';
 	} elsif ($name eq 'object') {
