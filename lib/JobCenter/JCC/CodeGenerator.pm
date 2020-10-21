@@ -14,6 +14,9 @@ use List::Util qw( any );
 #use Scalar::Util qw(blessed);
 use Ref::Util qw(is_arrayref is_hashref);
 
+# jobcenter
+use JobCenter::JCL::Functions;
+
 has [qw(db debug dry_run fixup force_recompile labels locks oetid
 	replace tags wfid)];
 
@@ -1181,12 +1184,6 @@ sub make_func {
 	} elsif ($name eq 'tonumber') {
 		$arg = make_rhs($arg);
 		return "(0 + ($arg))";
-	} elsif ($name eq 'tojson') {
-		$arg = make_rhs($arg);
-		return "\$JSON->encode($arg)";
-	} elsif ($name eq 'fromjson') {
-		$arg = make_rhs($arg);
-		return "\$JSON->decode($arg)";
 	} elsif ($name eq 'array') {
 		return '[ ' . join(', ', (map { make_rhs([$_]) } @$arg)) . ' ]';
 	} elsif ($name eq 'object') {
@@ -1198,6 +1195,9 @@ sub make_func {
 			push @b, make_term($k) . ' => ' . make_term($v);
 		}			
 		return '{ ' . join(', ', @b) . ' }';
+	} elsif (UNIVERSAL::can('JobCenter::JCL::Functions', $name)) {
+		$arg = make_rhs($arg);
+		return "(\$JCL->$name($arg))";
 	}
 	die "unknown function $name";
 }

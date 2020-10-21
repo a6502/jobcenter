@@ -7,31 +7,13 @@ AS $function$
 
 use strict;
 use warnings;
+use feature 'state';
 
-# put this in the plperl.on_init instead
-#use lib '/home/wieger/src/jobcenter/lib';
-use JSON::MaybeXS qw(from_json to_json JSON);
-use JobCenter::Safe;
+use JobCenter::JCL::Safe;
 
-my $safe = new JobCenter::Safe;
+state $safe = new JobCenter::JCL::Safe();
 
-my ($code, $jargs, $jenv, $jvars) = @_;
-
-# use from_json/to_json here to prevent utf-8 double decode/encode problems
-our %a = %{from_json($jargs // '{}')};
-our %e = %{from_json($jenv // '{}')};
-our %v = %{from_json($jvars // '{}')};
-our %t = ();
-
-our $TRUE = JSON->true;
-our $FALSE = JSON->false;
-our $JSON = JSON::MaybeXS->new(utf8 => 0);
-
-$safe->share(qw(%a %e %v %t $TRUE $FALSE $JSON));
-
-$safe->reval($code, 1);
-
-die "$@" if $@;
+$safe->reval(@_);
 
 return to_json(\%v);
 

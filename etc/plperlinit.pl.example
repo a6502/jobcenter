@@ -5,14 +5,21 @@
 # you might need the local::lib of your jobcenter user
 #use lib '/home/jobcenter/perl5/lib/perl5';
 
-use Safe;
+# this might be redundant
+use strict;
+use warnings;
+use feature 'state';
+
+# check that we have a new enough JSON::MaybeXS because
 # older versions do not have the required from_json to_json
 use JSON::MaybeXS 1.003_000;
 
 # you do need this:
 use lib "<jobcenter>/lib";
 
-use JobCenter::Safe;
+# so that this can be found:
+use JobCenter::JCL::Safe;
+# this includes a lot of other things as well
 
 1;
 
