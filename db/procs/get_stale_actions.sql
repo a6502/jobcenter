@@ -1,21 +1,8 @@
 CREATE OR REPLACE FUNCTION jobcenter.get_stale_actions()
- RETURNS TABLE (
- 	top_level_ids integer[], 
- 	workflow_name text,
- 	workflow_id integer,
- 	workflow_version integer,
- 	name text,
- 	action_id integer, 
- 	version integer,
- 	latest_action_id integer,  
- 	latest_version integer,
- 	found integer[], 
- 	type action_type, 
- 	tag text 
- )
+ RETURNS TABLE(top_level_ids integer[], workflow_name text, workflow_id integer, workflow_version integer, name text, action_id integer, version integer, latest_action_id integer, latest_version integer, found integer[], type action_type, tag text)
  LANGUAGE plpgsql
  SECURITY DEFINER
- SET search_path TO jobcenter, pg_catalog, pg_temp
+ SET search_path TO 'jobcenter', 'pg_catalog', 'pg_temp'
 AS $function$DECLARE
 BEGIN
 	-- try looking at latest workflows and working down looking for stale references
