@@ -13,6 +13,8 @@ use JobCenter::JCL::Safe;
 
 state $safe = new JobCenter::JCL::Safe('%i');
 
+%i = ();
+
 $safe->reval(@_);
 
 return to_json(\%i);
