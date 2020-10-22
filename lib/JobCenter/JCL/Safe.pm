@@ -56,8 +56,6 @@ sub reval {
 	%v = %{from_json($jvars // '{}')};
 	%t = ();
 
-	print "reval --> $code <--\n";
-
 	my $ret = $self->{safe}->reval($code, 1); # 1 means 'strict'
 	die "$@" if $@;
 	return $ret;
