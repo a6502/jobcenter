@@ -40,6 +40,38 @@ sub md5_hex {
 	return Digest::MD5::md5_hex($_[1]);
 }
 
+sub list {
+	my $r = $_[1];
+	my $ref = ref $r;
+	if ($ref eq 'ARRAY') {
+		return @$r;
+	} elsif ($ref eq 'HASH') {
+		return %$r;
+	} elsif ($ref eq 'SCALAR') {
+		return $$r;
+	} else {
+		die "not a reference\n";
+	}
+}
+
+sub keys {
+	my $r = $_[1];
+	if (ref $r eq 'HASH') {
+		return [ keys %$r ];
+	} else {
+		die "not an object\n";
+	}
+}
+
+sub values {
+	my $r = $_[1];
+	if (ref $r eq 'HASH') {
+		return [ values %$r ];
+	} else {
+		die "not an object\n";
+	}
+}
+
 # aliases
 
 *to_json    = \&encode_json;
