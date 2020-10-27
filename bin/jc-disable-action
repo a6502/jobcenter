@@ -41,7 +41,7 @@ sub main {
 	my @actions;
 
 	for (@ARGV) {
-		/^(-h\|--help)$/           and do { print help(); return OK };
+		/^(-h|--help)$/            and do { print help(); return OK };
 		/^-/                       and do { die "unknown option: $_\n" };
 		/^\d+$/                    and do { push @action_ids, $_; next };
 		/^([^ :]+)(?::([^ :]+))?$/ and do { push @actions, {name => $1, tag => $2}; next };
