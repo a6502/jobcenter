@@ -5,7 +5,7 @@ See [doc](doc/index.md) for some more documentation.
 
 ## COPYRIGHT AND LICENSE
 
-This software is copyright (c) 2015-2018 by Wieger Opmeer.
+This software is copyright (c) 2015-2021 by Wieger Opmeer.
 
 This software is distributed under the Artistic License 2.0.
 
