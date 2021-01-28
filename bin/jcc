@@ -3,7 +3,7 @@
 no lib '.';
 
 # mojo
-use Mojo::Base -base;
+use Mojo::Base -strict;
 use Mojo::Util qw(decode);
 #use Mojo::IOLoop;
 use Mojo::Pg;

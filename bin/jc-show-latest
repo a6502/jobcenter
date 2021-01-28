@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 #
 no lib '.';
-use Mojo::Base -base;
+use Mojo::Base -strict;
 
 # mojo
 use Mojo::Pg;
