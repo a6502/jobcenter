@@ -57,7 +57,7 @@ sub main {
 	$pgh->{pg_placeholder_dollaronly} = 1;
 
 	my $action = $pgh->selectrow_hashref(q[
-		select *from actions where action_id=$1],
+		select * from actions where action_id=$1],
 		{},
 		$action_id
 	);
