@@ -4,7 +4,7 @@ CREATE OR REPLACE FUNCTION jobcenter.do_task_error(a_jobtask jobtask, a_outargs 
  SET search_path TO 'jobcenter', 'pg_catalog', 'pg_temp'
 AS $function$DECLARE
 	v_task_state jsonb;
-	v_config jsonb;
+	v_retry jsonb;
 	v_tries integer;
 	v_maxtries integer;
 	v_timeout timestamptz;
@@ -15,8 +15,8 @@ BEGIN
 		AND a_outargs #>> '{error,class}' = 'soft' THEN
 
 		SELECT
-			task_state, config
-			INTO v_task_state, v_config
+			task_state, config -> 'retry'
+			INTO v_task_state, v_retry
 		FROM
 			jobs
 			JOIN tasks USING (workflow_id, task_id)
@@ -26,18 +26,16 @@ BEGIN
 			AND task_id = a_jobtask.task_id
 			AND workflow_id = a_jobtask.workflow_id;
 
-		v_tries = COALESCE((v_task_state->>'tries')::integer,1);
-		v_maxtries = COALESCE((v_config#>>'{retry,tries}')::integer,0);
-		-- if there is no retry policy tries will be > maxtries
-
-		IF v_config ? 'retry' THEN
+		IF v_retry IS NOT NULL THEN
+			v_tries = COALESCE((v_task_state->>'tries')::integer,1);
+			v_maxtries = COALESCE((v_retry->>'tries')::integer,0);
 
 			RAISE LOG 'do_task_error tries % max_tries %', v_tries, v_maxtries;
 
 			IF v_maxtries < 0 OR v_tries < v_maxtries THEN
 				-- interval exists?
 				BEGIN
-					v_timeout = now() + (v_config#>>'{retry,interval}')::interval;
+					v_timeout = now() + ((v_retry->>'interval')::interval * sqrt(v_tries));
 
 					RAISE LOG 'do_task_error timeout %', v_timeout;
 
