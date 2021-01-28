@@ -1,0 +1,110 @@
+#!/usr/bin/env perl
+#
+no lib '.';
+
+# mojolicious
+use Mojo::Base -strict;
+use Mojo::JSON qw(decode_json encode_json false true);
+
+# stdperl
+#use Data::Dumper;
+use FindBin;
+
+# cpan
+use Config::Tiny;
+use DBD::Pg;
+
+# return help string
+sub help {
+	print <<"EOT";
+Usage: $FindBin::Script [Options] <job_id>
+
+Retry a tassk immediately and reset backoff 
+
+Options:
+
+    -h, --help      show this help message
+EOT
+	return 0;
+}
+
+exit main(@ARGV);
+
+sub main {
+	my $job_id = shift;
+	
+	return help() unless $job_id and $job_id =~ /^\d+$/;
+
+	my $cfgpath = "$FindBin::Bin/../etc/jobcenter.conf";
+
+	my $cfg = Config::Tiny->read($cfgpath) or
+		die 'failed to read config ' . $cfgpath . ': ' . Config::Tiny->errstr;
+
+	my $connstr = "dbi:Pg:" . join ';', map {
+		$cfg->{pg}{$_->[1]}
+		? "$_->[0]=$cfg->{pg}{$_->[1]}"
+		: ()
+	} [ dbname => 'db' ], [ host => 'host' ], [ port => 'port' ];
+
+	# make our clientname the application_name visible in postgresql
+	$ENV{'PGAPPNAME'} = "$0 [$$]";
+
+	my $pgh = DBI->connect(
+		$connstr,
+		@{$cfg->{admin}||{}}{qw/user pass/},
+		{
+			AutoCommit => 0,
+			RaiseError => 1,
+		}
+	) or die "cannot connect to db: $DBI::errstr";
+
+	$pgh->{pg_placeholder_dollaronly} = 1;
+
+	local $@;
+	my $res = eval { retrytask($pgh, $job_id) } // 1;
+
+	if ($@) {
+		my $err = $@;
+		print STDERR $err;
+		$pgh->rollback();
+	} else {
+		$pgh->commit();
+	}
+
+	$pgh->disconnect();
+	return $res;
+}
+
+sub retrytask {
+	my ($pgh, $job_id) = @_;
+
+	my $job = $pgh->selectrow_hashref(<<'EOT', {}, $job_id);
+select * from jobs where job_id = $1
+EOT
+
+	die "job $job_id not found" unless $job;
+
+	#print 'job: ', Dumper($job);
+
+	die "job $job_id is not in state retrywait ($job->{state})"
+		unless $job->{state} eq 'retrywait';
+
+	my $rows = $pgh->do(<<'EOT', {}, $job_id);
+update
+	jobs
+set
+	timeout = now(),
+	task_state = jsonb_set(COALESCE(task_state,'{}'::jsonb), '{tries}', to_jsonb(0))
+where
+	job_id = $1
+	and state = 'retrywait'
+EOT
+
+	die "updated $rows rows!?" unless $rows == 1;
+	
+	say 'retried job $job_id';
+
+	return 0;
+}
+
+
