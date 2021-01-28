@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 #
 no lib '.';
-use Mojo::Base -base;
+use Mojo::Base -strict;
 
 # postgres
 use DBD::Pg;
@@ -64,8 +64,10 @@ sub disable_actions {
 
 	my @action_ids = @{$args{action_ids}||[]};
 
-	my $cfg = Config::Tiny->read("$ENV{HOME}/jobcenter/etc/jobcenter.conf") # "$FindBin::Bin/../etc/jobcenter.conf")
-		or die 'Config Errror: ' . Config::Tiny->errstr();
+	my $cfgpath = "$FindBin::Bin/../etc/jobcenter.conf";
+
+	my $cfg = Config::Tiny->read($cfgpath) or
+		die 'failed to read config ' . $cfgpath . ': ' . Config::Tiny->errstr;
 
 	my $connstr = "dbi:Pg:" . join ';', map {
 		$cfg->{pg}{$_->[1]}
