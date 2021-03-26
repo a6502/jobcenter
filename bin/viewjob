@@ -78,7 +78,12 @@ sub main {
 	my $job = $pgh->selectrow_hashref(qq[
 		select
 			workflow_id, parentjob_id, state, arguments, environment, job_created, job_finished, out_args,
-			age(job_finished, job_created) as took, task_id, out_args, variables, task_state,
+			age(job_finished, job_created) as took, task_id, out_args, variables, task_state, 
+			${\(
+				$opts{time}
+				? "timeout"
+				: "extract(epoch from age(timeout, now())) as timeout"
+			)},
 			${\(
 				$opts{time} 
 				? "task_entered as started"
@@ -89,7 +94,7 @@ sub main {
 		union all select
 			workflow_id, parentjob_id, state, arguments, environment, job_created, job_finished, out_args,
 			age(job_finished, job_created) as took, null as task_id, out_args, null as variables, null as task_state, 
-			null as started, null as delay
+			null as timeout, null as started, null as delay
 		from jobs_archive where job_id=\$2],
 		{},
 		$job_id, $job_id 
@@ -151,7 +156,7 @@ sub main {
 
 	if (not $job->{job_finished} and $job->{task_id}) {
 		my ($action_id, $type, $name) = get_action($job->{task_id});
-		my @times = map { format_delay($job->{$_}) } qw/started delay/;
+		my @times = map { format_delay($job->{$_}) } qw/started delay timeout/;
 		say '---------------------------------------------------------  <--- current';
 		if ($type eq 'system') {
 			say "step $steps $name";
@@ -159,6 +164,7 @@ sub main {
 			say "step $steps call $type $name ($action_id)";
 		}
 		say "        started    ", $times[0] // '<null>', defined $times[1] ? ", delay $times[1]" : '';
+		say "        retry      $times[2]" if defined $times[2] and $job->{state} eq 'retrywait';
 		say "        task_state $job->{task_state}" if $job->{task_state};
 		say "        inargs     $job->{out_args}" if $job->{out_args};
 		say "        curvars    $job->{variables}" if $job->{variables};
