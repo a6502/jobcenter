@@ -102,7 +102,7 @@ EOT
 
 	die "updated $rows rows!?" unless $rows == 1;
 	
-	say 'retried job $job_id';
+	say "retried job $job_id";
 
 	return 0;
 }
