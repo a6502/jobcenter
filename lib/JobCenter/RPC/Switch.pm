@@ -554,15 +554,14 @@ sub _create_job {
 	my $rpcswitch = $request->{rpcswitch}; # should be there
 	my $impersonate = $rpcswitch->{who};
 	my $vci = $rpcswitch->{vci};
-	my $env;
+	my $env = { rpcswitch => JSON->true };
 	if ($rpcswitch->{reqauth}) {
-		$env = decode_utf8(encode_json({
-			reqauth => $rpcswitch->{reqauth},
-			rpcswitch => JSON->true,
-		}));
-	} else {
-		$env = '{"rpcswitch":true}';
+		$env->{reqauth} = $rpcswitch->{reqauth};
 	}
+	if ($rpcswitch->{acls}) {
+		$env->{acls} = $rpcswitch->{acls};
+	}
+	$env = decode_utf8(encode_json($env));
 
 	my $inargs = decode_utf8(encode_json($params));
 
