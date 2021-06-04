@@ -12,6 +12,7 @@ BEGIN {
 # mojo
 use Mojo::Base -base;
 use Mojo::IOLoop;
+use Mojo::IOLoop::Delay;
 use Mojo::Log;
 
 # standard
@@ -124,6 +125,7 @@ sub new {
 	my $rpc = $self->{rpc} = JSON::RPC2::TwoWay->new(debug => $debug) or die 'no rpc?';
 
 	$rpc->register('announce', sub { $self->rpc_announce(@_) }, non_blocking => 1, state => 'auth');
+	$rpc->register('check_if_lock_exists', sub { $self->rpc_check_if_lock_exists(@_) }, non_blocking => 1, state => 'auth');
 	$rpc->register('create_job', sub { $self->rpc_create_job(@_) }, non_blocking => 1, state => 'auth');
 	$rpc->register('create_slotgroup', sub { $self->rpc_create_slotgroup(@_) }, state => 'auth');
 	$rpc->register('find_jobs', sub { $self->rpc_find_jobs(@_) }, non_blocking => 1, state => 'auth');
@@ -450,6 +452,35 @@ sub _poll_done {
 		$job->delete;
 	})->catch(sub {
 		 $self->log->error("_poll_done caught $_[0]");
+	});
+}
+
+
+sub rpc_check_if_lock_exists {
+	my ($self, $con, $i, $rpccb) = @_;
+	my $locktype = $i->{locktype} or die 'no locktype?';
+	my $lockvalue = $i->{lockvalue} or die 'no lockvalue?';
+	Mojo::IOLoop->delay(sub {
+		my ($d) = @_;
+		$self->jcpg->queue_query($d->begin(0));
+	},
+	sub {
+		my ($d, $db) = @_;
+		$db->dollar_only->query(
+			q[select check_if_lock_exists($1, $2)],
+			$locktype,
+			$lockvalue,
+			$d->begin
+		);
+	},
+	sub {
+		my ($d, $err, $res) = @_;
+		die $err if $err;
+		my ($found) = @{$res->array};
+		$rpccb->(defined $found ? ($found ? JSON->true : JSON->false) : undef);
+	})->catch(sub {
+		my ($err) = @_;
+		$self->log->error("rpc_check_if_lock_exists caught $err");
 	});
 }
 
