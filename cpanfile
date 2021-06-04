@@ -17,6 +17,7 @@ requires 'JSON::RPC2::TwoWay';
 requires 'List::Util', '1.33';
 
 requires 'Mojolicious', '7.55';
+requires 'Mojo::IOLoop::Delay';
 requires 'Mojo::Pg', '2.30';
 
 requires 'MojoX::NetstringStream', '0.05';
