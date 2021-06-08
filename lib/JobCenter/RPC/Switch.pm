@@ -13,6 +13,7 @@ BEGIN {
 # Mojolicious
 use Mojo::Base -base;
 use Mojo::IOLoop;
+use Mojo::IOLoop::Delay;
 use Mojo::Log;
 
 # standard perl
