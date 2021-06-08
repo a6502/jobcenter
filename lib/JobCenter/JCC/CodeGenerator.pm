@@ -415,9 +415,6 @@ sub generate_action {
 sub _check_basename {
 	my ($wff, $wfname, $wftype) = @_;
 
-	say "wff $wff, wfname $wfname, wftype $wftype";
-
-	#my ($basename, $dirs, $suffix) = fileparse($wff, (($wftype eq 'workflow') ? '.wf' : '.ac'));
 	my $basename = fileparse($wff);
 
 	return if $basename =~ /^\Q$wfname\E/;
