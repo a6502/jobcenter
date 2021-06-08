@@ -152,6 +152,7 @@ sub compile1 {
 	);
 
 	$jcg->generate(
+		wff => $wff,
 		wfsrc => \$wfsrc,
 		wfast => $wfast,
 		labels => $receiver->labels,

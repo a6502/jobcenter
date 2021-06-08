@@ -10,6 +10,7 @@ use Carp qw(croak);
 use Data::Dumper;
 use DDP { output => 'stdout' };
 use Digest::MD5 qw(md5_hex);
+use File::Basename;
 use List::Util qw( any );
 #use Scalar::Util qw(blessed);
 use Ref::Util qw(is_arrayref is_hashref);
@@ -91,10 +92,14 @@ sub generate {
 sub generate_workflow {
 	my ($self, %args) = @_;
 
+	my $wff = $args{wff};
 	my $wfsrc = $args{wfsrc};
 	my $wf = $args{wfast}->{workflow};
 	my $labels = $args{labels} // [];	
-	
+	my $wfname = $wf->{workflow_name};
+
+	_check_basename($wff, $wfname, 'workflow');
+
 	# reset codegenerator
 	$self->{wfid} = undef;       # workflow_id
 	$self->{tags} = $args{tags}; # version tags
@@ -117,7 +122,7 @@ sub generate_workflow {
 			q|select action_id, version, srcmd5 from actions
 				where name = $1 and type = 'workflow'
 				order by version desc limit 1|,
-			$wf->{workflow_name}
+			$wfname
 		)->array;
 		print 'res: ', Dumper($res) if $debug;
 		if ($res and @$res) {
@@ -137,9 +142,9 @@ sub generate_workflow {
 	if (($oldsrcmd5 eq $newsrcmd5) and not ($self->{dry_run} or $self->{force_recompile})) {
 		my $res = $self->db->query('select * from get_stale_actions()')->hashes;
 		#print 'stale check: ', Dumper($res) if $debug;
-		my @res = grep {$_->{workflow_id} = $wfid and $_->{workflow_name} eq $wf->{workflow_name}} @$res;
+		my @res = grep {$_->{workflow_id} = $wfid and $_->{workflow_name} eq $wfname} @$res;
 		#print 'stale check2: ', Dumper(\@res) if $debug;
-		die "workflow $wf->{workflow_name} hasn't changed and isn't stale?\n" unless @res;
+		die "workflow $wfname hasn't changed and isn't stale?\n" unless @res;
 	}
 
 	my $role;
@@ -255,11 +260,15 @@ sub generate_workflow {
 sub generate_action {
 	my ($self, %args) = @_;
 
+	my $wff = $args{wff} or die "uuh?";
 	my $wfsrc = $args{wfsrc};
 	my $wf = $args{wfast}->{action};
 	my $what = $wf->{action_type};
 	my $tags = $args{tags};
-	
+	my $wfname = $wf->{workflow_name};
+
+	_check_basename($wff, $wfname, 'action');
+
 	my $wfid; # for replace
 	my $version = 1;
 	my $oldsrcmd5;
@@ -270,7 +279,7 @@ sub generate_action {
 			q|select action_id, version, srcmd5 from actions
 				where name = $1 and type = $2
 				order by version desc limit 1|,
-			$wf->{workflow_name}, $what
+			$wfname, $what
 		)->array;
 		print 'res: ', Dumper($res) if $debug;
 		if ($res and @$res) {
@@ -287,7 +296,7 @@ sub generate_action {
 	say "(existing) version: $version oldsrcmd5: $oldsrcmd5 newsrcmd5: $newsrcmd5";
 
 	if (($oldsrcmd5 eq $newsrcmd5) and not ($self->{dry_run} or $self->{force_recompile})) {
-		die "action $wf->{workflow_name} hasn't changed?\n";
+		die "action $wfname hasn't changed?\n";
 	}
 
 	my $role;
@@ -401,6 +410,22 @@ sub generate_action {
 		}
 
 	}
+}
+
+sub _check_basename {
+	my ($wff, $wfname, $wftype) = @_;
+
+	say "wff $wff, wfname $wfname, wftype $wftype";
+
+	#my ($basename, $dirs, $suffix) = fileparse($wff, (($wftype eq 'workflow') ? '.wf' : '.ac'));
+	my $basename = fileparse($wff);
+
+	return if $basename =~ /^\Q$wfname\E/;
+
+	die "workflow filename $wff does not match workflow name $wfname"
+		if $wftype eq 'workflow';
+
+	die "action filename $wff does not match action name $wfname";
 }
 
 
