@@ -63,8 +63,8 @@ __END
 sub main {
 
 	GetOptionsFromArray(\@_, \my %opts, 
-		'help', 
-		'head',
+		'help|h', 
+		'head|d',
 		'job-id',
 		'all',
 		'state=s',
