@@ -16,27 +16,9 @@ use Getopt::Long qw(GetOptionsFromArray);
 use Time::Seconds;
 
 use constant DEFAULT_LIMIT => 1000;
-use constant RIGHT_ALIGN => {
-	map { $_ => 1 } qw/
-		duration
-	/
-};
-use constant JOB_STATES => {
-	map { $_ => 1 } qw/
-		ready
-		working
-		sleeping
-		done
-		plotting
-		zombie
-		finished
-		error
-		eventwait
-		childwait
-		retrywait
-		lockwait
-	/
-};
+use constant RIGHT_ALIGN => { duration => 1 };
+
+sub job_states;
 
 my $pgh;
 
@@ -79,45 +61,10 @@ sub main {
 		return 0;
 	}
 
-	die "bad limit: $opts{limit}\n" if $opts{limit} <= 0;
-
-	$opts{state} //= '';
-	$opts{state} =~ s/(?:^\s+\|\s+$)//g;
-
-	my %states;
-
-	for (split /\s*,\s*/, $opts{state}) {
-
-		next if $_ eq '';
-
-		my $state = lc($_);
-
-		die "unknown state: $_\n" unless JOB_STATES->{$state};
-
-		$states{$state}++;
-	}
-
-	$opts{exclude} //= '';
-	$opts{exclude} =~ s/(?:^\s+\|\s+$)//g;
-
-	my %exclude;
-
-	for (split /\s*,\s*/, $opts{exclude}) {
-
-		next if $_ eq '';
-
-		my $state = lc($_);
-
-		die "unknown state: $_\n" unless JOB_STATES->{$state};
-
-		$exclude{$state}++;
-	}
-
-	$opts{state}   = \%states;
-	$opts{exclude} = \%exclude;
+	die "expects limit as positive number: $opts{limit}\n" if $opts{limit} <= 0;
 
 	for (@_) {
-		die "unknown job_id: $_\n" unless /^\d+$/;
+		die "expects job_id as number: $_\n" unless /^\d+$/;
 	}
 
 	my $cfgpath = "$FindBin::Bin/../etc/jobcenter.conf";
@@ -142,6 +89,41 @@ sub main {
 		}
 	) or die "cannot connect to db: $DBI::errstr";
 
+	$opts{state} //= '';
+	$opts{state} =~ s/(?:^\s+\|\s+$)//g;
+
+	my %states;
+
+	for (split /\s*,\s*/, $opts{state}) {
+
+		next if $_ eq '';
+
+		my $state = lc($_);
+
+		die "unknown state: $_\n" unless job_states->{$state};
+
+		$states{$state}++;
+	}
+
+	$opts{exclude} //= '';
+	$opts{exclude} =~ s/(?:^\s+\|\s+$)//g;
+
+	my %exclude;
+
+	for (split /\s*,\s*/, $opts{exclude}) {
+
+		next if $_ eq '';
+
+		my $state = lc($_);
+
+		die "unknown state: $_\n" unless job_states->{$state};
+
+		$exclude{$state}++;
+	}
+
+	$opts{state}   = \%states;
+	$opts{exclude} = \%exclude;
+
 	my $job_tree = job_tree(\%opts, \@_);
 
 	if ($opts{head}) { 
@@ -159,6 +141,46 @@ sub main {
 	return 0;
 }
 
+my $job_states;
+sub job_states () {
+
+	return $job_states if $job_states;
+
+	my $sql = q[
+		SELECT 
+			e.enumlabel enum_value
+		FROM 
+			pg_type t
+		JOIN 
+			pg_enum e 
+		ON 
+			t.oid = e.enumtypid
+		JOIN 
+			pg_catalog.pg_namespace ns
+		ON 
+			ns.oid = t.typnamespace 
+		WHERE 
+			ns.nspname = 'jobcenter' AND 
+			t.typname = 'job_state'
+	];
+
+	my $sth = $pgh->prepare_cached($sql) or 
+		die "failed to prepare job_states query: ".$pgh->errstr;
+
+	$sth->execute() or 
+		die "failed to get job_states: ".$pgh->errstr;
+
+	$sth->bind_columns(\my $val);
+
+	$job_states = {};
+
+	while ($sth->fetch) {
+		$job_states->{$val} = 1;
+	}
+
+	return $job_states;
+}
+
 sub job_tree {
 	my ($opts, $job_ids) = @_;
 
@@ -166,70 +188,168 @@ sub job_tree {
 	my $state_qs   = join ',', ('?')x(keys %{$opts->{state}});
 	my $exclude_qs = join ',', ('?')x(keys %{$opts->{exclude}});
 
-	my $sql = q[
-		WITH recursive job_parents AS (
+	my $sql = qq[
+		WITH recursive 
+		${\($job_qs ? qq[
+		${\($opts->{all} ? qq[
+		find_archive_parents AS (
 			SELECT 
-				j.job_id,
-				j.workflow_id,
-				j.parentjob_id,
-				array[j.job_id] found,
-				j.job_id AS source,
-				j.job_finished,
-				j.state,
-				EXTRACT(EPOCH FROM age(COALESCE(j.job_finished, now()), j.job_created)) duration
+				job_id,
+				parentjob_id,
+				'jobs_archive' source,
+				array[job_id] found
+			FROM 
+				jobs_archive
+			WHERE
+				job_id IN ($job_qs)
+			UNION ALL
+			SELECT 
+				ja.job_id,
+				ja.parentjob_id,
+				'jobs_archive' source,
+				fap.found || ja.job_id found
 			FROM
-				jobs j
+				jobs_archive ja
+			JOIN
+				find_archive_parents fap
+			ON 
+				ja.job_id = fap.parentjob_id AND
+				ja.job_id <> ALL (fap.found) -- loop guard
+		), 
+		] : qq[])}
+		find_parents AS (
+			SELECT 
+				job_id,
+				parentjob_id,
+				'jobs' source,
+				array[job_id] found
+			FROM 
+				jobs
+			WHERE
+				job_id IN ($job_qs)
+			${\($opts->{all} ? qq[
 			UNION ALL
 			SELECT
+				*
+			FROM 
+				find_archive_parents
+			] : qq[])}
+			UNION ALL
+			SELECT 
 				j.job_id,
-				j.workflow_id,
 				j.parentjob_id,
-				jp.found || j.job_id found,
-				jp.source,
-				j.job_finished,
-				j.state,
-				EXTRACT(EPOCH FROM age(COALESCE(j.job_finished, now()), j.job_created)) duration
-			FROM
+				'jobs' source,
+				fp.found || j.job_id found
+			FROM 
 				jobs j
 			JOIN
-				job_parents jp
+				find_parents fp
 			ON
-				j.job_id = jp.parentjob_id AND
-				j.job_id <> ALL (jp.found) -- loop guard
-		), job_tree AS (
-			SELECT 
-				jp.job_id,
-				jp.workflow_id,
-				jp.parentjob_id,
-				array[jp.job_id] found,
-				jp.source AS source,
-				jp.job_finished,
-				jp.state,
-				jp.duration
+				j.job_id = fp.parentjob_id AND
+				j.job_id <> ALL (fp.found) -- loop guard
+		),
+		] : qq[])}
+		heads AS (
+			SELECT
+				job_id,
+				${\($job_qs ? qq[source] : qq['jobs'::text source])}
 			FROM 
-				job_parents jp
+				${\($job_qs ? qq[find_parents] : qq[jobs])}
+			WHERE 
+				parentjob_id IS NULL
+		), tree AS (
+			SELECT
+				h.job_id,
+				null::bigint parentjob_id,
+				array[h.job_id] found,
+				h.job_id head
+			FROM
+				heads h
+			WHERE
+				h.source = 'jobs'
 			UNION ALL
 			SELECT 
 				j.job_id, 
+				j.parentjob_id,
+				t.found || j.job_id found,
+				t.head
+			FROM 
+				jobs j 
+			JOIN 
+				tree t
+			ON
+				j.parentjob_id = t.job_id AND
+				j.job_id <> ALL (t.found) -- loop guard
+		), big_tree AS (
+			${\($opts->{all} ? qq[
+			SELECT
+				h.job_id,
+				null::bigint parentjob_id,
+				array[h.job_id] found,
+				h.job_id head
+			FROM
+				heads h
+			WHERE
+				h.source = 'jobs_archive'
+			UNION ALL
+			] : qq[])}
+			SELECT
+				*
+			FROM
+				tree
+			${\($opts->{all} ? qq[
+			UNION ALL
+			SELECT 
+				ja.job_id, 
+				ja.parentjob_id,
+				bt.found || ja.job_id found,
+				bt.head
+			FROM 
+				jobs_archive ja 
+			JOIN 
+				big_tree bt
+			ON
+				ja.parentjob_id = bt.job_id AND
+				ja.job_id <> ALL (bt.found) -- loop guard
+			] : qq[])}
+		), job_tree AS (
+			SELECT 
+				bt.job_id, 
+				bt.head,
 				j.workflow_id, 
 				j.parentjob_id,
-				jt.found || j.job_id found,
-				jt.source,
+				bt.found,
 				j.job_finished,
 				j.state,
 				EXTRACT(EPOCH FROM age(COALESCE(j.job_finished, now()), j.job_created)) duration
 			FROM 
-				jobs j 
-			JOIN 
-				job_tree jt 
+				big_tree bt
+			JOIN
+				jobs j
 			ON
-				j.parentjob_id = jt.job_id AND
-				j.job_id <> ALL (jt.found) -- loop guard
+				bt.job_id = j.job_id
+			${\($opts->{all} ? qq[
+			UNION ALL
+			SELECT 
+				bt.job_id, 
+				bt.head,
+				ja.workflow_id, 
+				ja.parentjob_id,
+				bt.found,
+				ja.job_finished,
+				ja.state,
+				EXTRACT(EPOCH FROM age(COALESCE(ja.job_finished, now()), ja.job_created)) duration
+			FROM 
+				big_tree bt
+			JOIN
+				jobs_archive ja
+			ON
+				bt.job_id = ja.job_id
+			] : qq[])}
 		)
-	] . (!$opts->{all} ? qq[
 		SELECT 
-			jt.job_id,
-			jt.workflow_id,
+			jt.job_id, 
+			jt.workflow_id, 
 			jt.parentjob_id,
 			jt.job_finished,
 			jt.state,
@@ -242,111 +362,26 @@ sub job_tree {
 		ON 
 			jt.workflow_id = a.action_id
 		WHERE 
-			${\($exclude_qs ? qq[ jt.state NOT IN ($exclude_qs) AND ] : qq[])}
-			${\($state_qs   ? qq[ jt.state IN ($state_qs) AND ]       : qq[])}
-			${\($job_qs     ? qq[ jt.source IN ($job_qs) AND ]        : qq[])}
-			jt.job_finished IS NULL
-		GROUP BY
-			jt.job_id,
-			jt.workflow_id,
-			jt.parentjob_id,
-			jt.job_finished,
-			jt.state,
-			jt.duration,
-			a.name
-		ORDER BY 
-			jt.job_id ASC
-		LIMIT 
-			$opts->{limit}
-	] : qq[ 
-		, job_all_parents AS (
-			SELECT 
-				*
-			FROM 
-				job_tree
-			UNION ALL
-			SELECT 
-				ja.job_id, 
-				ja.workflow_id, 
-				ja.parentjob_id,
-				jap.found || ja.job_id found,
-				jap.source,
-				ja.job_finished,
-				ja.state,
-				EXTRACT(EPOCH FROM age(COALESCE(ja.job_finished, now()), ja.job_created)) duration
-			FROM 
-				jobs_archive ja 
-			JOIN 
-				job_all_parents jap 
-			ON 
-				ja.job_id = jap.parentjob_id AND
-				ja.job_id <> ALL (jap.found) -- loop guard
-		), job_all_tree AS (
-			SELECT 
-				jap.job_id,
-				jap.workflow_id,
-				jap.parentjob_id,
-				array[jap.job_id] found,
-				jap.source AS source,
-				jap.job_finished,
-				jap.state,
-				jap.duration
-			FROM 
-				job_all_parents jap
-			UNION ALL
-			SELECT 
-				ja.job_id, 
-				ja.workflow_id, 
-				ja.parentjob_id,
-				jat.found || ja.job_id found,
-				jat.source,
-				ja.job_finished,
-				ja.state,
-				EXTRACT(EPOCH FROM age(COALESCE(ja.job_finished, now()), ja.job_created)) duration
-			FROM 
-				jobs_archive ja 
-			JOIN 
-				job_all_tree jat 
-			ON 
-				ja.parentjob_id = jat.job_id AND
-				ja.job_id <> ALL (jat.found) -- loop guard
-		)
-		SELECT 
-			jat.job_id,
-			jat.workflow_id,
-			jat.parentjob_id,
-			jat.job_finished,
-			jat.state,
-			jat.duration,
-			a.name
-		FROM 
-			job_all_tree jat
-		LEFT JOIN
-			actions a
-		ON 
-			jat.workflow_id = a.action_id
-		WHERE 
-			${\($exclude_qs ? qq[ jat.state NOT IN ($exclude_qs) AND ] : qq[])}
-			${\($state_qs   ? qq[ jat.state IN ($state_qs) AND ]       : qq[])}
-			${\($job_qs     ? qq[ jat.source IN ($job_qs) AND ]        : qq[])}
+			${\($opts->{head} ? qq[ jt.head = jt.job_id AND ]           : qq[])}
+			${\(!$opts->{all} ? qq[ jt.job_finished IS NULL AND ]       : qq[])}
+			${\($exclude_qs   ? qq[ jt.state NOT IN ($exclude_qs) AND ] : qq[])}
+			${\($state_qs     ? qq[ jt.state IN ($state_qs) AND ]       : qq[])}
 			TRUE
-		GROUP BY
-			jat.job_id,
-			jat.workflow_id,
-			jat.parentjob_id,
-			jat.job_finished,
-			jat.state,
-			jat.duration,
-			a.name
 		ORDER BY 
-			jat.job_id ASC
+			jt.head ASC, 
+			jt.job_id ASC 
 		LIMIT 
 			$opts->{limit}
-	]);
+	];
 
-	my $sth = $pgh->prepare_cached($sql);
+	my $sth = $pgh->prepare_cached($sql) or 
+		die "failed to prepare job_tree query: ".$pgh->errstr;
 
-	my $r = $sth->execute(keys %{$opts->{exclude}}, keys %{$opts->{state}}, @$job_ids);
+	$sth->execute(
+		(@$job_ids)x($opts->{all} ? 2 : 1),
+		keys %{$opts->{exclude}}, 
+		keys %{$opts->{state}}, 
+	) or die "failed to get job_tree: ".$pgh->errstr;
 
 	my @rows;
 	while (my $row = $sth->fetchrow_hashref) {
@@ -363,7 +398,6 @@ sub job_tree {
 			/
 		};
 	}
-
 
 	return \@rows;
 }
