@@ -189,18 +189,66 @@ sub job_tree {
 	my $exclude_qs = join ',', ('?')x(keys %{$opts->{exclude}});
 
 	my $sql = qq[
-		WITH recursive heads AS (
-			SELECT
-				job_id
-			FROM 
-				jobs
-			WHERE 
-				parentjob_id IS NULL
-		), heads_archive AS (
-			SELECT
-				job_id
+		WITH recursive 
+		${\($job_qs ? qq[
+		${\($opts->{all} ? qq[
+		find_archive_parents AS (
+			SELECT 
+				job_id,
+				parentjob_id,
+				'jobs_archive' source
 			FROM 
 				jobs_archive
+			WHERE
+				job_id IN ($job_qs)
+			UNION ALL
+			SELECT 
+				ja.job_id,
+				ja.parentjob_id,
+				'jobs_archive' source
+			FROM
+				jobs_archive ja
+			JOIN
+				find_archive_parents fap
+			ON 
+				ja.job_id = fap.parentjob_id
+		), 
+		] : qq[])}
+		find_parents AS (
+			SELECT 
+				job_id,
+				parentjob_id,
+				'jobs' source
+			FROM 
+				jobs
+			WHERE
+				job_id IN ($job_qs)
+			${\($opts->{all} ? qq[
+			UNION ALL
+			SELECT
+				*
+			FROM 
+				find_archive_parents
+			] : qq[])}
+			UNION ALL
+			SELECT 
+				j.job_id,
+				j.parentjob_id,
+				'jobs' source
+			FROM 
+				jobs j
+			JOIN
+				find_parents fp
+			ON
+				j.job_id = fp.parentjob_id
+		),
+		] : qq[])}
+		heads AS (
+			SELECT
+				job_id,
+				${\($job_qs ? qq[source] : qq['jobs'::text source])}
+			FROM 
+				${\($job_qs ? qq[find_parents] : qq[jobs])}
 			WHERE 
 				parentjob_id IS NULL
 		), tree AS (
@@ -211,6 +259,8 @@ sub job_tree {
 				h.job_id head
 			FROM
 				heads h
+			WHERE
+				h.source = 'jobs'
 			UNION ALL
 			SELECT 
 				j.job_id, 
@@ -232,7 +282,9 @@ sub job_tree {
 				array[h.job_id] found,
 				h.job_id head
 			FROM
-				heads_archive h
+				heads h
+			WHERE
+				h.source = 'jobs_archive'
 			UNION ALL
 			] : qq[])}
 			SELECT
@@ -308,14 +360,6 @@ sub job_tree {
 			${\(!$opts->{all} ? qq[ jt.job_finished IS NULL AND ]       : qq[])}
 			${\($exclude_qs   ? qq[ jt.state NOT IN ($exclude_qs) AND ] : qq[])}
 			${\($state_qs     ? qq[ jt.state IN ($state_qs) AND ]       : qq[])}
-			${\($job_qs       ? qq[ jt.head IN (
-				SELECT 
-					head
-				FROM
-					big_tree
-				WHERE
-					found @> array[$job_qs]::bigint[]
-			) AND ] : qq[])}
 			TRUE
 		ORDER BY 
 			jt.head ASC, 
@@ -328,9 +372,9 @@ sub job_tree {
 		die "failed to prepare job_tree query: ".$pgh->errstr;
 
 	$sth->execute(
+		(@$job_ids)x($opts->{all} ? 2 : 1),
 		keys %{$opts->{exclude}}, 
 		keys %{$opts->{state}}, 
-		@$job_ids,
 	) or die "failed to get job_tree: ".$pgh->errstr;
 
 	my @rows;
