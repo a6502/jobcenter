@@ -170,7 +170,7 @@ sub job_states () {
 	$sth->execute() or 
 		die "failed to get job_states: ".$pgh->errstr;
 
-	$sth->bin_columns(\my $val);
+	$sth->bind_columns(\my $val);
 
 	$job_states = {};
 
