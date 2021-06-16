@@ -196,7 +196,8 @@ sub job_tree {
 			SELECT 
 				job_id,
 				parentjob_id,
-				'jobs_archive' source
+				'jobs_archive' source,
+				array[job_id] found
 			FROM 
 				jobs_archive
 			WHERE
@@ -205,20 +206,23 @@ sub job_tree {
 			SELECT 
 				ja.job_id,
 				ja.parentjob_id,
-				'jobs_archive' source
+				'jobs_archive' source,
+				fap.found || ja.job_id found
 			FROM
 				jobs_archive ja
 			JOIN
 				find_archive_parents fap
 			ON 
-				ja.job_id = fap.parentjob_id
+				ja.job_id = fap.parentjob_id AND
+				ja.job_id <> ALL (fap.found) -- loop guard
 		), 
 		] : qq[])}
 		find_parents AS (
 			SELECT 
 				job_id,
 				parentjob_id,
-				'jobs' source
+				'jobs' source,
+				array[job_id] found
 			FROM 
 				jobs
 			WHERE
@@ -234,13 +238,15 @@ sub job_tree {
 			SELECT 
 				j.job_id,
 				j.parentjob_id,
-				'jobs' source
+				'jobs' source,
+				fp.found || j.job_id found
 			FROM 
 				jobs j
 			JOIN
 				find_parents fp
 			ON
-				j.job_id = fp.parentjob_id
+				j.job_id = fp.parentjob_id AND
+				j.job_id <> ALL (fp.found) -- loop guard
 		),
 		] : qq[])}
 		heads AS (
