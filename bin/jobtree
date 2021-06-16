@@ -16,27 +16,9 @@ use Getopt::Long qw(GetOptionsFromArray);
 use Time::Seconds;
 
 use constant DEFAULT_LIMIT => 1000;
-use constant RIGHT_ALIGN => {
-	map { $_ => 1 } qw/
-		duration
-	/
-};
-use constant JOB_STATES => {
-	map { $_ => 1 } qw/
-		ready
-		working
-		sleeping
-		done
-		plotting
-		zombie
-		finished
-		error
-		eventwait
-		childwait
-		retrywait
-		lockwait
-	/
-};
+use constant RIGHT_ALIGN => { duration => 1 };
+
+sub job_states;
 
 my $pgh;
 
@@ -79,45 +61,10 @@ sub main {
 		return 0;
 	}
 
-	die "bad limit: $opts{limit}\n" if $opts{limit} <= 0;
-
-	$opts{state} //= '';
-	$opts{state} =~ s/(?:^\s+\|\s+$)//g;
-
-	my %states;
-
-	for (split /\s*,\s*/, $opts{state}) {
-
-		next if $_ eq '';
-
-		my $state = lc($_);
-
-		die "unknown state: $_\n" unless JOB_STATES->{$state};
-
-		$states{$state}++;
-	}
-
-	$opts{exclude} //= '';
-	$opts{exclude} =~ s/(?:^\s+\|\s+$)//g;
-
-	my %exclude;
-
-	for (split /\s*,\s*/, $opts{exclude}) {
-
-		next if $_ eq '';
-
-		my $state = lc($_);
-
-		die "unknown state: $_\n" unless JOB_STATES->{$state};
-
-		$exclude{$state}++;
-	}
-
-	$opts{state}   = \%states;
-	$opts{exclude} = \%exclude;
+	die "expects limit as positive number: $opts{limit}\n" if $opts{limit} <= 0;
 
 	for (@_) {
-		die "unknown job_id: $_\n" unless /^\d+$/;
+		die "expects job_id as number: $_\n" unless /^\d+$/;
 	}
 
 	my $cfgpath = "$FindBin::Bin/../etc/jobcenter.conf";
@@ -142,6 +89,41 @@ sub main {
 		}
 	) or die "cannot connect to db: $DBI::errstr";
 
+	$opts{state} //= '';
+	$opts{state} =~ s/(?:^\s+\|\s+$)//g;
+
+	my %states;
+
+	for (split /\s*,\s*/, $opts{state}) {
+
+		next if $_ eq '';
+
+		my $state = lc($_);
+
+		die "unknown state: $_\n" unless job_states->{$state};
+
+		$states{$state}++;
+	}
+
+	$opts{exclude} //= '';
+	$opts{exclude} =~ s/(?:^\s+\|\s+$)//g;
+
+	my %exclude;
+
+	for (split /\s*,\s*/, $opts{exclude}) {
+
+		next if $_ eq '';
+
+		my $state = lc($_);
+
+		die "unknown state: $_\n" unless job_states->{$state};
+
+		$exclude{$state}++;
+	}
+
+	$opts{state}   = \%states;
+	$opts{exclude} = \%exclude;
+
 	my $job_tree = job_tree(\%opts, \@_);
 
 	if ($opts{head}) { 
@@ -157,6 +139,46 @@ sub main {
 	}
 
 	return 0;
+}
+
+my $job_states;
+sub job_states () {
+
+	return $job_states if $job_states;
+
+	my $sql = q[
+		SELECT 
+			e.enumlabel enum_value
+		FROM 
+			pg_type t
+		JOIN 
+			pg_enum e 
+		ON 
+			t.oid = e.enumtypid
+		JOIN 
+			pg_catalog.pg_namespace ns
+		ON 
+			ns.oid = t.typnamespace 
+		WHERE 
+			ns.nspname = 'jobcenter' AND 
+			t.typname = 'job_state'
+	];
+
+	my $sth = $pgh->prepare_cached($sql) or 
+		die "failed to prepare job_states query: ".$pgh->errstr;
+
+	$sth->execute() or 
+		die "failed to get job_states: ".$pgh->errstr;
+
+	$sth->bin_columns(\my $val);
+
+	$job_states = {};
+
+	while ($sth->fetch) {
+		$job_states->{$val} = 1;
+	}
+
+	return $job_states;
 }
 
 sub job_tree {
@@ -344,9 +366,16 @@ sub job_tree {
 			$opts->{limit}
 	]);
 
-	my $sth = $pgh->prepare_cached($sql);
+	use DDP; p $sql;
 
-	my $r = $sth->execute(keys %{$opts->{exclude}}, keys %{$opts->{state}}, @$job_ids);
+	my $sth = $pgh->prepare_cached($sql) or 
+		die "failed to prepare job_tree query: ".$pgh->errstr;
+
+	$sth->execute(
+		keys %{$opts->{exclude}}, 
+		keys %{$opts->{state}}, 
+		@$job_ids,
+	) or die "failed to get job_tree: ".$pgh->errstr;
 
 	my @rows;
 	while (my $row = $sth->fetchrow_hashref) {
@@ -363,7 +392,6 @@ sub job_tree {
 			/
 		};
 	}
-
 
 	return \@rows;
 }
