@@ -247,10 +247,7 @@ sub job_tree {
 			ON
 				j.job_id = fp.parentjob_id AND
 				j.job_id <> ALL (fp.found) -- loop guard
-		),
-		] : qq[])}
-		heads AS (
-			${\($job_qs ? qq[
+		), heads AS (
 			SELECT
 				job_id,
 				source
@@ -258,7 +255,8 @@ sub job_tree {
 				find_parents
 			WHERE 
 				parentjob_id IS NULL
-			] : qq[
+		] : qq[
+		heads AS (
 			SELECT
 				job_id,
 				'jobs'::text source
@@ -276,7 +274,7 @@ sub job_tree {
 			WHERE 
 				parentjob_id IS NULL
 			] : qq[])}
-			])}
+		])}
 		), tree AS (
 			SELECT
 				h.job_id,
