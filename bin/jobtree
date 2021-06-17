@@ -250,13 +250,33 @@ sub job_tree {
 		),
 		] : qq[])}
 		heads AS (
+			${\($job_qs ? qq[
 			SELECT
 				job_id,
-				${\($job_qs ? qq[source] : qq['jobs'::text source])}
+				source
 			FROM 
-				${\($job_qs ? qq[find_parents] : qq[jobs])}
+				find_parents
 			WHERE 
 				parentjob_id IS NULL
+			] : qq[
+			SELECT
+				job_id,
+				'jobs'::text source
+			FROM 
+				jobs
+			WHERE 
+				parentjob_id IS NULL
+			${\($opts->{all} ? qq[
+			UNION ALL
+			SELECT
+				job_id,
+				'jobs_archive'::text source
+			FROM 
+				jobs_archive
+			WHERE 
+				parentjob_id IS NULL
+			] : qq[])}
+			])}
 		), tree AS (
 			SELECT
 				h.job_id,
@@ -435,7 +455,12 @@ sub table {
 	for (@$job_tree) {
 		$relations{$_->{parentjob_id}//''}{$_->{job_id}}++;
 		$jobs{$_->{job_id}} = $_;
-		$heads{$_->{job_id}}++ unless defined $_->{parentjob_id};
+	}
+
+	for (@$job_tree) {
+		$heads{$_->{job_id}}++ 
+			unless defined $_->{parentjob_id} 
+			and defined $jobs{$_->{parentjob_id}};
 	}
 
 	my %headings = (
