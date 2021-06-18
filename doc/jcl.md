@@ -76,6 +76,14 @@ Available on the right hand side are 'a', 'e','v' and 't'.
 
 A line of the form "&lt;foo>" is a shorthand notation for "o.foo = v.foo".
 
+### Identifier Quoting
+
+Normal identifiers start with a alphabetic character or a underscore,
+further characters can be alphanumeric or underscores. Identifiers not
+following this pattern need to be quoted in single or double quotes.
+
+Example: '2-factor' = v."2nd"
+
 ### Limits
 
 A workflow as executed by the JobCenter has two default limits: 
