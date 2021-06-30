@@ -113,14 +113,15 @@ sub generate_workflow {
 	$self->{labels}->{'!!the end!!'} = undef;
 
 	my $wfid; # for staleness check
-	my $version = 1;
+	my $version = 0;
 	my $oldsrcmd5;
 	# find out if a version alreay exists, if so increase version
-	# FIXME: race condition when multiples jcc's compile the same wf at the same time..
+	# just query by name because a action could change to a workflow
+	# (or v.v.)
 	{
 		my $res = $self->db->dollar_only->query(
 			q|select action_id, version, srcmd5 from actions
-				where name = $1 and type = 'workflow'
+				where name = $1
 				order by version desc limit 1|,
 			$wfname
 		)->array;
@@ -270,23 +271,26 @@ sub generate_action {
 	_check_basename($wff, $wfname, 'action');
 
 	my $wfid; # for replace
-	my $version = 1;
+	my $version = 0;
+	my $oldwhat;
 	my $oldsrcmd5;
 	# find out if a version alreay exists, if so increase version
-	# FIXME: race condition when multiples jcc's compile the same wf at the same time..
+	# just query by name because a action could change to a workflow
+	# (or v.v.)
 	{
 		my $res = $self->db->dollar_only->query(
-			q|select action_id, version, srcmd5 from actions
-				where name = $1 and type = $2
+			q|select action_id, version, type, srcmd5 from actions
+				where name = $1
 				order by version desc limit 1|,
-			$wfname, $what
+			$wfname,
 		)->array;
 		print 'res: ', Dumper($res) if $debug;
 		if ($res and @$res) {
-			($wfid, $version, $oldsrcmd5) = @$res;
+			($wfid, $version, $oldwhat, $oldsrcmd5) = @$res;
 		}
 	}
 
+	$oldwhat //= '<null>';
 	$oldsrcmd5 //= '<null>';
 
 	my $newsrcmd5 = md5_hex($$wfsrc);
@@ -312,6 +316,7 @@ sub generate_action {
 
 	if ($self->{replace}) {
 		die "nothing to replace?" unless $wfid;
+		die "type mismatch $oldwhat != $what" unless $oldwhat eq $what;
 		my $dummy = $self->qs(q|
 			update actions set
 				rolename = $1,
