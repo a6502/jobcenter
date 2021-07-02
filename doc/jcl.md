@@ -12,13 +12,13 @@ A step in a workflow. A tasks can be an 'action', a 'workflow', a
 'procedure' or a 'system task'.
 
 - **action**
-  A step executed by a external worker
+    A step executed by a external worker
 - **workflow**
-  A call to another workflow, creating a child-job.
+    A call to another workflow, creating a child-job.
 - **procedure**
-  A stored procedure in the database that contains the JobCenter schema.
+    A stored procedure in the database that contains the JobCenter schema.
 - **'system task'**
-  Workflow primitives like 'if' and 'while' are implemented as 'system tasks'.
+    Workflow primitives like 'if' and 'while' are implemented as 'system tasks'.
 
 ### Job
 
